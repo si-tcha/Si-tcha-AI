@@ -36,16 +36,17 @@ cd si-tcha-ai-mobile
 ### 2. Lancement de la partie backend 
 Le serveur central doit obligatoirement tourner en arrière-plan pour traiter les requêtes de l'application mobile.
 ```bash
-# 1. Naviguer dans le dossier du serveur
+# Naviguer dans le dossier du serveur
 cd backend
 
-# 2. Installer les packages requis
+# Installer les packages requis
 npm install
 
-# 3. Créer votre fichier d'environnement local
+# Créer votre fichier d'environnement local à partir de l'exemple
+# (Pensez à configurer vos identifiants de base de données)
 cp .env.example .env
 
-# 4. Lancer le serveur en mode développement
+# Lancer le serveur en mode développement (avec rechargement automatique)
 npm run dev
 ```
 
@@ -88,4 +89,3 @@ npx expo start --dev-client
 4. L'application va charger le bundle de ton code local. Désormais, chaque modification sauvegardée dans ton éditeur (VS Code) se mettra à jour en temps réel sur ton smartphone !
 
 ---
-
