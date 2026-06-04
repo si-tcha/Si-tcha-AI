@@ -20,6 +20,7 @@ model Acheteur {
   nui                  String                 @unique
   secteur_activite     String                 
   contact              String                 @unique
+  isVerified           Boolean                @default(false)
   preferences          Json?          
   transactions         TransactionAcheteur[]
   prefinancements      Prefinancement[]
@@ -233,11 +234,19 @@ model Agriculteur {
   id           String            @id @default(uuid())
   nom          String            
   contact      String            @unique
+  isVerified   Boolean           @default(false)
   estLeader    Boolean           @default(false)
   statut       StatutAgriculteur @default(EN_ATTENTE)
   timestampMaj DateTime @db.Date
   gicId        String
   gic          GIC      @relation(fields: [gicId], references: [id])
+}
+
+model VerificationCode {
+  id        String   @id @default(uuid())
+  code      String
+  contact   String   @unique
+  expiresAt DateTime
 }
 
 model Admin {
