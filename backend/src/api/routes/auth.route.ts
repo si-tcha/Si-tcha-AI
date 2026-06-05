@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { login, registerAcheteur, registerAgriculteur, verifyAccount, logout } from '../controllers/auth.controller';
 import { validate } from '../middlewares/validation.middleware';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { protect } from '../middlewares/auth.middleware';
 
 const router = Router();
 
@@ -43,8 +44,8 @@ router.post(
 
 // @route   POST /api/auth/logout
 // @desc    Déconnecter un utilisateur
-// @access  Private (devrait l'être avec un middleware d'auth)
-router.post('/logout', logout);
+// @access  Private
+router.post('/logout', protect, logout);
 
 
 export default router;

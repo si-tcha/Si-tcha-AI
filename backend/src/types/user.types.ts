@@ -25,3 +25,10 @@ export type VerifyAccountData = {
     contact: string;
     code: string;
 }
+
+export type AuthenticatedUser = {
+    id: string;
+    role: 'AGRICULTEUR' | 'ACHETEUR' | 'ADMIN';
+    gicId?: string;
+    estLeader?: boolean;
+}

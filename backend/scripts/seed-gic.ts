@@ -5,17 +5,17 @@ async function main() {
 
     // 1. Créer un Bassin de Production de test s'il n'existe pas
     let bassin = await prisma.bassinProduction.findFirst({
-        where: { nom: 'Bassin de Test Mungo' },
+        where: { nom: 'Bassin du Mayo Danai' },
     });
 
     if (!bassin) {
         console.log('Création du bassin de production de test...');
         bassin = await prisma.bassinProduction.create({
             data: {
-                nom: 'Bassin de Mbouda',
-                region: 'Ouest',
-                latitude: 4.71,
-                longitude: 9.71,
+                nom: 'Bassin du Mayo Danai',
+                region: 'Nord',
+                latitude: 9.71,
+                longitude: 12.71,
             },
         });
         console.log('✅ Bassin de production créé:', bassin);
@@ -24,7 +24,7 @@ async function main() {
     }
 
     // 2. Créer un GIC de test s'il n'existe pas
-    const gicIdentifier = 'GIC-TEST-002';
+    const gicIdentifier = 'GIC-TEST-003';
     let gic = await prisma.gIC.findUnique({
         where: { identifiantREF: gicIdentifier },
     });
@@ -33,11 +33,11 @@ async function main() {
         console.log('Création du GIC de test...');
         gic = await prisma.gIC.create({
             data: {
-                nom: 'GIC des producteurs de pommes de terre de Mbouda',
+                nom: 'GIC des producteurs de ble',
                 logoURL: 'https://example.com/logo.png',
-                activitesPrincipales: 'Culture de pommes de terre, commercialisation locale',
+                activitesPrincipales: 'Culture du ble, transformation du ble en farine, commercialisation du ble et de la farine',
                 identifiantREF: gicIdentifier,
-                statutLegalisation: 'En cours',
+                statutLegalisation: 'APPROUVE',
                 timestampMaj: new Date(),
                 bassinProductionId: bassin.id,
             },
@@ -48,7 +48,7 @@ async function main() {
     }
 
     // 3. Créer un leader pour ce GIC s'il n'existe pas
-    const leaderContact = '+237657882477';
+    const leaderContact = '+237680104392';
     let leader = await prisma.agriculteur.findUnique({
         where: { contact: leaderContact },
     });
@@ -57,7 +57,7 @@ async function main() {
         console.log('Création du leader pour le GIC de test...');
         leader = await prisma.agriculteur.create({
             data: {
-                nom: 'Menzepoh',
+                nom: 'Ahmadou Ali',
                 contact: leaderContact,
                 isVerified: true, // On le considère vérifié pour simplifier
                 estLeader: true,
