@@ -47,6 +47,26 @@ export const login = async (req: Request, res: Response) => {
     });
 };
 
+//connexion d'un admin
+export const adminLogin = async (req: Request, res: Response) => {
+    const { nom, motDePasse } = req.body;
+
+    const { user, role } = await authService.adminLogin(nom, motDePasse);
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+        throw new Error("JWT_SECRET n'est pas défini. Erreur de configuration du serveur.");
+    }
+
+    const token = jwt.sign({ id: user.id, role }, jwtSecret, { expiresIn: '1d' });
+
+    res.status(200).json({
+        message: 'Connexion admin réussie.',
+        token,
+        user: { ...user, role }
+    });
+};
+
 
 //déconnexion d'un utilisateur
 export const logout = (req: Request, res: Response) => {

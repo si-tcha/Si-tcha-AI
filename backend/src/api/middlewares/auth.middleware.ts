@@ -22,6 +22,10 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
         } else if (decoded.role === 'AGRICULTEUR') {
             const user = await prisma.agriculteur.findUnique({ where: { id: decoded.id }, select: { id: true, gicId: true, estLeader: true } });
             if (user) userPayload = { id: user.id, role: 'AGRICULTEUR', gicId: user.gicId, estLeader: user.estLeader };
+        } else if (decoded.role === 'ADMIN') {
+            const user = await prisma.admin.findUnique({ where: { id: decoded.id }, select: { id: true } });
+            // Pour un admin, gicId et estLeader ne sont pas pertinents
+            if (user) userPayload = { id: user.id, role: 'ADMIN' };
         }
         
         if (!userPayload) {
@@ -45,5 +49,14 @@ export const isGicLeader = (req: Request, res: Response, next: NextFunction) => 
         next();
     } else {
         res.status(403).json({ message: "Accès refusé. Seuls les leaders de GIC peuvent effectuer cette action." });
+    }
+};
+
+// Middleware to check for Admin role
+export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
+    if (req.user && req.user.role === 'ADMIN') {
+        next();
+    } else {
+        res.status(403).json({ message: "Accès refusé. Cette action nécessite les droits d'administrateur." });
     }
 };

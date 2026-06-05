@@ -251,7 +251,7 @@ model VerificationCode {
 
 model Admin {
   id          String   @id @default(uuid())
-  nom         String
+  nom         String   @unique
   contact     String   @unique
   password    String   
 }

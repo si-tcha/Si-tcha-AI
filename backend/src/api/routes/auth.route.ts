@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, registerAcheteur, registerAgriculteur, verifyAccount, logout } from '../controllers/auth.controller';
+import { login, registerAcheteur, registerAgriculteur, verifyAccount, logout, adminLogin } from '../controllers/auth.controller';
 import { validate } from '../middlewares/validation.middleware';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { protect } from '../middlewares/auth.middleware';
@@ -40,6 +40,15 @@ router.post(
     '/login',
     validate(['nom', 'contact']),
     asyncHandler(login)
+);
+
+// @route   POST /api/auth/admin/login
+// @desc    Connecter un administrateur
+// @access  Public
+router.post(
+    '/admin/login',
+    validate(['nom', 'motDePasse']),
+    asyncHandler(adminLogin)
 );
 
 // @route   POST /api/auth/logout

@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { AcheteurRegisterData, AgriculteurRegisterData } from '../types/user.types';
 import { notifyGicLeaderForApproval, sendVerificationSms } from './notification.service';
+import bcrypt from 'bcrypt';
 
 export const registerAcheteur = async (data: AcheteurRegisterData) => {
     const acheteur = await prisma.acheteur.create({
@@ -119,4 +120,22 @@ export const login = async (nom: string, contact: string) => {
 
     // 3. Si toujours pas trouvé, les identifiants sont incorrects
     throw new Error('Nom ou contact incorrect.');
+};
+
+export const adminLogin = async (nom: string, motDePasse: string) => {
+    const admin = await prisma.admin.findUnique({
+        where: { nom },
+    });
+
+    if (!admin) {
+        throw Object.assign(new Error('Nom d\'utilisateur ou mot de passe incorrect.'), { statusCode: 401 });
+    }
+
+    const isMatch = await bcrypt.compare(motDePasse, admin.password);
+    if (!isMatch) {
+        throw Object.assign(new Error('Nom d\'utilisateur ou mot de passe incorrect.'), { statusCode: 401 });
+    }
+
+    const { password, ...userPayload } = admin;
+    return { user: userPayload, role: 'ADMIN' };
 };
