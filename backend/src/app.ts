@@ -5,6 +5,8 @@ import healthRouter from './api/routes/health.route';
 import authRouter from './api/routes/auth.route';
 import gicRouter from './api/routes/gic.route';
 import adminRouter from './api/routes/admin.route'; // Ajout de la route admin
+import swaggerUi from 'swagger-ui-express';
+import swaggerSpec from './config/swagger';
 import { errorHandler } from './api/middlewares/errorHandler.middleware';
 
 dotenv.config();
@@ -15,6 +17,9 @@ const app: Express = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Route pour la documentation Swagger
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Routes de l'API
 app.use('/api/health', healthRouter);
