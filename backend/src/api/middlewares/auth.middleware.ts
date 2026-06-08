@@ -7,14 +7,24 @@ import { asyncHandler } from '../../utils/asyncHandler';
 export const protect = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     let token;
 
+    // 1. On vérifie la présence du header d'authentification
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        // Get token from header
+        // On récupère uniquement la partie après l'espace
         token = req.headers.authorization.split(' ')[1];
+    }
 
-        // Verify token
+    // 2. Si aucun token n'est présent (ou si la chaîne était juste "Bearer ")
+    if (!token) {
+        res.status(401);
+        throw new Error('Non autorisé, aucun token fourni');
+    }
+
+    // 3. On protège la lecture du token avec un try...catch
+    try {
+        // Si le token est invalide ou malformé, cette ligne déclenchera une erreur capturée par le 'catch'
         const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string; role: string; };
 
-        // Get user from the token ID and attach to request
+        // 4. On récupère l'utilisateur en base de données
         let userPayload: AuthenticatedUser | null = null;
         if (decoded.role === 'ACHETEUR') {
             const user = await prisma.acheteur.findUnique({ where: { id: decoded.id }, select: { id: true } });
@@ -24,22 +34,22 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
             if (user) userPayload = { id: user.id, role: 'AGRICULTEUR', gicId: user.gicId, estLeader: user.estLeader };
         } else if (decoded.role === 'ADMIN') {
             const user = await prisma.admin.findUnique({ where: { id: decoded.id }, select: { id: true } });
-            // Pour un admin, gicId et estLeader ne sont pas pertinents
             if (user) userPayload = { id: user.id, role: 'ADMIN' };
         }
         
         if (!userPayload) {
             res.status(401);
-            throw new Error('Non autorisé, utilisateur non trouvé');
+            throw new Error('Non autorisé, compte utilisateur introuvable');
         }
 
+        // 5. On attache l'utilisateur à la requête et on passe au middleware suivant
         req.user = userPayload;
         return next();
-    }
 
-    if (!token) {
+    } catch (error) {
+        // L'erreur "JsonWebTokenError: jwt malformed" atterrira ici proprement.
         res.status(401);
-        throw new Error('Non autorisé, pas de token');
+        throw new Error('Non autorisé, token invalide ou expiré');
     }
 });
 
