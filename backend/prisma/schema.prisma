@@ -32,7 +32,6 @@ model BassinProduction {
   region               String                 
   latitude             Decimal                @db.Decimal(15, 2)
   longitude            Decimal                @db.Decimal(15, 2)
-  donneesMeteo         DonneesMeteo[]
   donneesMarche        DonneeMarche[]
   alertesPhyto         AlertePhyto[]
   historiquesProduction HistoriqueProduction[]
@@ -49,12 +48,40 @@ model ProduitAgricole {
 }
 
 model DonneesMeteo {
-  id                 String           @id @default(uuid())
-  temperature        Decimal          @db.Decimal(15, 2)
-  pluviometrie       Decimal          @db.Decimal(15, 2)
-  timestampMesure    DateTime         @db.Date
-  bassinProductionId String
-  bassinProduction   BassinProduction @relation(fields: [bassinProductionId], references: [id])
+  id                 String   @id @default(uuid())
+  temperature        Decimal  @db.Decimal(5, 2) // En Celsius
+  humidite           Decimal  @db.Decimal(5, 2) // En pourcentage
+  pluviometrie       Decimal  @db.Decimal(5, 2) // mm/h
+  probabilitePluie   Decimal  @db.Decimal(5, 2) // En pourcentage (POP)
+  vitesseVent        Decimal  @db.Decimal(5, 2) // m/s
+  description        String   // Ex: "Ciel clair", "Pluie légère"
+  timestampMesure    DateTime @db.Timestamptz
+  
+  gicId              String
+  gic                GIC      @relation(fields: [gicId], references: [id])
+}
+
+model DonneesSol {
+  id                 String   @id @default(uuid())
+  temperatureSurface Decimal  @db.Decimal(5, 2) // En Celsius (t0)
+  temperature10cm    Decimal  @db.Decimal(5, 2) // En Celsius (t10)
+  humidite           Decimal  @db.Decimal(5, 2) // Volumetric Soil Water (moisture)
+  timestampMesure    DateTime @db.Timestamptz
+  
+  gicId              String
+  gic                GIC      @relation(fields: [gicId], references: [id])
+}
+
+// Nouvelle entité : AlerteMeteo (Générée par le CRON pour le Front-end)
+model AlerteMeteo {
+  id                 String   @id @default(uuid())
+  messageCourt       String   // "Risque de pluie dans 2h, reportez l'épandage."
+  detailsTechniques  Json     // Les données brutes pour l'agronome
+  type               String   // "PLUIE", "SECHERESSE", "GEL"
+  timestampCreation  DateTime @default(now()) @db.Timestamptz
+  
+  gicId              String
+  gic                GIC      @relation(fields: [gicId], references: [id])
 }
 
 model DonneeMarche {
@@ -118,6 +145,10 @@ model GIC {
   timestampMaj          DateTime               @db.Date
   bassinProductionId    String
   bassinProduction      BassinProduction       @relation(fields: [bassinProductionId], references: [id])
+  polygonId             String?                @unique // ID fourni par AgroMonitoring lors de la création du GIC
+
+  // Relations
+
   recoltesOffres        RecolteOffre[]
   besoins               BesoinGIC[]
   chargesFinancieres    ChargeFinanciere[]
@@ -125,6 +156,9 @@ model GIC {
   echangesB2B           EchangeB2B[]
   prefinancements       Prefinancement[]
   agriculteurs          Agriculteur[]
+  donneesMeteo          DonneesMeteo[]
+  donneesSol            DonneesSol[]
+  alertesMeteo          AlerteMeteo[]
 }
 
 model RecolteOffre {
