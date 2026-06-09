@@ -146,6 +146,7 @@ model GIC {
   bassinProductionId    String
   bassinProduction      BassinProduction       @relation(fields: [bassinProductionId], references: [id])
   polygonId             String?                @unique // ID fourni par AgroMonitoring lors de la création du GIC
+  previsionsMeteo       Json?    // <-- C'est ici que le CRON va stocker le tableau des 8 jours
 
   // Relations
 

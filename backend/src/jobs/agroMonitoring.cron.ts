@@ -23,7 +23,7 @@ export const startAgroCronJobs = () => {
         const weatherRes = await axios.get(`${BASE_URL}/weather?polyid=${polyId}&appid=${AGRO_API_KEY}&units=metric`);
         const forecastRes = await axios.get(`${BASE_URL}/weather/forecast?polyid=${polyId}&appid=${AGRO_API_KEY}&units=metric`);
         
-        // Sauvegarde Météo
+        // 1. Sauvegarde Météo Actuelle
         await prisma.donneesMeteo.create({
           data: {
             temperature: weatherRes.data.main.temp,
@@ -34,6 +34,14 @@ export const startAgroCronJobs = () => {
             description: weatherRes.data.weather[0].description,
             timestampMesure: new Date(),
             gicId: gic.id
+          }
+        });
+
+        // 2. AJOUT : Sauvegarde des prévisions sur 8 jours directement dans le modèle GIC
+        await prisma.gIC.update({
+          where: { id: gic.id },
+          data: { 
+            previsionsMeteo: forecastRes.data // Stocke le tableau complet sous forme de JSON
           }
         });
 
