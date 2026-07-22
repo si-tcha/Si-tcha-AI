@@ -1,29 +1,14 @@
-import { Dimensions, FlatList, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import React, { useState } from 'react';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
 
 
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { dbService, ExpenseRecord, HarvestRecord } from '@/services/database';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-interface Harvest {
-  id: string;
-  product: string;
-  volume: number; // in kg
-  date: string;
-}
-
-interface Expense {
-  id: string;
-  label: string;
-  amount: number; // in FCFA
-  category: string;
-}
-
-
 
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
@@ -31,17 +16,10 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export default function SellerHomeScreen() {
   const router = useRouter();
   
-  // États pour les récoltes et dépenses
-  const [harvests, setHarvests] = useState<Harvest[]>([
-    { id: '1', product: 'Pommes de terre', volume: 1200, date: '12 Juillet 2026' },
-    { id: '2', product: 'Tomates', volume: 800, date: '18 Juillet 2026' }
-  ]);
-
-  const [expenses, setExpenses] = useState<Expense[]>([
-    { id: '1', label: 'Fertilisants NPK', amount: 150000, category: 'Intrants' },
-    { id: '2', label: 'Transport récolte', amount: 45000, category: 'Transport' },
-    { id: '3', label: 'Main d\'œuvre semis', amount: 80000, category: 'Main d\'œuvre' }
-  ]);
+  // États pour les récoltes et dépenses (persistés via dbService)
+  const [harvests, setHarvests] = useState<HarvestRecord[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   // États des modales de saisie
   const [harvestModalVisible, setHarvestModalVisible] = useState(false);
@@ -56,6 +34,26 @@ export default function SellerHomeScreen() {
   const [formExpenseAmount, setFormExpenseAmount] = useState('');
   const [formExpenseCategory, setFormExpenseCategory] = useState('Intrants');
 
+  useEffect(() => {
+    const loadLocalData = async () => {
+      try {
+        await dbService.initDatabase();
+        const [storedHarvests, storedExpenses] = await Promise.all([
+          dbService.getHarvests(),
+          dbService.getExpenses(),
+        ]);
+        setHarvests(storedHarvests);
+        setExpenses(storedExpenses);
+      } catch (err) {
+        console.warn('Erreur chargement données vendeur:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadLocalData();
+  }, []);
+
   const handleLogout = () => {
     router.replace('/(auth)/welcome');
   };
@@ -67,38 +65,42 @@ export default function SellerHomeScreen() {
   // Coût de revient moyen par kg = Dépenses totales / Volume total
   const costPricePerKg = totalVolume > 0 ? Math.round(totalExpenses / totalVolume) : 0;
 
-  const handleAddHarvest = () => {
+  const handleAddHarvest = async () => {
     if (!formProduct.trim() || !formVolume.trim()) {
       alert('Veuillez remplir tous les champs.');
       return;
     }
-    const newHarvest: Harvest = {
-      id: Date.now().toString(),
-      product: formProduct,
-      volume: parseFloat(formVolume),
-      date: 'Aujourd\'hui'
-    };
-    setHarvests(prev => [newHarvest, ...prev]);
-    setFormProduct('');
-    setFormVolume('');
-    setHarvestModalVisible(false);
+    try {
+      const newHarvest = await dbService.addHarvest(formProduct.trim(), parseFloat(formVolume));
+      setHarvests(prev => [newHarvest, ...prev]);
+      setFormProduct('');
+      setFormVolume('');
+      setHarvestModalVisible(false);
+    } catch (err) {
+      console.warn('Erreur sauvegarde récolte:', err);
+      alert('Impossible d\'enregistrer la récolte.');
+    }
   };
 
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     if (!formExpenseLabel.trim() || !formExpenseAmount.trim()) {
       alert('Veuillez remplir tous les champs.');
       return;
     }
-    const newExpense: Expense = {
-      id: Date.now().toString(),
-      label: formExpenseLabel,
-      amount: parseFloat(formExpenseAmount),
-      category: formExpenseCategory
-    };
-    setExpenses(prev => [newExpense, ...prev]);
-    setFormExpenseLabel('');
-    setFormExpenseAmount('');
-    setExpenseModalVisible(false);
+    try {
+      const newExpense = await dbService.addExpense(
+        formExpenseLabel.trim(),
+        parseFloat(formExpenseAmount),
+        formExpenseCategory
+      );
+      setExpenses(prev => [newExpense, ...prev]);
+      setFormExpenseLabel('');
+      setFormExpenseAmount('');
+      setExpenseModalVisible(false);
+    } catch (err) {
+      console.warn('Erreur sauvegarde dépense:', err);
+      alert('Impossible d\'enregistrer la dépense.');
+    }
   };
 
   return (
@@ -182,20 +184,30 @@ export default function SellerHomeScreen() {
             <Feather name="archive" size={18} color="#101e0f" />
           </View>
           <View style={styles.listCard}>
-            {harvests.map(h => (
-              <View key={h.id} style={styles.listItem}>
-                <View style={styles.itemMain}>
-                  <View style={[styles.itemIconBg, { backgroundColor: '#889e8720' }]}>
-                    <Feather name="box" size={16} color="#889e87" />
-                  </View>
-                  <View>
-                    <Text style={styles.itemTitle}>{h.product}</Text>
-                    <Text style={styles.itemSub}>{h.date}</Text>
-                  </View>
-                </View>
-                <Text style={styles.itemValue}>{h.volume} kg</Text>
+            {isLoading ? (
+              <View style={styles.listItem}>
+                <Text style={styles.itemSub}>Chargement des récoltes...</Text>
               </View>
-            ))}
+            ) : harvests.length === 0 ? (
+              <View style={styles.listItem}>
+                <Text style={styles.itemSub}>Aucune récolte enregistrée.</Text>
+              </View>
+            ) : (
+              harvests.map(h => (
+                <View key={h.id} style={styles.listItem}>
+                  <View style={styles.itemMain}>
+                    <View style={[styles.itemIconBg, { backgroundColor: '#889e8720' }]}>
+                      <Feather name="box" size={16} color="#889e87" />
+                    </View>
+                    <View>
+                      <Text style={styles.itemTitle}>{h.product}</Text>
+                      <Text style={styles.itemSub}>{h.date}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.itemValue}>{h.volume} kg</Text>
+                </View>
+              ))
+            )}
           </View>
         </View>
 
@@ -206,20 +218,30 @@ export default function SellerHomeScreen() {
             <Feather name="credit-card" size={18} color="#101e0f" />
           </View>
           <View style={styles.listCard}>
-            {expenses.map(e => (
-              <View key={e.id} style={styles.listItem}>
-                <View style={styles.itemMain}>
-                  <View style={[styles.itemIconBg, { backgroundColor: '#d9783420' }]}>
-                    <Feather name="tag" size={16} color="#d97834" />
-                  </View>
-                  <View>
-                    <Text style={styles.itemTitle}>{e.label}</Text>
-                    <Text style={styles.itemSub}>{e.category}</Text>
-                  </View>
-                </View>
-                <Text style={[styles.itemValue, { color: '#d97834' }]}>{e.amount.toLocaleString()} FCFA</Text>
+            {isLoading ? (
+              <View style={styles.listItem}>
+                <Text style={styles.itemSub}>Chargement des dépenses...</Text>
               </View>
-            ))}
+            ) : expenses.length === 0 ? (
+              <View style={styles.listItem}>
+                <Text style={styles.itemSub}>Aucune dépense enregistrée.</Text>
+              </View>
+            ) : (
+              expenses.map(e => (
+                <View key={e.id} style={styles.listItem}>
+                  <View style={styles.itemMain}>
+                    <View style={[styles.itemIconBg, { backgroundColor: '#d9783420' }]}>
+                      <Feather name="tag" size={16} color="#d97834" />
+                    </View>
+                    <View>
+                      <Text style={styles.itemTitle}>{e.label}</Text>
+                      <Text style={styles.itemSub}>{e.category}</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.itemValue, { color: '#d97834' }]}>{e.amount.toLocaleString()} FCFA</Text>
+                </View>
+              ))
+            )}
           </View>
         </View>
         

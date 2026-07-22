@@ -1,11 +1,12 @@
 import { Dimensions, FlatList, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { dbService } from '@/services/database';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -38,12 +39,42 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export default function BuyerHomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState('Tous');
   const [searchQuery, setSearchQuery] = useState('');
-  const [cartCount, setCartCount] = useState(3);
+  const [cartCount, setCartCount] = useState(0);
   const router = useRouter();
+
+  useEffect(() => {
+    const loadCart = async () => {
+      try {
+        await dbService.initDatabase();
+        const count = await dbService.getCartCount();
+        setCartCount(count);
+      } catch (err) {
+        console.warn('Erreur chargement panier:', err);
+      }
+    };
+
+    loadCart();
+  }, []);
 
   const handleLogout = () => {
     // Simule une déconnexion vers l'écran de bienvenue
     router.replace('/(auth)/welcome');
+  };
+
+  const handleAddToCart = async (product: Product) => {
+    try {
+      await dbService.addToCart({
+        productId: product.id,
+        name: product.name,
+        price: product.price,
+        unit: product.unit,
+      });
+      const count = await dbService.getCartCount();
+      setCartCount(count);
+    } catch (err) {
+      console.warn('Erreur ajout panier:', err);
+      alert('Impossible d\'ajouter au panier.');
+    }
   };
 
   const filteredProducts = PRODUCTS.filter(product => {
@@ -72,7 +103,7 @@ export default function BuyerHomeScreen() {
           <View style={styles.priceRow}>
             <Text style={styles.productPrice}>{item.price} FCFA/{item.unit}</Text>
             <TouchableOpacity 
-              onPress={() => setCartCount(prev => prev + 1)}
+              onPress={() => handleAddToCart(item)}
               style={styles.addButton}
             >
               <Feather name="plus" size={16} color="#f3ecd8" />
