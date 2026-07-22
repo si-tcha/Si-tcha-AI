@@ -18,9 +18,9 @@ interface SessionResponse {
 }
 
 const defaultApiUrl = Platform.select({
-  android: 'http://10.0.2.2:3000/api',
-  ios: 'http://localhost:3000/api',
-  default: 'http://localhost:3000/api',
+  android: 'http://10.0.2.2:4000/api',
+  ios: 'http://localhost:4000/api',
+  default: 'http://localhost:4000/api',
 });
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? defaultApiUrl;
