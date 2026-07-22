@@ -16,10 +16,13 @@ import {
   DEFAULT_GIC_PROFILE,
   DEFAULT_HARVESTS,
   DEFAULT_MARKET,
+  DEFAULT_PARCELS,
   DEFAULT_PHYTO,
+  DEFAULT_PREFINANCING,
   DEFAULT_PRODUCTS,
   DEFAULT_PROGRAMS,
   DEFAULT_SYNC_PEER,
+  DEFAULT_TRUST_RATINGS,
   DEFAULT_WEATHER,
   ExpenseRecord,
   GicMember,
@@ -29,10 +32,13 @@ import {
   MarketPriceRecord,
   OrderRecord,
   OrderType,
+  ParcelGrowthRecord,
   PhytoAlertRecord,
+  PrefinancingDeal,
   ProductOffer,
   STORAGE_KEYS,
   SyncResult,
+  TrustRating,
   WeatherRecord,
   nowIso,
 } from './database.shared';
@@ -53,9 +59,12 @@ export type {
   OrderRecord,
   OrderType,
   OrderStatus,
+  ParcelGrowthRecord,
   PhytoAlertRecord,
+  PrefinancingDeal,
   ProductOffer,
   SyncResult,
+  TrustRating,
   WeatherRecord,
 } from './database.shared';
 
@@ -448,6 +457,93 @@ class DatabaseService {
     list.unshift(newOffer);
     writeJson(STORAGE_KEYS.B2B_OFFERS, list);
     return newOffer;
+  }
+
+  // --- Journal de Croissance & Alertes Rendement (Lot D) ---
+  async getParcels(): Promise<ParcelGrowthRecord[]> {
+    return readJson(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
+  }
+
+  async addParcel(
+    parcelName: string,
+    crop: string,
+    sowingDate: string,
+    stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter',
+    estimatedHarvestDate: string,
+    estimatedVolumeKg: number,
+    actualHarvestVolumeKg?: number
+  ): Promise<ParcelGrowthRecord> {
+    const list = await this.getParcels();
+    const newParcel: ParcelGrowthRecord = {
+      id: Date.now().toString(),
+      parcelName,
+      crop,
+      sowingDate,
+      stage,
+      estimatedHarvestDate,
+      estimatedVolumeKg,
+      actualHarvestVolumeKg,
+      updatedAt: nowIso(),
+    };
+    list.unshift(newParcel);
+    writeJson(STORAGE_KEYS.PARCELS, list);
+    return newParcel;
+  }
+
+  // --- Préfinancement & Trust Score (Lot D) ---
+  async getPrefinancingDeals(): Promise<PrefinancingDeal[]> {
+    return readJson(STORAGE_KEYS.PREFINANCING, DEFAULT_PREFINANCING);
+  }
+
+  async addPrefinancingDeal(
+    gicName: string,
+    buyerName: string,
+    amountFcfa: number,
+    inputDescription: string,
+    reservedProduct: string,
+    reservedVolumeKg: number
+  ): Promise<PrefinancingDeal> {
+    const list = await this.getPrefinancingDeals();
+    const newDeal: PrefinancingDeal = {
+      id: Date.now().toString(),
+      gicName,
+      buyerName,
+      amountFcfa,
+      inputDescription,
+      reservedProduct,
+      reservedVolumeKg,
+      status: 'propose',
+      createdAt: nowIso(),
+    };
+    list.unshift(newDeal);
+    writeJson(STORAGE_KEYS.PREFINANCING, list);
+    return newDeal;
+  }
+
+  async getTrustRatings(): Promise<TrustRating[]> {
+    return readJson(STORAGE_KEYS.TRUST_RATINGS, DEFAULT_TRUST_RATINGS);
+  }
+
+  async addTrustRating(
+    targetId: string,
+    targetType: 'gic' | 'buyer',
+    rating: number,
+    comment: string,
+    authorName: string
+  ): Promise<TrustRating> {
+    const list = await this.getTrustRatings();
+    const newRating: TrustRating = {
+      id: Date.now().toString(),
+      targetId,
+      targetType,
+      rating,
+      comment,
+      authorName,
+      createdAt: nowIso(),
+    };
+    list.unshift(newRating);
+    writeJson(STORAGE_KEYS.TRUST_RATINGS, list);
+    return newRating;
   }
 }
 

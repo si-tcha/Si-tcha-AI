@@ -214,6 +214,14 @@ export default function SellerHomeScreen() {
             <Feather name="truck" size={16} color="#f3ecd8" />
             <Text style={styles.actionBtnText}>B2B Trade</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity 
+            onPress={() => router.push('/(seller)/growth-log')} 
+            style={[styles.actionBtn, { backgroundColor: '#166534' }]}
+          >
+            <Feather name="trending-up" size={16} color="#f3ecd8" />
+            <Text style={styles.actionBtnText}>Croissance & Alertes</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Liste des Récoltes Récentes */}

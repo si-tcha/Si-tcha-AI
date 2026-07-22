@@ -165,6 +165,9 @@ export const STORAGE_KEYS = {
   LOCAL_ROLE: 'sitcha_local_role',
   AGRONOMIST_QUESTIONS: 'sitcha_agronomist_questions',
   B2B_OFFERS: 'sitcha_b2b_offers',
+  PARCELS: 'sitcha_parcels',
+  PREFINANCING: 'sitcha_prefinancing',
+  TRUST_RATINGS: 'sitcha_trust_ratings',
 } as const;
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [
@@ -350,6 +353,90 @@ export const DEFAULT_B2B_OFFERS: B2BOffer[] = [
     location: 'Yaoundé (Centre)',
     contact: '+237 677 33 44 55',
     createdAt: '2026-07-21T11:00:00.000Z',
+  },
+];
+
+export interface ParcelGrowthRecord {
+  id: string;
+  parcelName: string;
+  crop: string;
+  sowingDate: string;
+  stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter';
+  estimatedHarvestDate: string;
+  estimatedVolumeKg: number;
+  actualHarvestVolumeKg?: number;
+  updatedAt: string;
+}
+
+export interface PrefinancingDeal {
+  id: string;
+  gicName: string;
+  buyerName: string;
+  amountFcfa: number;
+  inputDescription: string;
+  reservedProduct: string;
+  reservedVolumeKg: number;
+  status: 'propose' | 'accepte' | 'livre';
+  createdAt: string;
+}
+
+export interface TrustRating {
+  id: string;
+  targetId: string;
+  targetType: 'gic' | 'buyer';
+  rating: number; // 1 to 5
+  comment: string;
+  authorName: string;
+  createdAt: string;
+}
+
+export const DEFAULT_PARCELS: ParcelGrowthRecord[] = [
+  {
+    id: 'par1',
+    parcelName: 'Parcelle Nord Bafoussam (2 ha)',
+    crop: 'Tomates',
+    sowingDate: '2026-05-10',
+    stage: 'Maturation',
+    estimatedHarvestDate: '2026-07-28',
+    estimatedVolumeKg: 3000,
+    actualHarvestVolumeKg: 2200, // Drop > 15%! (2200 < 2550) -> Triggers alert
+    updatedAt: '2026-07-21T08:00:00.000Z',
+  },
+  {
+    id: 'par2',
+    parcelName: 'Champ Est Foumbot (3.5 ha)',
+    crop: 'Maïs jaune',
+    sowingDate: '2026-04-15',
+    stage: 'Prêt à récolter',
+    estimatedHarvestDate: '2026-08-05',
+    estimatedVolumeKg: 5500,
+    updatedAt: '2026-07-20T10:00:00.000Z',
+  },
+];
+
+export const DEFAULT_PREFINANCING: PrefinancingDeal[] = [
+  {
+    id: 'pf1',
+    gicName: 'GIC Agro-Vallée Bafoussam',
+    buyerName: 'Brasseries du Cameroun',
+    amountFcfa: 1500000,
+    inputDescription: 'Avance 30 sacs Engrais NPK + Semences certifiées',
+    reservedProduct: 'Maïs jaune',
+    reservedVolumeKg: 5000,
+    status: 'accepte',
+    createdAt: '2026-07-10T09:00:00.000Z',
+  },
+];
+
+export const DEFAULT_TRUST_RATINGS: TrustRating[] = [
+  {
+    id: 'tr1',
+    targetId: 'gic-1',
+    targetType: 'gic',
+    rating: 4.8,
+    comment: 'Livraison conforme dans les délais à Bafoussam. Excellente qualité de tubercules.',
+    authorName: 'SOCIÉTÉ AGRO-CENTRE',
+    createdAt: '2026-07-18T14:00:00.000Z',
   },
 ];
 
