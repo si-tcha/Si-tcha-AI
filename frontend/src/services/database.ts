@@ -1,10 +1,14 @@
 import * as SQLite from 'expo-sqlite';
 import {
   AgriProgramRecord,
+  AgronomistQuestion,
   AlertPreferences,
+  B2BOffer,
   CartItemRecord,
   ConfidentialGic,
+  DEFAULT_AGRONOMIST_QUESTIONS,
   DEFAULT_ALERT_PREFS,
+  DEFAULT_B2B_OFFERS,
   DEFAULT_CART,
   DEFAULT_EXPENSES,
   DEFAULT_GICS_PUBLIC,
@@ -36,7 +40,9 @@ import {
 
 export type {
   AgriProgramRecord,
+  AgronomistQuestion,
   AlertPreferences,
+  B2BOffer,
   CartItemRecord,
   ConfidentialGic,
   ExpenseRecord,
@@ -425,6 +431,59 @@ class DatabaseService {
           ? 'Aucune nouveauté à fusionner. Données déjà à jour.'
           : `Fusion terminée : ${mergedCount} élément(s) intégré(s), ${conflictsResolvedByLeader} conflit(s) tranché(s) en faveur du Leader GIC.`,
     };
+  }
+
+  // --- Agronome (Lot C) ---
+  async getAgronomistQuestions(): Promise<AgronomistQuestion[]> {
+    return this.readKv(STORAGE_KEYS.AGRONOMIST_QUESTIONS, DEFAULT_AGRONOMIST_QUESTIONS);
+  }
+
+  async addAgronomistQuestion(crop: string, category: string, question: string, photoUrl?: string): Promise<AgronomistQuestion> {
+    const list = await this.getAgronomistQuestions();
+    const newQ: AgronomistQuestion = {
+      id: Date.now().toString(),
+      crop,
+      category,
+      question,
+      photoUrl,
+      status: 'en_attente',
+      createdAt: nowIso(),
+      synced: false,
+    };
+    list.unshift(newQ);
+    this.writeKv(STORAGE_KEYS.AGRONOMIST_QUESTIONS, list);
+    return newQ;
+  }
+
+  // --- B2B Trade & Equipment (Lot C) ---
+  async getB2BOffers(): Promise<B2BOffer[]> {
+    return this.readKv(STORAGE_KEYS.B2B_OFFERS, DEFAULT_B2B_OFFERS);
+  }
+
+  async addB2BOffer(
+    title: string,
+    type: 'rent' | 'barter',
+    category: string,
+    priceOrExchange: string,
+    gicName: string,
+    location: string,
+    contact: string
+  ): Promise<B2BOffer> {
+    const list = await this.getB2BOffers();
+    const newOffer: B2BOffer = {
+      id: Date.now().toString(),
+      title,
+      type,
+      category,
+      priceOrExchange,
+      gicName,
+      location,
+      contact,
+      createdAt: nowIso(),
+    };
+    list.unshift(newOffer);
+    this.writeKv(STORAGE_KEYS.B2B_OFFERS, list);
+    return newOffer;
   }
 }
 

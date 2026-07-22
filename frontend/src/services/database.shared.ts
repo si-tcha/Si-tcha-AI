@@ -163,6 +163,8 @@ export const STORAGE_KEYS = {
   SYNC_PEER: 'sitcha_sync_peer_mock',
   LAST_SYNC: 'sitcha_last_sync',
   LOCAL_ROLE: 'sitcha_local_role',
+  AGRONOMIST_QUESTIONS: 'sitcha_agronomist_questions',
+  B2B_OFFERS: 'sitcha_b2b_offers',
 } as const;
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [
@@ -279,6 +281,77 @@ export const DEFAULT_SYNC_PEER = {
     { id: 'peer-n1', category: 'Matériel', description: 'Besoin pulvérisateur (saisie membre)', updatedAt: '2026-07-21T16:00:00.000Z', authorRole: 'member' as const },
   ] as GicNeed[],
 };
+
+export interface AgronomistQuestion {
+  id: string;
+  crop: string;
+  category: string;
+  question: string;
+  photoUrl?: string;
+  status: 'en_attente' | 'repondu';
+  answer?: string;
+  createdAt: string;
+  synced: boolean;
+}
+
+export interface B2BOffer {
+  id: string;
+  title: string;
+  type: 'rent' | 'barter';
+  category: string;
+  priceOrExchange: string;
+  gicName: string;
+  location: string;
+  contact: string;
+  createdAt: string;
+}
+
+export const DEFAULT_AGRONOMIST_QUESTIONS: AgronomistQuestion[] = [
+  {
+    id: 'aq1',
+    crop: 'Tomates',
+    category: 'Maladie',
+    question: 'Taches noires et jaunissement sur les feuilles basales après les pluies.',
+    status: 'repondu',
+    answer: 'Il s\'agit du Mildiou. Traiter au fongicide à base de cuivre et enlever les feuilles touchées.',
+    createdAt: '2026-07-20T10:00:00.000Z',
+    synced: true,
+  },
+  {
+    id: 'aq2',
+    crop: 'Maïs',
+    category: 'Fertilisation',
+    question: 'Quel est le meilleur moment pour apporter la 2ème fraction d\'azote ?',
+    status: 'en_attente',
+    createdAt: '2026-07-21T14:30:00.000Z',
+    synced: false,
+  },
+];
+
+export const DEFAULT_B2B_OFFERS: B2BOffer[] = [
+  {
+    id: 'b2b1',
+    title: 'Location Motopompe 5.5 HP',
+    type: 'rent',
+    category: 'Matériel Irrigaton',
+    priceOrExchange: '5 000 FCFA / jour',
+    gicName: 'GIC Agro-Vallée Bafoussam',
+    location: 'Bafoussam (Ouest)',
+    contact: '+237 699 00 11 22',
+    createdAt: '2026-07-20T08:00:00.000Z',
+  },
+  {
+    id: 'b2b2',
+    title: 'Troc: 5 sacs NPK contre 10 sacs Semences Maïs',
+    type: 'barter',
+    category: 'Intrants & Semences',
+    priceOrExchange: 'Échange équivalent',
+    gicName: 'GIC Champs Verts',
+    location: 'Yaoundé (Centre)',
+    contact: '+237 677 33 44 55',
+    createdAt: '2026-07-21T11:00:00.000Z',
+  },
+];
 
 export function nowIso() {
   return new Date().toISOString();

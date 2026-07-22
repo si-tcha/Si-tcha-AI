@@ -187,16 +187,32 @@ export default function SellerHomeScreen() {
             onPress={() => setHarvestModalVisible(true)} 
             style={[styles.actionBtn, { backgroundColor: '#101e0f' }]}
           >
-            <Feather name="plus-circle" size={18} color="#f3ecd8" />
-            <Text style={styles.actionBtnText}>Saisir Récolte</Text>
+            <Feather name="plus-circle" size={16} color="#f3ecd8" />
+            <Text style={styles.actionBtnText}>Récolte</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
             onPress={() => setExpenseModalVisible(true)} 
             style={[styles.actionBtn, { backgroundColor: '#d97834' }]}
           >
-            <Feather name="dollar-sign" size={18} color="#f3ecd8" />
-            <Text style={styles.actionBtnText}>Saisir Dépense</Text>
+            <Feather name="dollar-sign" size={16} color="#f3ecd8" />
+            <Text style={styles.actionBtnText}>Dépense</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            onPress={() => router.push('/(seller)/agronomist')} 
+            style={[styles.actionBtn, { backgroundColor: '#14532d' }]}
+          >
+            <Feather name="message-square" size={16} color="#f3ecd8" />
+            <Text style={styles.actionBtnText}>Agronome</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            onPress={() => router.push('/(seller)/b2b-trade')} 
+            style={[styles.actionBtn, { backgroundColor: '#854d0e' }]}
+          >
+            <Feather name="truck" size={16} color="#f3ecd8" />
+            <Text style={styles.actionBtnText}>B2B Trade</Text>
           </TouchableOpacity>
         </View>
 
@@ -555,16 +571,18 @@ const styles = StyleSheet.create({
   },
   actionButtonsRow: {
     flexDirection: 'row',
-    gap: 12,
+    flexWrap: 'wrap',
+    gap: 10,
   },
   actionBtn: {
+    minWidth: '47%',
     flex: 1,
     flexDirection: 'row',
-    height: 56,
-    borderRadius: 16,
+    height: 48,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     shadowColor: '#101e0f',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
