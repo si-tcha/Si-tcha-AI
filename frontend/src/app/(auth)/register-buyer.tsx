@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { apiClient } from '@/services/api';
 
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -23,12 +24,20 @@ export default function RegisterBuyerScreen() {
     router.back();
   };
 
-  const handleCreateAccount = () => {
+  const handleCreateAccount = async () => {
     if (!companyName.trim() || !phone.trim() || !regNumber.trim()) {
       alert('Veuillez remplir tous les champs.');
       return;
     }
-    // Redirige directement vers la page d'accueil de l'acheteur (Simulation)
+    try {
+      await apiClient.registerBuyer({
+        companyName: companyName.trim(),
+        phone: phone.trim(),
+        regNumber: regNumber.trim(),
+      });
+    } catch {
+      // Fallback offline: garde le parcours utilisable pendant les zones sans réseau.
+    }
     router.replace('/(buyer)/home');
   };
 

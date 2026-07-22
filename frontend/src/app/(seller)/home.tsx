@@ -6,7 +6,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { dbService, ExpenseRecord, HarvestRecord } from '@/services/database';
+import { dbService, ExpenseRecord, HarvestRecord, GicProfile } from '@/services/database';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -19,6 +19,7 @@ export default function SellerHomeScreen() {
   // États pour les récoltes et dépenses (persistés via dbService)
   const [harvests, setHarvests] = useState<HarvestRecord[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
+  const [profile, setProfile] = useState<GicProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // États des modales de saisie
@@ -38,12 +39,14 @@ export default function SellerHomeScreen() {
     const loadLocalData = async () => {
       try {
         await dbService.initDatabase();
-        const [storedHarvests, storedExpenses] = await Promise.all([
+        const [storedHarvests, storedExpenses, gicProfile] = await Promise.all([
           dbService.getHarvests(),
           dbService.getExpenses(),
+          dbService.getGicProfile(),
         ]);
         setHarvests(storedHarvests);
         setExpenses(storedExpenses);
+        setProfile(gicProfile);
       } catch (err) {
         console.warn('Erreur chargement données vendeur:', err);
       } finally {
@@ -64,6 +67,8 @@ export default function SellerHomeScreen() {
   
   // Coût de revient moyen par kg = Dépenses totales / Volume total
   const costPricePerKg = totalVolume > 0 ? Math.round(totalExpenses / totalVolume) : 0;
+  const surfaceHa = profile?.surfaceHa ?? 0;
+  const costPricePerHa = surfaceHa > 0 ? Math.round(totalExpenses / surfaceHa) : 0;
 
   const handleAddHarvest = async () => {
     if (!formProduct.trim() || !formVolume.trim()) {
@@ -115,7 +120,7 @@ export default function SellerHomeScreen() {
             <Feather name="shield" size={20} color="#f3ecd8" />
           </View>
           <View>
-            <Text style={styles.gicName}>GIC Agro-Vallée Bafoussam</Text>
+            <Text style={styles.gicName}>{profile?.name ?? 'GIC Agro-Vallée Bafoussam'}</Text>
             <View style={styles.roleBadge}>
               <Text style={styles.roleBadgeText}>Leader GIC</Text>
             </View>
@@ -128,6 +133,21 @@ export default function SellerHomeScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.navPills}>
+          <TouchableOpacity style={styles.navPill} onPress={() => router.push('/(seller)/profile')}>
+            <Feather name="home" size={14} color="#f3ecd8" />
+            <Text style={styles.navPillText}>Profil GIC</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navPill} onPress={() => router.push('/(seller)/terrain')}>
+            <Feather name="cloud" size={14} color="#f3ecd8" />
+            <Text style={styles.navPillText}>Terrain</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.navPill, styles.navPillAccent]} onPress={() => router.push('/(seller)/sync')}>
+            <Feather name="refresh-cw" size={14} color="#f3ecd8" />
+            <Text style={styles.navPillText}>Sync</Text>
+          </TouchableOpacity>
+        </ScrollView>
         
         {/* Widget Calculateur du Coût de Revient (Rigueur Financière) */}
         <View style={styles.calculatorCard}>
@@ -148,12 +168,15 @@ export default function SellerHomeScreen() {
           <View style={styles.calcResultContainer}>
             <Text style={styles.calcResultLabel}>Coût de revient réel estimé</Text>
             <Text style={styles.calcResultValue}>{costPricePerKg} FCFA / kg</Text>
+            {surfaceHa > 0 ? (
+              <Text style={styles.calcResultHa}>{costPricePerHa.toLocaleString()} FCFA / ha · {surfaceHa} ha</Text>
+            ) : null}
           </View>
 
           <View style={styles.calcFormulaNote}>
             <Feather name="activity" size={14} color="#14532d" />
             <Text style={styles.calcFormulaText}>
-              Formule : Total Dépenses ÷ Total Récoltes en kg.
+              Formule : Total Dépenses ÷ Total Récoltes en kg{surfaceHa > 0 ? ' (et / ha).' : '.'}
             </Text>
           </View>
         </View>
@@ -491,6 +514,33 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '900',
     color: '#f3ecd8', // Cream text
+  },
+  calcResultHa: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#889e87',
+    marginTop: 4,
+  },
+  navPills: {
+    gap: 8,
+    paddingBottom: 2,
+  },
+  navPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#101e0f',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  navPillAccent: {
+    backgroundColor: '#d97834',
+  },
+  navPillText: {
+    color: '#f3ecd8',
+    fontSize: 12,
+    fontWeight: '700',
   },
   calcFormulaNote: {
     flexDirection: 'row',

@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { apiClient } from '@/services/api';
 
 const GIC_LIST = [
   "GIC Agro-Vallée Bafoussam",
@@ -28,21 +29,34 @@ const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function RegisterSellerScreen() {
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGIC, setSelectedGIC] = useState('');
   const [isFocused, setIsFocused] = useState(false);
+  const [focusedField, setFocusedField] = useState<'name' | 'phone' | null>(null);
   const router = useRouter();
 
   const handleBack = () => {
     router.back();
   };
 
-  const handleConfirm = () => {
-    if (!selectedGIC) {
-      alert('Veuillez sélectionner un GIC.');
+  const handleConfirm = async () => {
+    if (!fullName.trim() || !phone.trim() || !selectedGIC) {
+      alert('Veuillez renseigner votre nom, téléphone et GIC.');
       return;
     }
-    // Redirige vers la page d'activation en attente
+    try {
+      const session = await apiClient.registerSeller({
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        gicName: selectedGIC,
+      });
+      router.push(session.user.status === 'active' ? '/(auth)/activation-success' : '/(auth)/activation-pending');
+      return;
+    } catch {
+      // Fallback offline: l'approbation réelle se fera lors de la prochaine synchronisation serveur.
+    }
     router.push('/(auth)/activation-pending');
   };
 
@@ -78,6 +92,40 @@ export default function RegisterSellerScreen() {
 
           {/* Formulaire & Liste */}
           <View style={styles.formSection}>
+            <Text style={styles.label}>Vos informations</Text>
+            <View style={[
+              styles.searchContainer,
+              focusedField === 'name' ? styles.searchContainerFocused : null
+            ]}>
+              <Feather name="user" size={18} color={focusedField === 'name' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+              <TextInput
+                style={styles.textInput}
+                placeholder="Nom complet"
+                placeholderTextColor="#9ca49a"
+                value={fullName}
+                onChangeText={setFullName}
+                onFocus={() => setFocusedField('name')}
+                onBlur={() => setFocusedField(null)}
+              />
+            </View>
+
+            <View style={[
+              styles.searchContainer,
+              focusedField === 'phone' ? styles.searchContainerFocused : null
+            ]}>
+              <Feather name="phone" size={18} color={focusedField === 'phone' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+              <TextInput
+                style={styles.textInput}
+                placeholder="+237 6XX XXX XXX"
+                placeholderTextColor="#9ca49a"
+                keyboardType="phone-pad"
+                value={phone}
+                onChangeText={setPhone}
+                onFocus={() => setFocusedField('phone')}
+                onBlur={() => setFocusedField(null)}
+              />
+            </View>
+
             <Text style={styles.label}>Votre GIC</Text>
             
             {/* Input de recherche */}

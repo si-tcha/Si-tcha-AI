@@ -1,193 +1,190 @@
 import * as SQLite from 'expo-sqlite';
+import {
+  AgriProgramRecord,
+  AlertPreferences,
+  CartItemRecord,
+  ConfidentialGic,
+  DEFAULT_ALERT_PREFS,
+  DEFAULT_CART,
+  DEFAULT_EXPENSES,
+  DEFAULT_GICS_PUBLIC,
+  DEFAULT_GIC_MEMBERS,
+  DEFAULT_GIC_NEEDS,
+  DEFAULT_GIC_PROFILE,
+  DEFAULT_HARVESTS,
+  DEFAULT_MARKET,
+  DEFAULT_PHYTO,
+  DEFAULT_PRODUCTS,
+  DEFAULT_PROGRAMS,
+  DEFAULT_SYNC_PEER,
+  DEFAULT_WEATHER,
+  ExpenseRecord,
+  GicMember,
+  GicNeed,
+  GicProfile,
+  HarvestRecord,
+  MarketPriceRecord,
+  OrderRecord,
+  OrderType,
+  PhytoAlertRecord,
+  ProductOffer,
+  STORAGE_KEYS,
+  SyncResult,
+  WeatherRecord,
+  nowIso,
+} from './database.shared';
 
-export interface HarvestRecord {
-  id: string;
-  product: string;
-  volume: number; // en kg
-  date: string;
-  synced?: boolean;
-}
-
-export interface ExpenseRecord {
-  id: string;
-  label: string;
-  amount: number; // en FCFA
-  category: string;
-  synced?: boolean;
-}
-
-export interface CartItemRecord {
-  id: string;
-  productId: string;
-  name: string;
-  price: string;
-  unit: string;
-  quantity: number;
-  synced?: boolean;
-}
-
-export interface UserProfileRecord {
-  id: string;
-  name: string;
-  phone: string;
-  role: 'buyer' | 'seller';
-  companyOrGic: string;
-}
-
-const DEFAULT_HARVESTS: HarvestRecord[] = [
-  { id: '1', product: 'Pommes de terre', volume: 1200, date: '12 Juillet 2026', synced: true },
-  { id: '2', product: 'Tomates', volume: 800, date: '18 Juillet 2026', synced: true }
-];
-
-const DEFAULT_EXPENSES: ExpenseRecord[] = [
-  { id: '1', label: 'Fertilisants NPK', amount: 150000, category: 'Intrants', synced: true },
-  { id: '2', label: 'Transport récolte', amount: 45000, category: 'Transport', synced: true },
-  { id: '3', label: 'Main d\'œuvre semis', amount: 80000, category: 'Main d\'œuvre', synced: true }
-];
-
-const DEFAULT_CART: CartItemRecord[] = [];
+export type {
+  AgriProgramRecord,
+  AlertPreferences,
+  CartItemRecord,
+  ConfidentialGic,
+  ExpenseRecord,
+  GicMember,
+  GicNeed,
+  GicProfile,
+  HarvestRecord,
+  MarketPriceRecord,
+  OrderRecord,
+  OrderType,
+  OrderStatus,
+  PhytoAlertRecord,
+  ProductOffer,
+  SyncResult,
+  WeatherRecord,
+} from './database.shared';
 
 /**
- * Implémentation native (iOS/Android) — SQLite via expo-sqlite.
- * Sur le web, Metro résout database.web.ts à la place de ce fichier.
+ * Implémentation native (iOS/Android) — stockage via expo-sqlite.
+ * Table kv_store = miroir des clés JSON (même API que database.web.ts).
  */
 class DatabaseService {
   private getDb() {
     return SQLite.openDatabaseSync('sitcha.db');
   }
 
+  private ensureKv(key: string, fallback: unknown) {
+    const db = this.getDb();
+    const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as
+      | { value: string }
+      | null;
+    if (!row) {
+      db.runSync('INSERT INTO kv_store (key, value) VALUES (?, ?);', [
+        key,
+        JSON.stringify(fallback),
+      ]);
+    }
+  }
+
+  private readKv<T>(key: string, fallback: T): T {
+    try {
+      const db = this.getDb();
+      const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as
+        | { value: string }
+        | null;
+      return row ? (JSON.parse(row.value) as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private writeKv(key: string, value: unknown) {
+    const db = this.getDb();
+    db.runSync(
+      'INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);',
+      [key, JSON.stringify(value)]
+    );
+  }
+
   async initDatabase(): Promise<void> {
     try {
       const db = this.getDb();
       db.execSync(`
-        CREATE TABLE IF NOT EXISTS harvests (
-          id TEXT PRIMARY KEY NOT NULL,
-          product TEXT NOT NULL,
-          volume REAL NOT NULL,
-          date TEXT NOT NULL,
-          synced INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS expenses (
-          id TEXT PRIMARY KEY NOT NULL,
-          label TEXT NOT NULL,
-          amount REAL NOT NULL,
-          category TEXT NOT NULL,
-          synced INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS cart_items (
-          id TEXT PRIMARY KEY NOT NULL,
-          productId TEXT NOT NULL,
-          name TEXT NOT NULL,
-          price TEXT NOT NULL,
-          unit TEXT NOT NULL,
-          quantity INTEGER NOT NULL,
-          synced INTEGER DEFAULT 0
+        CREATE TABLE IF NOT EXISTS kv_store (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT NOT NULL
         );
       `);
+      this.ensureKv(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
+      this.ensureKv(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
+      this.ensureKv(STORAGE_KEYS.CART, DEFAULT_CART);
+      this.ensureKv(STORAGE_KEYS.GIC_PROFILE, DEFAULT_GIC_PROFILE);
+      this.ensureKv(STORAGE_KEYS.GIC_MEMBERS, DEFAULT_GIC_MEMBERS);
+      this.ensureKv(STORAGE_KEYS.GIC_NEEDS, DEFAULT_GIC_NEEDS);
+      this.ensureKv(STORAGE_KEYS.WEATHER, DEFAULT_WEATHER);
+      this.ensureKv(STORAGE_KEYS.MARKET, DEFAULT_MARKET);
+      this.ensureKv(STORAGE_KEYS.PHYTO, DEFAULT_PHYTO);
+      this.ensureKv(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
+      this.ensureKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
+      this.ensureKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
+      this.ensureKv(STORAGE_KEYS.ORDERS, []);
+      this.ensureKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
+      this.ensureKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
+      this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
     } catch (err) {
-      console.warn('Erreur lors de l’initialisation de SQLite natif:', err);
+      console.warn('Erreur init expo-sqlite:', err);
     }
+  }
+
+  async getLocalRole(): Promise<'leader' | 'member'> {
+    return this.readKv<'leader' | 'member'>(STORAGE_KEYS.LOCAL_ROLE, 'leader');
+  }
+
+  async setLocalRole(role: 'leader' | 'member'): Promise<void> {
+    this.writeKv(STORAGE_KEYS.LOCAL_ROLE, role);
   }
 
   async getHarvests(): Promise<HarvestRecord[]> {
-    try {
-      const db = this.getDb();
-      const result = db.getAllSync('SELECT * FROM harvests ORDER BY date DESC;') as any[];
-      if (!result.length) return DEFAULT_HARVESTS;
-      return result.map((row) => ({
-        id: row.id,
-        product: row.product,
-        volume: row.volume,
-        date: row.date,
-        synced: Boolean(row.synced),
-      }));
-    } catch (err) {
-      return DEFAULT_HARVESTS;
-    }
+    return this.readKv(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
   }
 
   async addHarvest(product: string, volume: number): Promise<HarvestRecord> {
+    const role = await this.getLocalRole();
     const newHarvest: HarvestRecord = {
       id: Date.now().toString(),
       product,
       volume,
       date: 'Aujourd\'hui',
       synced: false,
+      updatedAt: nowIso(),
+      authorRole: role,
     };
-
-    try {
-      const db = this.getDb();
-      db.runSync(
-        'INSERT INTO harvests (id, product, volume, date, synced) VALUES (?, ?, ?, ?, ?);',
-        [newHarvest.id, newHarvest.product, newHarvest.volume, newHarvest.date, 0]
-      );
-    } catch (err) {
-      console.warn('Erreur lors de l’ajout SQLite de la récolte:', err);
-    }
-
+    const harvests = await this.getHarvests();
+    this.writeKv(STORAGE_KEYS.HARVESTS, [newHarvest, ...harvests]);
     return newHarvest;
   }
 
   async getExpenses(): Promise<ExpenseRecord[]> {
-    try {
-      const db = this.getDb();
-      const result = db.getAllSync('SELECT * FROM expenses;') as any[];
-      if (!result.length) return DEFAULT_EXPENSES;
-      return result.map((row) => ({
-        id: row.id,
-        label: row.label,
-        amount: row.amount,
-        category: row.category,
-        synced: Boolean(row.synced),
-      }));
-    } catch (err) {
-      return DEFAULT_EXPENSES;
-    }
+    return this.readKv(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
   }
 
   async addExpense(label: string, amount: number, category: string): Promise<ExpenseRecord> {
+    const role = await this.getLocalRole();
     const newExpense: ExpenseRecord = {
       id: Date.now().toString(),
       label,
       amount,
       category,
       synced: false,
+      updatedAt: nowIso(),
+      authorRole: role,
     };
-
-    try {
-      const db = this.getDb();
-      db.runSync(
-        'INSERT INTO expenses (id, label, amount, category, synced) VALUES (?, ?, ?, ?, ?);',
-        [newExpense.id, newExpense.label, newExpense.amount, newExpense.category, 0]
-      );
-    } catch (err) {
-      console.warn('Erreur lors de l’ajout SQLite de la dépense:', err);
-    }
-
+    const expenses = await this.getExpenses();
+    this.writeKv(STORAGE_KEYS.EXPENSES, [newExpense, ...expenses]);
     return newExpense;
   }
 
   async getCart(): Promise<CartItemRecord[]> {
-    try {
-      const db = this.getDb();
-      const result = db.getAllSync('SELECT * FROM cart_items;') as any[];
-      return result.map((row) => ({
-        id: row.id,
-        productId: row.productId,
-        name: row.name,
-        price: row.price,
-        unit: row.unit,
-        quantity: row.quantity,
-        synced: Boolean(row.synced),
-      }));
-    } catch (err) {
-      return DEFAULT_CART;
-    }
+    return this.readKv(STORAGE_KEYS.CART, DEFAULT_CART);
   }
 
   async getCartCount(): Promise<number> {
     const cart = await this.getCart();
     return cart.reduce((acc, item) => acc + item.quantity, 0);
+  }
+
+  async clearCart(): Promise<void> {
+    this.writeKv(STORAGE_KEYS.CART, []);
   }
 
   async addToCart(product: {
@@ -205,15 +202,10 @@ class DatabaseService {
         quantity: existing.quantity + 1,
         synced: false,
       };
-      try {
-        const db = this.getDb();
-        db.runSync(
-          'UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?;',
-          [updatedItem.quantity, product.productId]
-        );
-      } catch (err) {
-        console.warn('Erreur lors de la mise à jour SQLite du panier:', err);
-      }
+      this.writeKv(
+        STORAGE_KEYS.CART,
+        cart.map((item) => (item.productId === product.productId ? updatedItem : item))
+      );
       return updatedItem;
     }
 
@@ -226,27 +218,213 @@ class DatabaseService {
       quantity: 1,
       synced: false,
     };
-
-    try {
-      const db = this.getDb();
-      db.runSync(
-        'INSERT INTO cart_items (id, productId, name, price, unit, quantity, synced) VALUES (?, ?, ?, ?, ?, ?, ?);',
-        [newItem.id, newItem.productId, newItem.name, newItem.price, newItem.unit, newItem.quantity, 0]
-      );
-    } catch (err) {
-      console.warn('Erreur lors de l’ajout SQLite au panier:', err);
-    }
-
+    this.writeKv(STORAGE_KEYS.CART, [newItem, ...cart]);
     return newItem;
   }
 
-  async getFinancialSummary(): Promise<{ totalVolume: number; totalExpenses: number; costPricePerKg: number }> {
+  async getGicProfile(): Promise<GicProfile> {
+    return this.readKv(STORAGE_KEYS.GIC_PROFILE, DEFAULT_GIC_PROFILE);
+  }
+
+  async updateGicProfile(patch: Partial<GicProfile>): Promise<GicProfile> {
+    const role = await this.getLocalRole();
+    const current = await this.getGicProfile();
+    const updated: GicProfile = {
+      ...current,
+      ...patch,
+      updatedAt: nowIso(),
+      authorRole: role,
+    };
+    this.writeKv(STORAGE_KEYS.GIC_PROFILE, updated);
+    return updated;
+  }
+
+  async getGicMembers(): Promise<GicMember[]> {
+    return this.readKv(STORAGE_KEYS.GIC_MEMBERS, DEFAULT_GIC_MEMBERS);
+  }
+
+  async getGicNeeds(): Promise<GicNeed[]> {
+    return this.readKv(STORAGE_KEYS.GIC_NEEDS, DEFAULT_GIC_NEEDS);
+  }
+
+  async addGicNeed(category: string, description: string): Promise<GicNeed> {
+    const role = await this.getLocalRole();
+    const need: GicNeed = {
+      id: Date.now().toString(),
+      category,
+      description,
+      updatedAt: nowIso(),
+      authorRole: role,
+    };
+    const needs = await this.getGicNeeds();
+    this.writeKv(STORAGE_KEYS.GIC_NEEDS, [need, ...needs]);
+    return need;
+  }
+
+  async getWeather(): Promise<WeatherRecord[]> {
+    return this.readKv(STORAGE_KEYS.WEATHER, DEFAULT_WEATHER);
+  }
+
+  async getMarketPrices(): Promise<MarketPriceRecord[]> {
+    return this.readKv(STORAGE_KEYS.MARKET, DEFAULT_MARKET);
+  }
+
+  async getPhytoAlerts(): Promise<PhytoAlertRecord[]> {
+    return this.readKv(STORAGE_KEYS.PHYTO, DEFAULT_PHYTO);
+  }
+
+  async getAgriPrograms(): Promise<AgriProgramRecord[]> {
+    return this.readKv(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
+  }
+
+  async getProducts(): Promise<ProductOffer[]> {
+    return this.readKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
+  }
+
+  async getConfidentialGics(): Promise<ConfidentialGic[]> {
+    return this.readKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
+  }
+
+  async getOrders(): Promise<OrderRecord[]> {
+    return this.readKv(STORAGE_KEYS.ORDERS, []);
+  }
+
+  async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
+    const cart = await this.getCart();
+    if (!cart.length) return [];
+    const products = await this.getProducts();
+    const created: OrderRecord[] = cart.map((item, index) => {
+      const offer = products.find((p) => p.id === item.productId);
+      return {
+        id: `${Date.now()}-${index}`,
+        type,
+        status: type === 'reservation' ? 'en_attente' : 'confirmee',
+        productId: item.productId,
+        productName: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        price: item.price,
+        gicName: offer?.gicName ?? 'GIC partenaire',
+        createdAt: nowIso(),
+      };
+    });
+    const existing = await this.getOrders();
+    this.writeKv(STORAGE_KEYS.ORDERS, [...created, ...existing]);
+    await this.clearCart();
+    return created;
+  }
+
+  async getAlertPreferences(): Promise<AlertPreferences> {
+    return this.readKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
+  }
+
+  async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> {
+    this.writeKv(STORAGE_KEYS.ALERT_PREFS, prefs);
+    return prefs;
+  }
+
+  async getMatchingAlertCount(): Promise<number> {
+    const prefs = await this.getAlertPreferences();
+    if (!prefs.productNames.length && !prefs.bassins.length) return 0;
+    const products = await this.getProducts();
+    return products.filter((p) => {
+      const matchProduct =
+        !prefs.productNames.length ||
+        prefs.productNames.includes(p.name) ||
+        prefs.productNames.includes(p.category);
+      const matchBassin = !prefs.bassins.length || prefs.bassins.includes(p.bassin);
+      return matchProduct && matchBassin;
+    }).length;
+  }
+
+  async getFinancialSummary(): Promise<{
+    totalVolume: number;
+    totalExpenses: number;
+    costPricePerKg: number;
+    costPricePerHa: number;
+    surfaceHa: number;
+  }> {
     const harvests = await this.getHarvests();
     const expenses = await this.getExpenses();
+    const profile = await this.getGicProfile();
     const totalVolume = harvests.reduce((acc, curr) => acc + curr.volume, 0);
     const totalExpenses = expenses.reduce((acc, curr) => acc + curr.amount, 0);
     const costPricePerKg = totalVolume > 0 ? Math.round(totalExpenses / totalVolume) : 0;
-    return { totalVolume, totalExpenses, costPricePerKg };
+    const surfaceHa = profile.surfaceHa || 0;
+    const costPricePerHa = surfaceHa > 0 ? Math.round(totalExpenses / surfaceHa) : 0;
+    return { totalVolume, totalExpenses, costPricePerKg, costPricePerHa, surfaceHa };
+  }
+
+  async getLastSyncAt(): Promise<string | null> {
+    return this.readKv<string | null>(STORAGE_KEYS.LAST_SYNC, null);
+  }
+
+  async runMockSync(): Promise<SyncResult> {
+    const peer = this.readKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
+    let conflictsResolvedByLeader = 0;
+    let mergedCount = 0;
+
+    const mergeById = <T extends { id: string; updatedAt?: string; authorRole?: 'leader' | 'member' }>(
+      local: T[],
+      remote: T[]
+    ): T[] => {
+      const map = new Map<string, T>();
+      local.forEach((item) => map.set(item.id, item));
+      remote.forEach((remoteItem) => {
+        const existing = map.get(remoteItem.id);
+        if (!existing) {
+          map.set(remoteItem.id, remoteItem);
+          mergedCount += 1;
+          return;
+        }
+        const localTs = existing.updatedAt ? Date.parse(existing.updatedAt) : 0;
+        const remoteTs = remoteItem.updatedAt ? Date.parse(remoteItem.updatedAt) : 0;
+        if (remoteTs > localTs) {
+          if (existing.authorRole === 'leader' && remoteItem.authorRole === 'member') {
+            conflictsResolvedByLeader += 1;
+            return;
+          }
+          if (remoteItem.authorRole === 'leader' && existing.authorRole === 'member') {
+            map.set(remoteItem.id, remoteItem);
+            conflictsResolvedByLeader += 1;
+            mergedCount += 1;
+            return;
+          }
+          map.set(remoteItem.id, remoteItem);
+          mergedCount += 1;
+        } else if (
+          remoteTs === localTs &&
+          remoteItem.authorRole === 'leader' &&
+          existing.authorRole !== 'leader'
+        ) {
+          map.set(remoteItem.id, remoteItem);
+          conflictsResolvedByLeader += 1;
+          mergedCount += 1;
+        }
+      });
+      return Array.from(map.values());
+    };
+
+    const harvests = mergeById(await this.getHarvests(), peer.harvests ?? []);
+    const expenses = mergeById(await this.getExpenses(), peer.expenses ?? []);
+    const needs = mergeById(await this.getGicNeeds(), peer.needs ?? []);
+
+    this.writeKv(STORAGE_KEYS.HARVESTS, harvests);
+    this.writeKv(STORAGE_KEYS.EXPENSES, expenses);
+    this.writeKv(STORAGE_KEYS.GIC_NEEDS, needs);
+
+    const lastSyncAt = nowIso();
+    this.writeKv(STORAGE_KEYS.LAST_SYNC, lastSyncAt);
+
+    return {
+      mergedCount,
+      conflictsResolvedByLeader,
+      lastSyncAt,
+      summary:
+        mergedCount === 0 && conflictsResolvedByLeader === 0
+          ? 'Aucune nouveauté à fusionner. Données déjà à jour.'
+          : `Fusion terminée : ${mergedCount} élément(s) intégré(s), ${conflictsResolvedByLeader} conflit(s) tranché(s) en faveur du Leader GIC.`,
+    };
   }
 }
 

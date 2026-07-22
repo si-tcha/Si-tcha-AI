@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { apiClient } from '@/services/api';
 
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -22,16 +23,29 @@ export default function LoginScreen() {
     router.back();
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!fullName.trim() || !phone.trim()) {
       alert('Veuillez remplir tous les champs.');
       return;
     }
-    
-    // Pour la simulation de prototype: 
-    // Si le nom contient "GIC" ou "Vendeur", on simule une connexion Vendeur.
-    // Sinon, on simule une connexion Acheteur.
-    if (fullName.toLowerCase().includes('gic') || fullName.toLowerCase().includes('vendeur') || fullName.toLowerCase().includes('jean')) {
+
+    const guessedRole = fullName.toLowerCase().includes('gic') || fullName.toLowerCase().includes('vendeur') || fullName.toLowerCase().includes('jean')
+      ? 'seller'
+      : 'buyer';
+
+    try {
+      const session = await apiClient.login(phone, guessedRole);
+      if (session.user.role === 'seller') {
+        router.replace(session.user.status === 'active' ? '/(auth)/activation-success' : '/(auth)/activation-pending');
+      } else {
+        router.replace('/(buyer)/home');
+      }
+      return;
+    } catch {
+      // Fallback offline: permet de continuer à utiliser les données locales si le serveur n'est pas joignable.
+    }
+
+    if (guessedRole === 'seller') {
       router.replace('/(auth)/activation-success');
     } else {
       router.replace('/(buyer)/home');

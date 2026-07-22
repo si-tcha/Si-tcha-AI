@@ -4,6 +4,10 @@ export default function BuyerLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="home" />
+      <Stack.Screen name="gics" />
+      <Stack.Screen name="checkout" />
+      <Stack.Screen name="orders" />
+      <Stack.Screen name="alerts" />
     </Stack>
   );
 }

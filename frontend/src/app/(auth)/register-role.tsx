@@ -106,7 +106,7 @@ export default function RegisterRoleScreen() {
             selectedRole === 'seller' ? styles.iconWrapperActive : null
           ]}>
             <Feather 
-              name="leaf" 
+              name="home" 
               size={28} 
               color={selectedRole === 'seller' ? '#f3ecd8' : '#101e0f'} 
             />
