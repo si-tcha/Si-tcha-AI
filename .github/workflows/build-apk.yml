@@ -37,6 +37,11 @@ jobs:
           cd frontend
           npm install
 
+      - name: Generate Native Android Folder (Expo Prebuild)
+        run: |
+          cd frontend
+          npx expo prebuild --platform android --clean
+
       - name: Make gradlew executable
         run: |
           chmod +x frontend/android/gradlew
