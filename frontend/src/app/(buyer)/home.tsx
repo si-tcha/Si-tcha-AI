@@ -5,6 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { dbService, ProductOffer } from '@/services/database';
+import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
+import { useToast } from '@/components/ui/toast';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -14,7 +16,7 @@ const MATURITES = ['Tous', 'Mature', 'En maturation', 'Précoce', 'Séché'];
 
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
-const CARD_WIDTH = (Math.min(SCREEN_WIDTH, CONTAINER_WIDTH) - 48) / 2;
+const CARD_WIDTH = (Math.min(SCREEN_WIDTH, CONTAINER_WIDTH) - 44) / 2;
 
 export default function BuyerHomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState('Tous');
@@ -25,6 +27,7 @@ export default function BuyerHomeScreen() {
   const [alertCount, setAlertCount] = useState(0);
   const [products, setProducts] = useState<ProductOffer[]>([]);
   const router = useRouter();
+  const { showToast } = useToast();
 
   useFocusEffect(
     useCallback(() => {
@@ -59,10 +62,12 @@ export default function BuyerHomeScreen() {
         price: product.price,
         unit: product.unit,
       });
-      setCartCount(await dbService.getCartCount());
+      const newCount = await dbService.getCartCount();
+      setCartCount(newCount);
+      showToast({ message: `${product.name} ajouté au panier !`, type: 'success' });
     } catch (err) {
       console.warn('Erreur ajout panier:', err);
-      alert('Impossible d\'ajouter au panier.');
+      showToast({ message: 'Impossible d\'ajouter au panier.', type: 'error' });
     }
   };
 
@@ -90,7 +95,7 @@ export default function BuyerHomeScreen() {
         <Text style={styles.productMeta}>{item.volumeDisponible} {item.unit} · {item.dateDispo}</Text>
         <View style={styles.priceRow}>
           <Text style={styles.productPrice}>{item.price} FCFA/{item.unit}</Text>
-          <TouchableOpacity onPress={() => handleAddToCart(item)} style={styles.addButton}>
+          <TouchableOpacity onPress={() => handleAddToCart(item)} style={styles.addButton} activeOpacity={0.8}>
             <Feather name="plus" size={16} color="#f3ecd8" />
           </TouchableOpacity>
         </View>
@@ -122,17 +127,18 @@ export default function BuyerHomeScreen() {
   return (
     <SafeAreaView style={styles.outerContainer}>
       <View style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#f3ecd8" />
+        <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
 
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerText}>
-            <Text style={styles.greetingText}>Bonjour,</Text>
-            <Text style={styles.mainActionText}>Que cherchez-vous ?</Text>
+            <Text style={styles.greetingText}>Marche Direct Cameroun</Text>
+            <Text style={styles.mainActionText}>Récoltes Fraîches & GIC</Text>
           </View>
 
           <View style={styles.headerIcons}>
             <TouchableOpacity style={styles.iconButton} onPress={() => router.push('/(buyer)/checkout')}>
-              <Feather name="shopping-bag" size={20} color="#101e0f" />
+              <Feather name="shopping-bag" size={20} color="#f3ecd8" />
               {cartCount > 0 && (
                 <View style={styles.badgeContainer}>
                   <Text style={styles.badgeText}>{cartCount}</Text>
@@ -141,7 +147,7 @@ export default function BuyerHomeScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.iconButton} onPress={() => router.push('/(buyer)/alerts')}>
-              <Feather name="bell" size={20} color="#101e0f" />
+              <Feather name="bell" size={20} color="#f3ecd8" />
               {alertCount > 0 && (
                 <View style={[styles.badgeContainer, { backgroundColor: '#d97834' }]}>
                   <Text style={styles.badgeText}>{alertCount}</Text>
@@ -155,34 +161,26 @@ export default function BuyerHomeScreen() {
           </View>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.navPills}>
-          <TouchableOpacity style={styles.navPill} onPress={() => router.push('/(buyer)/gics')}>
-            <Feather name="shield" size={14} color="#f3ecd8" />
-            <Text style={styles.navPillText}>GIC</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navPill} onPress={() => router.push('/(buyer)/orders')}>
-            <Feather name="file-text" size={14} color="#f3ecd8" />
-            <Text style={styles.navPillText}>Commandes</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.navPill, styles.navPillAccent]} onPress={() => router.push('/(buyer)/checkout')}>
-            <Feather name="check-circle" size={14} color="#f3ecd8" />
-            <Text style={styles.navPillText}>Réserver</Text>
-          </TouchableOpacity>
-        </ScrollView>
-
+        {/* Search Bar */}
         <View style={styles.searchSection}>
           <View style={styles.searchBar}>
-            <Feather name="search" size={18} color="#5a6258" style={styles.searchIcon} />
+            <Feather name="search" size={18} color="#889e87" style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Rechercher des produits..."
+              placeholder="Rechercher tomates, maïs, GIC..."
               placeholderTextColor="#9ca49a"
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
+            {searchQuery ? (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Feather name="x" size={16} color="#5a6258" />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
+        {/* Filters */}
         <View style={styles.categoriesSection}>
           {renderFilterRow(CATEGORIES, selectedCategory, setSelectedCategory)}
         </View>
@@ -193,10 +191,11 @@ export default function BuyerHomeScreen() {
           {renderFilterRow(MATURITES, selectedMaturite, setSelectedMaturite)}
         </View>
 
+        {/* Product Grid */}
         <View style={styles.productsSection}>
           <View style={styles.productsHeader}>
-            <Text style={styles.productsTitle}>Tous les produits</Text>
-            <Text style={styles.productsCount}>{filteredProducts.length} articles</Text>
+            <Text style={styles.productsTitle}>Offres Certifiées GIC</Text>
+            <Text style={styles.productsCount}>{filteredProducts.length} récoltes répertoriées</Text>
           </View>
 
           <FlatList
@@ -209,12 +208,34 @@ export default function BuyerHomeScreen() {
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Feather name="search" size={40} color="#5a6258" style={styles.emptyIcon} />
-                <Text style={styles.emptyText}>Aucun produit ne correspond à votre recherche.</Text>
+                <Feather name="search" size={40} color="#889e87" style={styles.emptyIcon} />
+                <Text style={styles.emptyText}>Aucun produit disponible pour ces critères de recherche.</Text>
               </View>
             }
           />
         </View>
+
+        {/* Floating Cart bar if items exist */}
+        {cartCount > 0 && (
+          <TouchableOpacity 
+            style={styles.floatingCartBar} 
+            onPress={() => router.push('/(buyer)/checkout')}
+            activeOpacity={0.9}
+          >
+            <View style={styles.floatingCartLeft}>
+              <View style={styles.floatingCartBadge}>
+                <Text style={styles.floatingCartBadgeText}>{cartCount}</Text>
+              </View>
+              <Text style={styles.floatingCartText}>Voir mon panier</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.floatingCartAction}>Payer MoMo / OM</Text>
+              <Feather name="arrow-right" size={16} color="#ffffff" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        <BottomNavBar role="buyer" cartCount={cartCount} alertCount={alertCount} />
       </View>
     </SafeAreaView>
   );
@@ -223,7 +244,7 @@ export default function BuyerHomeScreen() {
 const styles = StyleSheet.create({
   outerContainer: {
     flex: 1,
-    backgroundColor: isWeb ? '#e6dfcc' : '#f3ecd8',
+    backgroundColor: '#101e0f',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -233,11 +254,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3ecd8',
     position: 'relative',
     overflow: 'hidden',
-    shadowColor: isWeb ? '#101e0f' : 'transparent',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: isWeb ? 10 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -245,20 +261,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
+    backgroundColor: '#101e0f',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1d331b',
   },
   headerText: { gap: 2 },
-  greetingText: { fontSize: 14, color: '#5a6258', fontWeight: '600' },
-  mainActionText: { fontSize: 20, fontWeight: '800', color: '#101e0f' },
-  headerIcons: { flexDirection: 'row', gap: 12 },
+  greetingText: { fontSize: 11, color: '#889e87', fontWeight: '700', textTransform: 'uppercase' },
+  mainActionText: { fontSize: 18, fontWeight: '800', color: '#f3ecd8' },
+  headerIcons: { flexDirection: 'row', gap: 10 },
   iconButton: {
-    width: 42,
-    height: 42,
+    width: 38,
+    height: 38,
     borderRadius: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#1d331b',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e6dfcc',
     position: 'relative',
   },
   badgeContainer: {
@@ -273,55 +290,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
   },
-  badgeText: { color: '#f3ecd8', fontSize: 9, fontWeight: '700' },
-  navPills: { paddingHorizontal: Spacing.four, gap: 8, marginBottom: Spacing.two },
-  navPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#101e0f',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  navPillAccent: { backgroundColor: '#d97834' },
-  navPillText: { color: '#f3ecd8', fontSize: 12, fontWeight: '700' },
-  searchSection: { paddingHorizontal: Spacing.four, marginBottom: Spacing.two },
+  badgeText: { color: '#f3ecd8', fontSize: 9, fontWeight: '800' },
+  searchSection: { paddingHorizontal: Spacing.four, marginTop: Spacing.two, marginBottom: Spacing.two },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
     borderRadius: 16,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#e6dfcc',
     paddingHorizontal: Spacing.three,
-    height: 50,
+    height: 48,
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 14, color: '#101e0f', fontWeight: '500' },
-  categoriesSection: { marginBottom: Spacing.two },
+  categoriesSection: { marginBottom: 6 },
   categoriesScroll: { paddingHorizontal: Spacing.four, gap: 8 },
   categoryPill: {
     backgroundColor: '#ffffff',
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 14,
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#e6dfcc',
   },
   categoryPillSelected: { backgroundColor: '#101e0f', borderColor: '#101e0f' },
-  categoryText: { fontSize: 12, fontWeight: '600', color: '#5a6258' },
+  categoryText: { fontSize: 12, fontWeight: '700', color: '#5a6258' },
   categoryTextSelected: { color: '#f3ecd8' },
-  productsSection: { flex: 1, paddingHorizontal: Spacing.four },
+  productsSection: { flex: 1, paddingHorizontal: Spacing.four, marginTop: 4 },
   productsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: Spacing.three,
+    marginBottom: Spacing.two,
   },
-  productsTitle: { fontSize: 16, fontWeight: '800', color: '#101e0f' },
-  productsCount: { fontSize: 12, fontWeight: '600', color: '#5a6258' },
-  productsGrid: { paddingBottom: Spacing.four },
+  productsTitle: { fontSize: 15, fontWeight: '800', color: '#101e0f' },
+  productsCount: { fontSize: 11, fontWeight: '600', color: '#5a6258' },
+  productsGrid: { paddingBottom: 80 },
   productsColumnWrapper: { justifyContent: 'space-between', marginBottom: Spacing.three },
   productCard: {
     width: CARD_WIDTH,
@@ -338,42 +343,65 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
-  productEmoji: { fontSize: 42 },
+  productEmoji: { fontSize: 44 },
   categoryBadge: {
     position: 'absolute',
     top: 8,
     left: 8,
-    backgroundColor: '#e6dfcc80',
+    backgroundColor: '#101e0f90',
     paddingVertical: 3,
     paddingHorizontal: 8,
-    borderRadius: 10,
+    borderRadius: 8,
   },
-  categoryBadgeText: { fontSize: 9, fontWeight: '700', color: '#101e0f' },
+  categoryBadgeText: { fontSize: 9, fontWeight: '800', color: '#f3ecd8' },
   productInfo: { padding: Spacing.three, gap: 3 },
-  productName: { fontSize: 13, fontWeight: '700', color: '#101e0f' },
-  productGic: { fontSize: 11, color: '#5a6258', fontWeight: '500' },
+  productName: { fontSize: 13, fontWeight: '800', color: '#101e0f' },
+  productGic: { fontSize: 11, color: '#5a6258', fontWeight: '600' },
   productMeta: { fontSize: 10, color: '#889e87', fontWeight: '600' },
   priceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 6,
   },
   productPrice: { fontSize: 12, fontWeight: '800', color: '#d97834' },
   addButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 10,
     backgroundColor: '#101e0f',
     justifyContent: 'center',
     alignItems: 'center',
   },
   emptyContainer: { paddingVertical: 60, alignItems: 'center', gap: 12 },
-  emptyIcon: { opacity: 0.3 },
+  emptyIcon: { opacity: 0.4 },
   emptyText: {
     fontSize: 13,
     color: '#5a6258',
     textAlign: 'center',
     paddingHorizontal: Spacing.four,
   },
+  floatingCartBar: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 76 : 68,
+    left: 16,
+    right: 16,
+    backgroundColor: '#d97834',
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    shadowColor: '#d97834',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  floatingCartLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  floatingCartBadge: { backgroundColor: '#ffffff', width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  floatingCartBadgeText: { color: '#d97834', fontSize: 12, fontWeight: '900' },
+  floatingCartText: { color: '#ffffff', fontSize: 14, fontWeight: '800' },
+  floatingCartAction: { color: '#ffffff', fontSize: 13, fontWeight: '800' },
 });

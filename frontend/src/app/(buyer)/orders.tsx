@@ -1,10 +1,12 @@
-import { Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Spacing } from '@/constants/theme';
 import { dbService, OrderRecord } from '@/services/database';
+import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
+import { useToast } from '@/components/ui/toast';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -13,12 +15,14 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 const TYPE_LABELS: Record<string, string> = {
   commande_ferme: 'Commande ferme',
   achat_direct: 'Achat direct',
-  reservation: 'Réservation',
+  reservation: 'Réservation garantie',
 };
 
 export default function BuyerOrdersScreen() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -33,20 +37,25 @@ export default function BuyerOrdersScreen() {
   return (
     <SafeAreaView style={styles.outer}>
       <View style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#f3ecd8" />
+        <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
+        
+        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Feather name="arrow-left" size={22} color="#101e0f" />
+            <Feather name="arrow-left" size={20} color="#f3ecd8" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Mes commandes</Text>
+          <Text style={styles.headerTitle}>Mes Commandes & Bordereaux</Text>
           <View style={styles.iconBtn} />
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {orders.length === 0 ? (
             <View style={styles.empty}>
-              <Feather name="file-text" size={36} color="#889e87" />
-              <Text style={styles.emptyText}>Aucune commande enregistrée.</Text>
+              <Feather name="shopping-bag" size={40} color="#889e87" />
+              <Text style={styles.emptyText}>Aucune commande enregistrée pour l'instant.</Text>
+              <TouchableOpacity style={styles.shopBtn} onPress={() => router.push('/(buyer)/home')}>
+                <Text style={styles.shopBtnText}>Explorer le marché direct</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             orders.map((o) => (
@@ -54,28 +63,87 @@ export default function BuyerOrdersScreen() {
                 <View style={styles.row}>
                   <Text style={styles.title}>{o.productName}</Text>
                   <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{o.status}</Text>
+                    <Text style={styles.badgeText}>✓ {o.status.toUpperCase()}</Text>
                   </View>
                 </View>
-                <Text style={styles.meta}>{TYPE_LABELS[o.type] ?? o.type}</Text>
-                <Text style={styles.meta}>{o.gicName}</Text>
-                <Text style={styles.value}>
-                  {o.quantity} {o.unit} · {o.price} FCFA/{o.unit}
-                </Text>
-                <Text style={styles.meta}>
-                  {new Date(o.createdAt).toLocaleString('fr-FR')}
-                </Text>
+
+                <View style={styles.typeBadgeRow}>
+                  <Text style={styles.typeBadgeText}>{TYPE_LABELS[o.type] ?? o.type}</Text>
+                  <Text style={styles.gicTag}>GIC: {o.gicName}</Text>
+                </View>
+
+                <View style={styles.priceRow}>
+                  <Text style={styles.value}>
+                    {o.quantity} {o.unit} · {o.price} FCFA/{o.unit}
+                  </Text>
+                  <Text style={styles.totalPrice}>{(o.quantity * parseFloat(o.price || '0')).toLocaleString()} FCFA</Text>
+                </View>
+
+                {/* Timeline Progress */}
+                <View style={styles.timelineRow}>
+                  <View style={styles.timelineStepActive}>
+                    <Feather name="check" size={10} color="#ffffff" />
+                  </View>
+                  <View style={styles.timelineLineActive} />
+                  <View style={styles.timelineStepActive}>
+                    <Feather name="package" size={10} color="#ffffff" />
+                  </View>
+                  <View style={styles.timelineLine} />
+                  <View style={styles.timelineStep}>
+                    <Feather name="truck" size={10} color="#889e87" />
+                  </View>
+                </View>
+                <Text style={styles.timelineLabel}>Préparé en entrepôt GIC · Prêt pour transport</Text>
+
+                <View style={styles.footerRow}>
+                  <Text style={styles.dateMeta}>
+                    {new Date(o.createdAt).toLocaleString('fr-FR')}
+                  </Text>
+                  <TouchableOpacity style={styles.receiptBtn} onPress={() => setSelectedOrder(o)}>
+                    <Feather name="grid" size={13} color="#101e0f" />
+                    <Text style={styles.receiptBtnText}>Reçu QR</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))
           )}
         </ScrollView>
+
+        {/* Modal Reçu QR */}
+        <Modal visible={!!selectedOrder} animationType="slide" transparent>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Reçu Transactionnel QR</Text>
+                <TouchableOpacity onPress={() => setSelectedOrder(null)}>
+                  <Feather name="x" size={22} color="#101e0f" />
+                </TouchableOpacity>
+              </View>
+
+              {selectedOrder && (
+                <View style={styles.receiptBox}>
+                  <View style={styles.qrPlaceholder}>
+                    <Feather name="grid" size={90} color="#101e0f" />
+                  </View>
+                  <Text style={styles.receiptCode}>REF-{selectedOrder.id.substring(0, 8).toUpperCase()}</Text>
+                  <Text style={styles.receiptProd}>{selectedOrder.productName}</Text>
+                  <Text style={styles.receiptGic}>Fournisseur: {selectedOrder.gicName}</Text>
+                  <Text style={styles.receiptTotal}>Total: {(selectedOrder.quantity * parseFloat(selectedOrder.price || '0')).toLocaleString()} FCFA</Text>
+                  <Text style={styles.receiptHint}>Paiement Mobile Money Sécurisé · Présentez ce QR Code au magasinier du GIC.</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        <BottomNavBar role="buyer" />
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  outer: { flex: 1, backgroundColor: isWeb ? '#e6dfcc' : '#f3ecd8', alignItems: 'center' },
+  outer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
   container: { width: CONTAINER_WIDTH, height: '100%', backgroundColor: '#f3ecd8' },
   header: {
     flexDirection: 'row',
@@ -83,31 +151,61 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
+    backgroundColor: '#101e0f',
     borderBottomWidth: 1,
-    borderBottomColor: '#e6dfcc',
+    borderBottomColor: '#1d331b',
   },
-  iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: '#101e0f' },
-  scroll: { padding: Spacing.four, gap: 10 },
+  iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#1d331b', alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 16, fontWeight: '800', color: '#f3ecd8' },
+  scroll: { padding: Spacing.four, gap: 12 },
   empty: { alignItems: 'center', paddingVertical: 60, gap: 12 },
-  emptyText: { fontSize: 13, color: '#5a6258' },
+  emptyText: { fontSize: 13, color: '#5a6258', fontWeight: '600' },
+  shopBtn: { backgroundColor: '#d97834', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12 },
+  shopBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 13 },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 20,
+    borderWidth: 1.5,
     borderColor: '#e6dfcc',
     padding: 14,
-    gap: 4,
+    gap: 8,
   },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 14, fontWeight: '800', color: '#101e0f', flex: 1 },
+  title: { fontSize: 15, fontWeight: '800', color: '#101e0f', flex: 1 },
   badge: {
-    backgroundColor: '#889e8730',
+    backgroundColor: '#f0fdf4',
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
   },
-  badgeText: { fontSize: 10, fontWeight: '700', color: '#101e0f' },
-  meta: { fontSize: 11, color: '#5a6258', fontWeight: '600' },
-  value: { fontSize: 13, fontWeight: '800', color: '#d97834', marginTop: 2 },
+  badgeText: { fontSize: 10, fontWeight: '800', color: '#15803d' },
+  typeBadgeRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  typeBadgeText: { fontSize: 11, fontWeight: '700', color: '#d97834' },
+  gicTag: { fontSize: 11, color: '#5a6258', fontWeight: '600' },
+  priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f9f6ef', padding: 10, borderRadius: 10 },
+  value: { fontSize: 12, fontWeight: '700', color: '#101e0f' },
+  totalPrice: { fontSize: 15, fontWeight: '900', color: '#d97834' },
+  timelineRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  timelineStepActive: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#15803d', alignItems: 'center', justifyContent: 'center' },
+  timelineLineActive: { flex: 1, height: 3, backgroundColor: '#15803d' },
+  timelineLine: { flex: 1, height: 3, backgroundColor: '#e6dfcc' },
+  timelineStep: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#e6dfcc', alignItems: 'center', justifyContent: 'center' },
+  timelineLabel: { fontSize: 10, color: '#15803d', fontWeight: '700', textAlign: 'center', marginTop: 2 },
+  footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f3ecd8', paddingTop: 8, marginTop: 4 },
+  dateMeta: { fontSize: 11, color: '#889e87', fontWeight: '600' },
+  receiptBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f3ecd8', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  receiptBtnText: { fontSize: 11, fontWeight: '800', color: '#101e0f' },
+  modalOverlay: { flex: 1, backgroundColor: '#101e0f70', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#f3ecd8', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: Spacing.four },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  modalTitle: { fontSize: 17, fontWeight: '800', color: '#101e0f' },
+  receiptBox: { alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 20, padding: 20, gap: 8, marginVertical: 10 },
+  qrPlaceholder: { padding: 10, backgroundColor: '#f9f6ef', borderRadius: 16 },
+  receiptCode: { fontSize: 12, fontWeight: '800', color: '#889e87', letterSpacing: 1 },
+  receiptProd: { fontSize: 16, fontWeight: '800', color: '#101e0f' },
+  receiptGic: { fontSize: 12, color: '#5a6258' },
+  receiptTotal: { fontSize: 18, fontWeight: '900', color: '#d97834', marginTop: 4 },
+  receiptHint: { fontSize: 11, color: '#5a6258', textAlign: 'center', lineHeight: 16, marginTop: 6 },
 });
