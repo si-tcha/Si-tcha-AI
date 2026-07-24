@@ -79,7 +79,7 @@ export default function BuyerAlertsScreen() {
                   key={name}
                   style={[styles.pill, active && styles.pillActive]}
                   onPress={() =>
-                    setPrefs((p) => ({ ...p, productNames: toggle(p.productNames, name) }))
+                    setPrefs((p: AlertPreferences) => ({ ...p, productNames: toggle(p.productNames, name) }))
                   }
                   activeOpacity={0.8}
                 >
@@ -98,7 +98,7 @@ export default function BuyerAlertsScreen() {
                   key={name}
                   style={[styles.pill, active && styles.pillActive]}
                   onPress={() =>
-                    setPrefs((p) => ({ ...p, bassins: toggle(p.bassins, name) }))
+                    setPrefs((p: AlertPreferences) => ({ ...p, bassins: toggle(p.bassins, name) }))
                   }
                   activeOpacity={0.8}
                 >

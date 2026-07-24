@@ -3,7 +3,6 @@ import React from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
-import { Feather } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -21,84 +20,88 @@ export default function WelcomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.outerContainer}>
+    <View style={styles.outerContainer}>
       <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-      <View style={styles.container}>
-        
-        {/* Section Supérieure Vert Sombre avec Bords Arrondis (50% de la hauteur) */}
-        <View style={styles.topGreenCard}>
-          <View style={styles.logoBadgeContainer}>
-            <View style={styles.logoBadge}>
-              <Text style={styles.sproutEmoji}>🌱</Text>
-              <View style={styles.smallBadgeCircle}>
-                <Text style={styles.smallBadgeText}>S</Text>
+      
+      {/* SafeAreaView englobe le tout avec fond sombre #101e0f pour la barre de statut */}
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <View style={styles.container}>
+          
+          {/* Section Supérieure Vert Sombre avec Bords Arrondis */}
+          <View style={styles.topGreenCard}>
+            <View style={styles.logoBadgeContainer}>
+              <View style={styles.logoBadge}>
+                <Text style={styles.sproutEmoji}>🌱</Text>
+                <View style={styles.smallBadgeCircle}>
+                  <Text style={styles.smallBadgeText}>S</Text>
+                </View>
               </View>
+              <Text style={styles.brandTitle}>SI-TCHA</Text>
+              <Text style={styles.brandSubtitleAi}>AI</Text>
             </View>
-            <Text style={styles.brandTitle}>SI-TCHA</Text>
-            <Text style={styles.brandSubtitleAi}>AI</Text>
+            <Text style={styles.tagline}>Le marché agricole digital du Cameroun & CEMAC</Text>
           </View>
-          <Text style={styles.tagline}>Le marché agricole digital du Cameroun</Text>
+
+          {/* Section Inférieure Crème avec Boutons */}
+          <View style={styles.bottomSection}>
+            <View style={styles.welcomeTextGroup}>
+              <Text style={styles.welcomeTitle}>Bienvenue !</Text>
+              <Text style={styles.welcomeSubtitle}>Connectez-vous ou créez votre compte sur la plateforme</Text>
+            </View>
+
+            <View style={styles.buttonGroup}>
+              {/* Bouton Se connecter (Orange) */}
+              <TouchableOpacity 
+                onPress={handleLogin} 
+                style={styles.loginButton}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.loginButtonText}>Se connecter</Text>
+              </TouchableOpacity>
+
+              {/* Bouton Créer un compte (Contour sombre) */}
+              <TouchableOpacity 
+                onPress={handleRegister} 
+                style={styles.registerButton}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.registerButtonText}>Créer un compte</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
         </View>
-
-        {/* Section Inférieure Blanche avec Boutons */}
-        <View style={styles.bottomSection}>
-          <View style={styles.welcomeTextGroup}>
-            <Text style={styles.welcomeTitle}>Bienvenue !</Text>
-            <Text style={styles.welcomeSubtitle}>Connectez-vous ou créez un nouveau compte</Text>
-          </View>
-
-          <View style={styles.buttonGroup}>
-            {/* Bouton Se connecter (Orange) */}
-            <TouchableOpacity 
-              onPress={handleLogin} 
-              style={styles.loginButton}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.loginButtonText}>Se connecter</Text>
-            </TouchableOpacity>
-
-            {/* Bouton Créer un compte (Contour sombre) */}
-            <TouchableOpacity 
-              onPress={handleRegister} 
-              style={styles.registerButton}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.registerButtonText}>Créer un compte</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   outerContainer: {
     flex: 1,
-    backgroundColor: isWeb ? '#222222' : '#ffffff',
-    justifyContent: 'center',
+    backgroundColor: '#101e0f', // Fond #101e0f pour combler le haut et la status bar
+    alignItems: 'center',
+  },
+  safeArea: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#101e0f',
     alignItems: 'center',
   },
   container: {
     width: CONTAINER_WIDTH,
     height: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f3ecd8',
     justifyContent: 'space-between',
     alignSelf: 'center',
-    shadowColor: isWeb ? '#000000' : 'transparent',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 25,
-    elevation: isWeb ? 10 : 0,
     position: 'relative',
     overflow: 'hidden',
   },
   topGreenCard: {
-    height: '48%',
-    backgroundColor: '#101e0f', // Dark Green
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
+    height: '50%',
+    backgroundColor: '#101e0f',
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: Spacing.four,
@@ -109,19 +112,19 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: '#1d331b',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
     marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#d9783440',
+    borderWidth: 1.5,
+    borderColor: '#d97834',
   },
   sproutEmoji: {
-    fontSize: 28,
+    fontSize: 30,
   },
   smallBadgeCircle: {
     position: 'absolute',
@@ -130,32 +133,32 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#4a5d4e',
+    backgroundColor: '#d97834',
     justifyContent: 'center',
     alignItems: 'center',
   },
   smallBadgeText: {
     color: '#ffffff',
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   brandTitle: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '900',
-    color: '#ffffff',
+    color: '#f3ecd8',
     letterSpacing: 1,
   },
   brandSubtitleAi: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#d97834', // Accent orange AI
+    color: '#d97834',
     letterSpacing: 2,
     marginTop: -6,
   },
   tagline: {
     fontSize: 12,
     color: '#889e87',
-    fontWeight: '500',
+    fontWeight: '600',
     textAlign: 'center',
   },
   bottomSection: {
@@ -163,7 +166,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.five,
     justifyContent: 'space-between',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f3ecd8',
   },
   welcomeTextGroup: {
     alignItems: 'center',
@@ -172,21 +175,22 @@ const styles = StyleSheet.create({
   },
   welcomeTitle: {
     fontSize: 24,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#101e0f',
     textAlign: 'center',
   },
   welcomeSubtitle: {
     fontSize: 13,
-    color: '#777777',
+    color: '#5a6258',
     textAlign: 'center',
+    fontWeight: '500',
   },
   buttonGroup: {
     gap: 12,
     marginBottom: Platform.OS === 'ios' ? Spacing.three : Spacing.two,
   },
   loginButton: {
-    backgroundColor: '#d97834', // Orange officiel Figma
+    backgroundColor: '#d97834',
     paddingVertical: 16,
     borderRadius: 16,
     alignItems: 'center',
@@ -199,7 +203,7 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: '#ffffff',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 16,
   },
   registerButton: {
@@ -213,7 +217,7 @@ const styles = StyleSheet.create({
   },
   registerButtonText: {
     color: '#101e0f',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 16,
   }
 });

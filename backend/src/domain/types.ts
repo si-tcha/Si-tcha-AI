@@ -6,6 +6,7 @@ export interface UserAccount {
   role: UserRole;
   name: string;
   phone: string;
+  password?: string;
   token: string;
   createdAt: string;
   buyerId?: string;

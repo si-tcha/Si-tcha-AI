@@ -1,6 +1,6 @@
 import { Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import React, { useEffect, useState } from 'react';
-import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Spacing } from '@/constants/theme';
@@ -27,9 +27,10 @@ export default function SellerTerrainScreen() {
   const [programs, setPrograms] = useState<AgriProgramRecord[]>([]);
   const [phyto, setPhyto] = useState<PhytoAlertRecord[]>([]);
 
-  useEffect(() => {
-    const load = async () => {
+  const loadTerrainData = useCallback(async () => {
+    try {
       await dbService.initDatabase();
+      await dbService.syncRemoteData().catch(() => {});
       const [w, m, p, ph] = await Promise.all([
         dbService.getWeather(),
         dbService.getMarketPrices(),
@@ -40,9 +41,16 @@ export default function SellerTerrainScreen() {
       setMarket(m);
       setPrograms(p);
       setPhyto(ph);
-    };
-    load();
+    } catch (err) {
+      console.warn('Erreur chargement terrain:', err);
+    }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTerrainData();
+    }, [loadTerrainData])
+  );
 
   const tabs: { key: TabKey; label: string; icon: keyof typeof Feather.glyphMap }[] = [
     { key: 'parcelles', label: 'SIG Parcelles', icon: 'map-pin' },

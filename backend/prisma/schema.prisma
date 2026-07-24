@@ -34,6 +34,7 @@ model ProduitAgricole {
   id                   BigInt                 @id @default(autoincrement())
   nom                  String                 @db.VarChar(50)
   categorie            String                 @db.VarChar(50)
+  imageURL             String?                @db.VarChar(250)
   donneesMarche        DonneeMarche[]
   historiquesProduction HistoriqueProduction[]
   recoltesOffres       RecolteOffre[]
@@ -77,11 +78,11 @@ model AgronomeInterne {
 
 model ProgrammeAgricole {
   id                  BigInt   @id @default(autoincrement())
-  nom                 String   @db.VarChar(50)
-  description         String   @db.VarChar(50)
-  criteresEligibilite String   @db.VarChar(50)
+  nom                 String   @db.VarChar(100)
+  description         String   @db.VarChar(250)
+  criteresEligibilite String   @db.VarChar(250)
   dateLimite          DateTime @db.Date
-  urlLien             String   @db.VarChar(50)
+  urlLien             String   @db.VarChar(250)
 }
 
 model HistoriqueProduction {
@@ -100,10 +101,10 @@ model HistoriqueProduction {
 
 model GIC {
   id                    BigInt                 @id @default(autoincrement())
-  nom                   String                 @db.VarChar(50)
-  logoURL               String                 @db.VarChar(50)
-  reglementInterieur    String?                @db.VarChar(250)
-  activitesPrincipales  String                 @db.VarChar(50)
+  nom                   String                 @db.VarChar(100)
+  logoURL               String                 @db.VarChar(250)
+  reglementInterieur    String?                @db.VarChar(500)
+  activitesPrincipales  String                 @db.VarChar(250)
   identifiantREF        String                 @db.VarChar(50)
   statutLegalisation    String                 @db.VarChar(50)
   timestampMaj          DateTime               @db.Date
@@ -124,6 +125,7 @@ model RecolteOffre {
   quantiteDisponible Decimal                @db.Decimal(15, 2)
   dateDispoEstimee   DateTime               @db.Date
   maturite           String                 @db.VarChar(50)
+  photoURL           String?                @db.VarChar(250)
   alerteBaisseEmise  Boolean?
   timestampMaj       DateTime               @db.Date
   produitAgricoleId  BigInt

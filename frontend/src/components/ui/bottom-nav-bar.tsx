@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
+import { useCart } from '@/services/cart-store';
 
 interface NavItem {
   key: string;
@@ -17,9 +18,12 @@ interface BottomNavBarProps {
   alertCount?: number;
 }
 
-export const BottomNavBar: React.FC<BottomNavBarProps> = ({ role, cartCount = 0, alertCount = 0 }) => {
+export const BottomNavBar: React.FC<BottomNavBarProps> = ({ role, cartCount: explicitCartCount, alertCount = 0 }) => {
   const router = useRouter();
   const pathname = usePathname();
+  const { cartCount: liveCartCount } = useCart();
+  
+  const activeCartCount = explicitCartCount !== undefined ? explicitCartCount : liveCartCount;
 
   const sellerItems: NavItem[] = [
     { key: 'home', route: '/(seller)/home', label: 'Bilan', icon: 'pie-chart' },
@@ -34,7 +38,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ role, cartCount = 0,
     { key: 'gics', route: '/(buyer)/gics', label: 'GICs Certifiés', icon: 'shield' },
     { key: 'orders', route: '/(buyer)/orders', label: 'Commandes', icon: 'file-text' },
     { key: 'prefinancing', route: '/(buyer)/prefinancing', label: 'Investir', icon: 'trending-up' },
-    { key: 'checkout', route: '/(buyer)/checkout', label: 'Panier', icon: 'shopping-cart', badge: cartCount },
+    { key: 'checkout', route: '/(buyer)/checkout', label: 'Panier', icon: 'shopping-cart', badge: activeCartCount },
   ];
 
   const items = role === 'seller' ? sellerItems : buyerItems;
@@ -46,7 +50,11 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ role, cartCount = 0,
         return (
           <TouchableOpacity
             key={item.key}
-            onPress={() => router.push(item.route as any)}
+            onPress={() => {
+              if (!isActive) {
+                router.replace(item.route as any);
+              }
+            }}
             style={styles.navItem}
             activeOpacity={0.7}
           >
@@ -56,7 +64,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ role, cartCount = 0,
                 size={20}
                 color={isActive ? '#d97834' : '#889e87'}
               />
-              {item.badge && item.badge > 0 ? (
+              {item.badge !== undefined && item.badge > 0 ? (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>{item.badge}</Text>
                 </View>

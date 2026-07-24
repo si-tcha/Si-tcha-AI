@@ -69,22 +69,22 @@ export default function PrefinancingScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.outerContainer}>
+    <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
 
-        {/* En-tête */}
+        {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Feather name="arrow-left" size={20} color="#f3ecd8" />
-          </TouchableOpacity>
-          <View style={{ flex: 1, marginLeft: 12 }}>
+          <View style={styles.headerTitleGroup}>
             <Text style={styles.headerTitle}>Préfinancement Récoltes</Text>
             <Text style={styles.headerSubtitle}>Investissement direct & Trust Score</Text>
           </View>
-          <TouchableOpacity style={styles.addNavButton} onPress={() => setModalVisible(true)}>
-            <Feather name="plus" size={20} color="#ffffff" />
-          </TouchableOpacity>
+
+          <View style={styles.headerIcons}>
+            <TouchableOpacity style={styles.addNavButton} onPress={() => setModalVisible(true)}>
+              <Feather name="plus" size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -230,12 +230,22 @@ export default function PrefinancingScreen() {
 const styles = StyleSheet.create({
   outerContainer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
   container: { flex: 1, width: CONTAINER_WIDTH, backgroundColor: '#f3ecd8' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: Spacing.three, backgroundColor: '#101e0f', borderBottomWidth: 1, borderBottomColor: '#1d331b' },
-  backButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#1d331b', alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 17, fontWeight: '800', color: '#f3ecd8' },
-  headerSubtitle: { fontSize: 11, color: '#889e87' },
-  addNavButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#d97834', alignItems: 'center', justifyContent: 'center' },
-  scrollContent: { padding: Spacing.three },
+  header: {
+    height: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
+    backgroundColor: '#101e0f',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1d331b',
+  },
+  headerTitleGroup: { gap: 1 },
+  headerTitle: { fontSize: 15, fontWeight: '900', color: '#f3ecd8' },
+  headerSubtitle: { fontSize: 10, fontWeight: '600', color: '#889e87' },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  addNavButton: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#d97834', alignItems: 'center', justifyContent: 'center' },
+  scrollContent: { padding: Spacing.three, paddingBottom: 90 },
   trustCard: { backgroundColor: '#ffffff', borderRadius: 20, padding: Spacing.three, marginBottom: Spacing.three, borderWidth: 1, borderColor: '#e6dfcc' },
   trustHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
   trustTitle: { fontSize: 15, fontWeight: '800', color: '#101e0f' },

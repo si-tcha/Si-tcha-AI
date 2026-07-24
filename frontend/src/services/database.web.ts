@@ -86,7 +86,39 @@ function ensure(key: string, fallback: unknown) {
   }
 }
 
+import { apiClient } from './api';
+
 class DatabaseService {
+  async syncRemoteData(): Promise<boolean> {
+    try {
+      const [productsRes, gicsRes, terrainRes] = await Promise.all([
+        apiClient.getProducts().catch(() => null),
+        apiClient.getPublicGics().catch(() => null),
+        apiClient.getTerrain().catch(() => null),
+      ]);
+
+      let updated = false;
+      if (productsRes?.products?.length) {
+        writeJson(STORAGE_KEYS.PRODUCTS, productsRes.products);
+        updated = true;
+      }
+      if (gicsRes?.gics?.length) {
+        writeJson(STORAGE_KEYS.GICS_PUBLIC, gicsRes.gics);
+        updated = true;
+      }
+      if (terrainRes) {
+        if (terrainRes.weather?.length) writeJson(STORAGE_KEYS.WEATHER, terrainRes.weather);
+        if (terrainRes.market?.length) writeJson(STORAGE_KEYS.MARKET, terrainRes.market);
+        if (terrainRes.phytoAlerts?.length) writeJson(STORAGE_KEYS.PHYTO, terrainRes.phytoAlerts);
+        if (terrainRes.programs?.length) writeJson(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
+        updated = true;
+      }
+      return updated;
+    } catch {
+      return false;
+    }
+  }
+
   async initDatabase(): Promise<void> {
     if (typeof localStorage === 'undefined') return;
     ensure(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
@@ -105,6 +137,9 @@ class DatabaseService {
     ensure(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
     ensure(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
     ensure(STORAGE_KEYS.LOCAL_ROLE, 'leader');
+
+    // Async sync from remote backend if network is online
+    this.syncRemoteData().catch(() => {});
   }
 
   async getLocalRole(): Promise<'leader' | 'member'> {
@@ -132,6 +167,12 @@ class DatabaseService {
     };
     const harvests = await this.getHarvests();
     writeJson(STORAGE_KEYS.HARVESTS, [newHarvest, ...harvests]);
+
+    // Push to backend PostgreSQL DB so it appears in the Buyer Market
+    apiClient.addHarvest(product, volume).then(() => {
+      this.syncRemoteData().catch(() => {});
+    }).catch(() => {});
+
     return newHarvest;
   }
 
@@ -174,8 +215,9 @@ class DatabaseService {
     price: string;
     unit: string;
   }): Promise<CartItemRecord> {
+    const targetId = String(product.productId);
     const cart = await this.getCart();
-    const existing = cart.find((item) => item.productId === product.productId);
+    const existing = cart.find((item) => String(item.productId) === targetId);
 
     if (existing) {
       const updatedItem: CartItemRecord = {
@@ -183,16 +225,14 @@ class DatabaseService {
         quantity: existing.quantity + 1,
         synced: false,
       };
-      writeJson(
-        STORAGE_KEYS.CART,
-        cart.map((item) => (item.productId === product.productId ? updatedItem : item))
-      );
+      const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
+      writeJson(STORAGE_KEYS.CART, updatedCart);
       return updatedItem;
     }
 
     const newItem: CartItemRecord = {
-      id: Date.now().toString(),
-      productId: product.productId,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      productId: targetId,
       name: product.name,
       price: product.price,
       unit: product.unit,
@@ -231,7 +271,7 @@ class DatabaseService {
   async addGicNeed(category: string, description: string): Promise<GicNeed> {
     const role = await this.getLocalRole();
     const need: GicNeed = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       category,
       description,
       updatedAt: nowIso(),
@@ -240,6 +280,20 @@ class DatabaseService {
     const needs = await this.getGicNeeds();
     writeJson(STORAGE_KEYS.GIC_NEEDS, [need, ...needs]);
     return need;
+  }
+
+  async updateGicNeed(id: string, category: string, description: string): Promise<GicNeed[]> {
+    const needs = await this.getGicNeeds();
+    const updated = needs.map((n) => (n.id === id ? { ...n, category, description, updatedAt: nowIso() } : n));
+    writeJson(STORAGE_KEYS.GIC_NEEDS, updated);
+    return updated;
+  }
+
+  async deleteGicNeed(id: string): Promise<GicNeed[]> {
+    const needs = await this.getGicNeeds();
+    const filtered = needs.filter((n) => n.id !== id);
+    writeJson(STORAGE_KEYS.GIC_NEEDS, filtered);
+    return filtered;
   }
 
   async getWeather(): Promise<WeatherRecord[]> {
@@ -414,7 +468,7 @@ class DatabaseService {
   async addAgronomistQuestion(crop: string, category: string, question: string, photoUrl?: string): Promise<AgronomistQuestion> {
     const list = await this.getAgronomistQuestions();
     const newQ: AgronomistQuestion = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       crop,
       category,
       question,
@@ -444,7 +498,7 @@ class DatabaseService {
   ): Promise<B2BOffer> {
     const list = await this.getB2BOffers();
     const newOffer: B2BOffer = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       title,
       type,
       category,

@@ -35,17 +35,22 @@ export default function BuyerOrdersScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.outer}>
+    <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
         
-        {/* Header */}
+        {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Feather name="arrow-left" size={20} color="#f3ecd8" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Mes Commandes & Bordereaux</Text>
-          <View style={styles.iconBtn} />
+          <View style={styles.headerTitleGroup}>
+            <Text style={styles.headerTitle}>Mes Commandes & Bordereaux</Text>
+            <Text style={styles.headerSubtitle}>Suivi Logistique & Reçus QR</Text>
+          </View>
+
+          <View style={styles.headerIcons}>
+            <View style={styles.iconButton}>
+              <Feather name="file-text" size={18} color="#f3ecd8" />
+            </View>
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -53,7 +58,7 @@ export default function BuyerOrdersScreen() {
             <View style={styles.empty}>
               <Feather name="shopping-bag" size={40} color="#889e87" />
               <Text style={styles.emptyText}>Aucune commande enregistrée pour l'instant.</Text>
-              <TouchableOpacity style={styles.shopBtn} onPress={() => router.push('/(buyer)/home')}>
+              <TouchableOpacity style={styles.shopBtn} onPress={() => router.replace('/(buyer)/home')}>
                 <Text style={styles.shopBtnText}>Explorer le marché direct</Text>
               </TouchableOpacity>
             </View>
@@ -143,21 +148,31 @@ export default function BuyerOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  outer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
-  container: { width: CONTAINER_WIDTH, height: '100%', backgroundColor: '#f3ecd8' },
+  outerContainer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
+  container: { flex: 1, width: CONTAINER_WIDTH, backgroundColor: '#f3ecd8' },
   header: {
+    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
     backgroundColor: '#101e0f',
     borderBottomWidth: 1,
     borderBottomColor: '#1d331b',
   },
-  iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#1d331b', alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: '#f3ecd8' },
-  scroll: { padding: Spacing.four, gap: 12 },
+  headerTitleGroup: { gap: 1 },
+  headerTitle: { fontSize: 15, fontWeight: '900', color: '#f3ecd8' },
+  headerSubtitle: { fontSize: 10, fontWeight: '600', color: '#889e87' },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#1d331b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scroll: { padding: Spacing.four, gap: 12, paddingBottom: 90 },
   empty: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyText: { fontSize: 13, color: '#5a6258', fontWeight: '600' },
   shopBtn: { backgroundColor: '#d97834', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12 },

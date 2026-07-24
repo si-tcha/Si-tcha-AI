@@ -55,8 +55,8 @@ export default function AgronomistScreen() {
     }
     try {
       const mockPhoto = hasPhoto ? 'https://images.unsplash.com/photo-1592417817098-8f3d6eb231fc?q=80&w=400' : undefined;
-      const newQ = await dbService.addAgronomistQuestion(selectedCrop, selectedCategory, questionText.trim(), mockPhoto);
-      setQuestions(prev => [newQ, ...prev]);
+      await dbService.addAgronomistQuestion(selectedCrop, selectedCategory, questionText.trim(), mockPhoto);
+      await loadQuestions();
       setQuestionText('');
       setHasPhoto(false);
       setModalVisible(false);

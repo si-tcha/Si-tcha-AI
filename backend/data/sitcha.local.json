@@ -20,6 +20,26 @@
       "createdAt": "2026-07-22T08:00:00.000Z",
       "buyerId": "buyer-1",
       "status": "active"
+    },
+    {
+      "id": "user-1784845102816-o9p6hh",
+      "role": "buyer",
+      "name": "Ferme Du Sud SARL",
+      "phone": "+237699112233",
+      "token": "04ea11fe4bb684a2d0623b2fa1cc3c2cc8b6b60198132c80",
+      "createdAt": "2026-07-23T22:18:22.816Z",
+      "buyerId": "buyer-1784845102815-2am1jm",
+      "status": "active"
+    },
+    {
+      "id": "user-1784847178230-el1xz2",
+      "role": "buyer",
+      "name": "Azerty",
+      "phone": "621676582",
+      "token": "f42892dc8f2b9e57fd03453acbbd806dc2dacd1c42500bd5",
+      "createdAt": "2026-07-23T22:52:58.230Z",
+      "buyerId": "buyer-1784847178230-qcm6fa",
+      "status": "active"
     }
   ],
   "buyers": [
@@ -33,6 +53,28 @@
         "bassins": []
       },
       "createdAt": "2026-07-22T08:00:00.000Z"
+    },
+    {
+      "id": "buyer-1784845102815-2am1jm",
+      "companyName": "Ferme Du Sud SARL",
+      "phone": "+237699112233",
+      "regNumber": "RCCM/DLA/2026/B/99",
+      "alertPreferences": {
+        "productNames": [],
+        "bassins": []
+      },
+      "createdAt": "2026-07-23T22:18:22.815Z"
+    },
+    {
+      "id": "buyer-1784847178230-qcm6fa",
+      "companyName": "Azerty",
+      "phone": "621676582",
+      "regNumber": "Azerty",
+      "alertPreferences": {
+        "productNames": [],
+        "bassins": []
+      },
+      "createdAt": "2026-07-23T22:52:58.230Z"
     }
   ],
   "gics": [

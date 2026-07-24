@@ -49,7 +49,7 @@ export default function B2bTradeScreen() {
       return;
     }
     try {
-      const newOffer = await dbService.addB2BOffer(
+      await dbService.addB2BOffer(
         formTitle.trim(),
         formType,
         formCategory,
@@ -58,7 +58,7 @@ export default function B2bTradeScreen() {
         formLocation.trim(),
         formContact.trim()
       );
-      setOffers(prev => [newOffer, ...prev]);
+      await loadOffers();
       setFormTitle('');
       setFormPriceOrExchange('');
       setModalVisible(false);

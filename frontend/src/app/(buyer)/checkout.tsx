@@ -1,10 +1,11 @@
 import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import React, { useEffect, useState } from 'react';
-import { useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Spacing } from '@/constants/theme';
 import { CartItemRecord, dbService, OrderType } from '@/services/database';
+import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 
@@ -21,19 +22,35 @@ const ORDER_TYPES: { type: OrderType; label: string; hint: string }[] = [
 export default function BuyerCheckoutScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const [cart, setCart] = useState<CartItemRecord[]>([]);
+  const { cart, addToCart: addProductToCart, clearCart, refreshCart } = useCart();
   const [selectedType, setSelectedType] = useState<OrderType>('reservation');
   const [paymentMethod, setPaymentMethod] = useState<'momo' | 'om' | 'cash'>('momo');
   const [phoneNumber, setPhoneNumber] = useState('677000000');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
-      await dbService.initDatabase();
-      setCart(await dbService.getCart());
-    };
-    load();
-  }, []);
+  // Rafraîchissement automatique du panier à chaque prise de focus de l'écran
+  useFocusEffect(
+    useCallback(() => {
+      refreshCart();
+    }, [refreshCart])
+  );
+
+  const handleIncrement = async (productId: string) => {
+    const item = cart.find(i => i.productId === productId);
+    if (item) {
+      await addProductToCart({
+        productId: item.productId,
+        name: item.name,
+        price: item.price,
+        unit: item.unit,
+      });
+    }
+  };
+
+  const handleClearCart = async () => {
+    await clearCart();
+    showToast({ message: 'Panier vidé.', type: 'info' });
+  };
 
   const totalAmount = cart.reduce((sum, item) => sum + (parseFloat(item.price || '0') * item.quantity), 0);
 
@@ -49,6 +66,7 @@ export default function BuyerCheckoutScreen() {
     setBusy(true);
     try {
       await dbService.createOrderFromCart(selectedType);
+      await refreshCart();
       showToast({ message: 'Commande et paiement enregistrés avec succès !', type: 'success' });
       router.replace('/(buyer)/orders');
     } catch (err) {
@@ -60,27 +78,46 @@ export default function BuyerCheckoutScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.outer}>
+    <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
         
-        {/* Header */}
+        {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Feather name="arrow-left" size={20} color="#f3ecd8" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Panier & Paiement MoMo</Text>
-          <View style={styles.iconBtn} />
+          <View style={styles.headerTitleGroup}>
+            <Text style={styles.headerTitle}>Mon Panier & Paiement MoMo</Text>
+            <Text style={styles.headerSubtitle}>MTN MoMo, Orange Money & Espèces GIC</Text>
+          </View>
+
+          <View style={styles.headerIcons}>
+            {cart.length > 0 && (
+              <TouchableOpacity style={styles.iconButton} onPress={handleClearCart}>
+                <Feather name="trash-2" size={16} color="#d97834" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Panier list */}
-          <Text style={styles.sectionTitle}>Articles du panier ({cart.length})</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Articles du panier ({cart.length})</Text>
+            {cart.length > 0 && (
+              <TouchableOpacity onPress={handleClearCart}>
+                <Text style={styles.clearCartText}>Vider tout</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
           <View style={styles.listCard}>
             {cart.length === 0 ? (
               <View style={styles.emptyItem}>
-                <Feather name="shopping-cart" size={32} color="#889e87" />
-                <Text style={styles.meta}>Aucun article dans le panier.</Text>
+                <Feather name="shopping-cart" size={40} color="#889e87" />
+                <Text style={styles.emptyTitle}>Votre panier est actuellement vide.</Text>
+                <Text style={styles.emptySub}>Ajoutez des récoltes fraîches depuis le marché direct.</Text>
+                <TouchableOpacity style={styles.browseBtn} onPress={() => router.replace('/(buyer)/home')}>
+                  <Text style={styles.browseBtnText}>Explorer le Marché</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               cart.map((item) => (
@@ -89,7 +126,12 @@ export default function BuyerCheckoutScreen() {
                     <Text style={styles.itemTitle}>{item.name}</Text>
                     <Text style={styles.meta}>{item.quantity} {item.unit} × {item.price} FCFA/{item.unit}</Text>
                   </View>
-                  <Text style={styles.itemTotal}>{(parseFloat(item.price || '0') * item.quantity).toLocaleString()} FCFA</Text>
+                  <View style={styles.quantityControlRow}>
+                    <TouchableOpacity style={styles.qtyPlusBtn} onPress={() => handleIncrement(item.productId)}>
+                      <Feather name="plus" size={14} color="#f3ecd8" />
+                    </TouchableOpacity>
+                    <Text style={styles.itemTotal}>{(parseFloat(item.price || '0') * item.quantity).toLocaleString()} FCFA</Text>
+                  </View>
                 </View>
               ))
             )}
@@ -103,81 +145,85 @@ export default function BuyerCheckoutScreen() {
           )}
 
           {/* Operation type */}
-          <Text style={styles.sectionTitle}>Type de transaction</Text>
-          {ORDER_TYPES.map((opt) => (
-            <TouchableOpacity
-              key={opt.type}
-              style={[styles.typeCard, selectedType === opt.type && styles.typeCardActive]}
-              onPress={() => setSelectedType(opt.type)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.typeLabel, selectedType === opt.type && styles.typeLabelActive]}>
-                {opt.label}
-              </Text>
-              <Text style={[styles.meta, selectedType === opt.type && { color: '#889e87' }]}>
-                {opt.hint}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {cart.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>Type de transaction</Text>
+              {ORDER_TYPES.map((opt) => (
+                <TouchableOpacity
+                  key={opt.type}
+                  style={[styles.typeCard, selectedType === opt.type && styles.typeCardActive]}
+                  onPress={() => setSelectedType(opt.type)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.typeLabel, selectedType === opt.type && styles.typeLabelActive]}>
+                    {opt.label}
+                  </Text>
+                  <Text style={[styles.meta, selectedType === opt.type && { color: '#889e87' }]}>
+                    {opt.hint}
+                  </Text>
+                </TouchableOpacity>
+              ))}
 
-          {/* Payment Method selector */}
-          <Text style={styles.sectionTitle}>Mode de paiement Mobile Money</Text>
-          <View style={styles.paymentMethodRow}>
-            <TouchableOpacity 
-              style={[styles.paymentBtn, paymentMethod === 'momo' && styles.paymentBtnActive]}
-              onPress={() => setPaymentMethod('momo')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.paymentEmoji}>💛</Text>
-              <Text style={[styles.paymentText, paymentMethod === 'momo' && styles.paymentTextActive]}>MTN MoMo</Text>
-            </TouchableOpacity>
+              {/* Payment Method selector */}
+              <Text style={styles.sectionTitle}>Mode de paiement Mobile Money</Text>
+              <View style={styles.paymentMethodRow}>
+                <TouchableOpacity 
+                  style={[styles.paymentBtn, paymentMethod === 'momo' && styles.paymentBtnActive]}
+                  onPress={() => setPaymentMethod('momo')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.paymentEmoji}>💛</Text>
+                  <Text style={[styles.paymentText, paymentMethod === 'momo' && styles.paymentTextActive]}>MTN MoMo</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.paymentBtn, paymentMethod === 'om' && styles.paymentBtnActive]}
-              onPress={() => setPaymentMethod('om')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.paymentEmoji}>🧡</Text>
-              <Text style={[styles.paymentText, paymentMethod === 'om' && styles.paymentTextActive]}>Orange Money</Text>
-            </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.paymentBtn, paymentMethod === 'om' && styles.paymentBtnActive]}
+                  onPress={() => setPaymentMethod('om')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.paymentEmoji}>🧡</Text>
+                  <Text style={[styles.paymentText, paymentMethod === 'om' && styles.paymentTextActive]}>Orange Money</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.paymentBtn, paymentMethod === 'cash' && styles.paymentBtnActive]}
-              onPress={() => setPaymentMethod('cash')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.paymentEmoji}>💵</Text>
-              <Text style={[styles.paymentText, paymentMethod === 'cash' && styles.paymentTextActive]}>Espèces GIC</Text>
-            </TouchableOpacity>
-          </View>
+                <TouchableOpacity 
+                  style={[styles.paymentBtn, paymentMethod === 'cash' && styles.paymentBtnActive]}
+                  onPress={() => setPaymentMethod('cash')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.paymentEmoji}>💵</Text>
+                  <Text style={[styles.paymentText, paymentMethod === 'cash' && styles.paymentTextActive]}>Espèces GIC</Text>
+                </TouchableOpacity>
+              </View>
 
-          {/* Mobile phone number input */}
-          <View style={styles.phoneSection}>
-            <Text style={styles.inputLabel}>Numéro de téléphone pour la transaction</Text>
-            <View style={styles.phoneInputRow}>
-              <Text style={styles.countryCode}>+237</Text>
-              <TextInput 
-                style={styles.phoneInput}
-                keyboardType="phone-pad"
-                value={phoneNumber}
-                onChangeText={setPhoneNumber}
-                placeholder="6XX XXX XXX"
-                placeholderTextColor="#9ca49a"
-              />
-            </View>
-          </View>
+              {/* Mobile phone number input */}
+              <View style={styles.phoneSection}>
+                <Text style={styles.inputLabel}>Numéro de téléphone pour la transaction</Text>
+                <View style={styles.phoneInputRow}>
+                  <Text style={styles.countryCode}>+237</Text>
+                  <TextInput 
+                    style={styles.phoneInput}
+                    keyboardType="phone-pad"
+                    value={phoneNumber}
+                    onChangeText={setPhoneNumber}
+                    placeholder="6XX XXX XXX"
+                    placeholderTextColor="#9ca49a"
+                  />
+                </View>
+              </View>
 
-          <TouchableOpacity
-            style={[styles.confirmBtn, (!cart.length || busy) && styles.confirmDisabled]}
-            onPress={handleConfirm}
-            disabled={!cart.length || busy}
-            activeOpacity={0.85}
-          >
-            <Feather name="lock" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-            <Text style={styles.confirmText}>
-              {busy ? 'Traitement en cours…' : `Valider et Payer (${totalAmount.toLocaleString()} FCFA)`}
-            </Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmBtn, (!cart.length || busy) && styles.confirmDisabled]}
+                onPress={handleConfirm}
+                disabled={!cart.length || busy}
+                activeOpacity={0.85}
+              >
+                <Feather name="lock" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.confirmText}>
+                  {busy ? 'Traitement en cours…' : `Valider et Payer (${totalAmount.toLocaleString()} FCFA)`}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </ScrollView>
 
         <BottomNavBar role="buyer" cartCount={cart.length} />
@@ -187,22 +233,34 @@ export default function BuyerCheckoutScreen() {
 }
 
 const styles = StyleSheet.create({
-  outer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
-  container: { width: CONTAINER_WIDTH, height: '100%', backgroundColor: '#f3ecd8' },
+  outerContainer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
+  container: { flex: 1, width: CONTAINER_WIDTH, backgroundColor: '#f3ecd8' },
   header: {
+    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
     backgroundColor: '#101e0f',
     borderBottomWidth: 1,
     borderBottomColor: '#1d331b',
   },
-  iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#1d331b', alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: '#f3ecd8' },
-  scroll: { padding: Spacing.four, gap: 10 },
-  sectionTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f', marginTop: 4 },
+  headerTitleGroup: { gap: 1 },
+  headerTitle: { fontSize: 15, fontWeight: '900', color: '#f3ecd8' },
+  headerSubtitle: { fontSize: 10, fontWeight: '600', color: '#889e87' },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#1d331b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scroll: { padding: Spacing.four, gap: 10, paddingBottom: 90 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  sectionTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
+  clearCartText: { fontSize: 11, fontWeight: '800', color: '#d97834', textDecorationLine: 'underline' },
   listCard: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
@@ -210,7 +268,11 @@ const styles = StyleSheet.create({
     borderColor: '#e6dfcc',
     overflow: 'hidden',
   },
-  emptyItem: { padding: 30, alignItems: 'center', gap: 8 },
+  emptyItem: { padding: 40, alignItems: 'center', gap: 8 },
+  emptyTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
+  emptySub: { fontSize: 12, color: '#5a6258', textAlign: 'center' },
+  browseBtn: { backgroundColor: '#101e0f', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, marginTop: 6 },
+  browseBtnText: { color: '#f3ecd8', fontWeight: '800', fontSize: 12 },
   listItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -221,6 +283,8 @@ const styles = StyleSheet.create({
   },
   itemTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   meta: { fontSize: 11, color: '#5a6258', marginTop: 2, fontWeight: '600' },
+  quantityControlRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  qtyPlusBtn: { width: 26, height: 26, borderRadius: 8, backgroundColor: '#101e0f', alignItems: 'center', justifyContent: 'center' },
   itemTotal: { fontSize: 14, fontWeight: '900', color: '#d97834' },
   totalSummaryCard: {
     flexDirection: 'row',

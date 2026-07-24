@@ -1,12 +1,12 @@
 import { Dimensions, KeyboardAvoidingView, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import React, { useState } from 'react';
-
-
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { apiClient } from '@/services/api';
+import { useToast } from '@/components/ui/toast';
+import { isValidCameroonPhone } from './login';
 
 const GIC_LIST = [
   "GIC Agro-Vallée Bafoussam",
@@ -23,7 +23,6 @@ const GIC_LIST = [
   "GIC Cultures Vivrières Bangangté"
 ];
 
-
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
@@ -31,32 +30,62 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export default function RegisterSellerScreen() {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGIC, setSelectedGIC] = useState('');
   const [isFocused, setIsFocused] = useState(false);
-  const [focusedField, setFocusedField] = useState<'name' | 'phone' | null>(null);
+  const [focusedField, setFocusedField] = useState<'name' | 'phone' | 'password' | 'confirm' | null>(null);
   const router = useRouter();
+  const { showToast } = useToast();
+
+  const effectiveGIC = selectedGIC || searchQuery.trim();
 
   const handleBack = () => {
     router.back();
   };
 
   const handleConfirm = async () => {
-    if (!fullName.trim() || !phone.trim() || !selectedGIC) {
-      alert('Veuillez renseigner votre nom, téléphone et GIC.');
+    if (!fullName.trim()) {
+      showToast({ message: 'Veuillez renseigner votre nom complet.', type: 'warning' });
       return;
     }
+    if (!phone.trim() || !isValidCameroonPhone(phone)) {
+      showToast({ message: 'Veuillez saisir un numéro de téléphone camerounais valide (+237 6XX XXX XXX).', type: 'warning' });
+      return;
+    }
+    if (!password.trim()) {
+      showToast({ message: 'Veuillez créer un mot de passe.', type: 'warning' });
+      return;
+    }
+    if (password.length < 4) {
+      showToast({ message: 'Le mot de passe doit contenir au moins 4 caractères.', type: 'warning' });
+      return;
+    }
+    if (password !== confirmPassword) {
+      showToast({ message: 'Les mots de passe ne correspondent pas.', type: 'error' });
+      return;
+    }
+    if (!effectiveGIC) {
+      showToast({ message: 'Veuillez choisir ou saisir le nom de votre GIC.', type: 'warning' });
+      return;
+    }
+
     try {
       const session = await apiClient.registerSeller({
         fullName: fullName.trim(),
         phone: phone.trim(),
-        gicName: selectedGIC,
+        gicName: effectiveGIC,
       });
+      showToast({ message: 'Demande de création de compte enregistrée !', type: 'success' });
       router.push(session.user.status === 'active' ? '/(auth)/activation-success' : '/(auth)/activation-pending');
       return;
     } catch {
-      // Fallback offline: l'approbation réelle se fera lors de la prochaine synchronisation serveur.
+      // Fallback offline
     }
+
+    showToast({ message: 'Compte Vendeur créé avec succès !', type: 'success' });
     router.push('/(auth)/activation-pending');
   };
 
@@ -65,165 +94,187 @@ export default function RegisterSellerScreen() {
     : GIC_LIST.filter(gic => gic.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <SafeAreaView style={styles.outerContainer}>
-      <View style={styles.container}>
+    <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f3ecd8" />
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        style={styles.keyboardView}
-      >
-        <View style={styles.innerContainer}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-              <Feather name="arrow-left" size={24} color="#101e0f" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Compte Vendeur</Text>
-            <View style={styles.headerPlaceholder} />
-          </View>
-
-          {/* Titre */}
-          <View style={styles.titleSection}>
-            <Text style={styles.mainTitle}>Sélectionnez votre GIC</Text>
-            <Text style={styles.subtitle}>
-              Recherchez et rattachez votre compte à votre groupement agricole.
-            </Text>
-          </View>
-
-          {/* Formulaire & Liste */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>Vos informations</Text>
-            <View style={[
-              styles.searchContainer,
-              focusedField === 'name' ? styles.searchContainerFocused : null
-            ]}>
-              <Feather name="user" size={18} color={focusedField === 'name' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="Nom complet"
-                placeholderTextColor="#9ca49a"
-                value={fullName}
-                onChangeText={setFullName}
-                onFocus={() => setFocusedField('name')}
-                onBlur={() => setFocusedField(null)}
-              />
+      <View style={styles.container}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          style={styles.keyboardView}
+        >
+          <View style={styles.innerContainer}>
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+                <Feather name="arrow-left" size={22} color="#101e0f" />
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Compte Vendeur GIC</Text>
+              <View style={styles.headerPlaceholder} />
             </View>
 
-            <View style={[
-              styles.searchContainer,
-              focusedField === 'phone' ? styles.searchContainerFocused : null
-            ]}>
-              <Feather name="phone" size={18} color={focusedField === 'phone' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="+237 6XX XXX XXX"
-                placeholderTextColor="#9ca49a"
-                keyboardType="phone-pad"
-                value={phone}
-                onChangeText={setPhone}
-                onFocus={() => setFocusedField('phone')}
-                onBlur={() => setFocusedField(null)}
-              />
-            </View>
-
-            <Text style={styles.label}>Votre GIC</Text>
-            
-            {/* Input de recherche */}
-            <View style={[
-              styles.searchContainer,
-              isFocused ? styles.searchContainerFocused : null
-            ]}>
-              <Feather name="search" size={18} color={isFocused ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="Entrez ou recherchez un GIC..."
-                placeholderTextColor="#9ca49a"
-                value={searchQuery}
-                onChangeText={(text) => {
-                  setSearchQuery(text);
-                  // Si l'utilisateur tape un truc qui n'est pas dans la liste sélectionnée, on désélectionne
-                  if (selectedGIC && text !== selectedGIC) {
-                    setSelectedGIC('');
-                  }
-                }}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => setIsFocused(false)}
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => { setSearchQuery(''); setSelectedGIC(''); }}>
-                  <Feather name="x" size={18} color="#5a6258" />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Note d'information */}
-            <View style={styles.infoNote}>
-              <Feather name="info" size={18} color="#101e0f" style={styles.infoIcon} />
-              <Text style={styles.infoText}>
-                Après confirmation, le chef de votre GIC devra approuver votre compte avant que vous ne puissiez vendre vos produits.
+            {/* Titre */}
+            <View style={styles.titleSection}>
+              <Text style={styles.mainTitle}>Création de compte Producteur</Text>
+              <Text style={styles.subtitle}>
+                Rattachez votre compte à votre groupement agricole pour accéder au tableau de bord.
               </Text>
             </View>
 
-            {/* Liste de GIC scrollable */}
-            <View style={styles.listContainer}>
-              <Text style={styles.listHeader}>Groupements trouvés ({filteredGICs.length})</Text>
-              <ScrollView style={styles.scrollView} keyboardShouldPersistTaps="handled">
-                {filteredGICs.map((gic, index) => {
-                  const isSelected = selectedGIC === gic;
-                  return (
-                    <TouchableOpacity
-                      key={index}
-                      onPress={() => {
-                        setSelectedGIC(gic);
-                        setSearchQuery(gic);
-                      }}
-                      style={[
-                        styles.gicListItem,
-                        isSelected ? styles.gicListItemSelected : null
-                      ]}
-                    >
-                      <View style={[
-                        styles.listIconBg,
-                        isSelected ? styles.listIconBgSelected : null
-                      ]}>
-                        <Feather name="home" size={16} color={isSelected ? '#f3ecd8' : '#101e0f'} />
-                      </View>
-                      <Text style={[
-                        styles.gicListText,
-                        isSelected ? styles.gicListTextSelected : null
-                      ]}>{gic}</Text>
-                      {isSelected && (
-                        <Feather name="check" size={18} color="#101e0f" style={styles.checkIcon} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-                {filteredGICs.length === 0 && (
-                  <View style={styles.emptyList}>
-                    <Text style={styles.emptyText}>Aucun GIC ne correspond à votre recherche.</Text>
-                  </View>
+            {/* Formulaire */}
+            <View style={styles.formSection}>
+              <Text style={styles.label}>Vos informations personnelles</Text>
+              
+              {/* Nom */}
+              <View style={[
+                styles.searchContainer,
+                focusedField === 'name' ? styles.searchContainerFocused : null
+              ]}>
+                <Feather name="user" size={18} color={focusedField === 'name' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Nom complet (ex: Jean-Paul Nkomo)"
+                  placeholderTextColor="#9ca49a"
+                  value={fullName}
+                  onChangeText={setFullName}
+                  onFocus={() => setFocusedField('name')}
+                  onBlur={() => setFocusedField(null)}
+                />
+              </View>
+
+              {/* Téléphone */}
+              <View style={[
+                styles.searchContainer,
+                focusedField === 'phone' ? styles.searchContainerFocused : null
+              ]}>
+                <Feather name="phone" size={18} color={focusedField === 'phone' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="+237 6XX XXX XXX"
+                  placeholderTextColor="#9ca49a"
+                  keyboardType="phone-pad"
+                  value={phone}
+                  onChangeText={setPhone}
+                  onFocus={() => setFocusedField('phone')}
+                  onBlur={() => setFocusedField(null)}
+                />
+              </View>
+
+              {/* Mot de passe */}
+              <View style={[
+                styles.searchContainer,
+                focusedField === 'password' ? styles.searchContainerFocused : null
+              ]}>
+                <Feather name="lock" size={18} color={focusedField === 'password' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Créer un mot de passe"
+                  placeholderTextColor="#9ca49a"
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                  onFocus={() => setFocusedField('password')}
+                  onBlur={() => setFocusedField(null)}
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 4 }}>
+                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color="#5a6258" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Confirmation mot de passe */}
+              <View style={[
+                styles.searchContainer,
+                focusedField === 'confirm' ? styles.searchContainerFocused : null
+              ]}>
+                <Feather name="shield" size={18} color={focusedField === 'confirm' ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Confirmer le mot de passe"
+                  placeholderTextColor="#9ca49a"
+                  secureTextEntry={!showPassword}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  onFocus={() => setFocusedField('confirm')}
+                  onBlur={() => setFocusedField(null)}
+                />
+              </View>
+
+              <Text style={styles.label}>Votre GIC partenaire</Text>
+              
+              {/* Input de recherche GIC */}
+              <View style={[
+                styles.searchContainer,
+                isFocused ? styles.searchContainerFocused : null
+              ]}>
+                <Feather name="search" size={18} color={isFocused ? '#101e0f' : '#5a6258'} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Tapez ou sélectionnez un GIC..."
+                  placeholderTextColor="#9ca49a"
+                  value={searchQuery}
+                  onChangeText={(text) => {
+                    setSearchQuery(text);
+                    setSelectedGIC(text);
+                  }}
+                  onFocus={() => setIsFocused(true)}
+                  onBlur={() => setIsFocused(false)}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => { setSearchQuery(''); setSelectedGIC(''); }}>
+                    <Feather name="x" size={18} color="#5a6258" />
+                  </TouchableOpacity>
                 )}
-              </ScrollView>
+              </View>
+
+              {/* Liste GIC */}
+              <View style={styles.listContainer}>
+                <ScrollView style={styles.scrollView} keyboardShouldPersistTaps="handled">
+                  {filteredGICs.map((gic, index) => {
+                    const isSelected = effectiveGIC.toLowerCase() === gic.toLowerCase();
+                    return (
+                      <TouchableOpacity
+                        key={index}
+                        onPress={() => {
+                          setSelectedGIC(gic);
+                          setSearchQuery(gic);
+                        }}
+                        style={[
+                          styles.gicListItem,
+                          isSelected ? styles.gicListItemSelected : null
+                        ]}
+                      >
+                        <View style={[
+                          styles.listIconBg,
+                          isSelected ? styles.listIconBgSelected : null
+                        ]}>
+                          <Feather name="home" size={15} color={isSelected ? '#f3ecd8' : '#101e0f'} />
+                        </View>
+                        <Text style={[
+                          styles.gicListText,
+                          isSelected ? styles.gicListTextSelected : null
+                        ]}>{gic}</Text>
+                        {isSelected && (
+                          <Feather name="check" size={18} color="#101e0f" style={styles.checkIcon} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+
+            {/* Footer */}
+            <View style={styles.footer}>
+              <TouchableOpacity 
+                onPress={handleConfirm} 
+                style={styles.primaryButton}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.primaryButtonText}>Confirmer et Créer mon compte</Text>
+                <Feather name="check-circle" size={18} color="#f3ecd8" style={styles.btnIcon} />
+              </TouchableOpacity>
             </View>
           </View>
-
-          {/* Footer Bouton */}
-          <View style={styles.footer}>
-            <TouchableOpacity 
-              onPress={handleConfirm} 
-              style={[
-                styles.primaryButton,
-                !selectedGIC ? styles.primaryButtonDisabled : null
-              ]}
-              disabled={!selectedGIC}
-            >
-              <Text style={styles.primaryButtonText}>Confirmer mon GIC</Text>
-              <Feather name="check-circle" size={18} color="#f3ecd8" style={styles.btnIcon} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </View>
+        </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -231,8 +282,7 @@ export default function RegisterSellerScreen() {
 const styles = StyleSheet.create({
   outerContainer: {
     flex: 1,
-    backgroundColor: isWeb ? '#e6dfcc' : '#f3ecd8',
-    justifyContent: 'center',
+    backgroundColor: '#f3ecd8',
     alignItems: 'center',
   },
   container: {
@@ -241,15 +291,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3ecd8',
     position: 'relative',
     overflow: 'hidden',
-    shadowColor: isWeb ? '#101e0f' : 'transparent',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: isWeb ? 10 : 0,
-  },
-  containerOld: {
-    flex: 1,
-    backgroundColor: '#f3ecd8', // Cream
   },
   keyboardView: {
     flex: 1,
@@ -261,62 +302,63 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   header: {
-    height: 60,
+    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: Spacing.one,
   },
   backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     backgroundColor: '#e6dfcc',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#101e0f',
-  },
-  headerPlaceholder: {
-    width: 44,
-  },
-  titleSection: {
-    marginTop: Spacing.two,
-    gap: Spacing.one,
-  },
-  mainTitle: {
-    fontSize: 22,
     fontWeight: '800',
     color: '#101e0f',
   },
+  headerPlaceholder: {
+    width: 40,
+  },
+  titleSection: {
+    marginTop: Spacing.one,
+    gap: 4,
+  },
+  mainTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#101e0f',
+  },
   subtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#5a6258',
-    lineHeight: 20,
+    lineHeight: 18,
   },
   formSection: {
     flex: 1,
-    marginTop: Spacing.four,
-    gap: Spacing.two,
+    marginTop: Spacing.two,
+    gap: 8,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#101e0f',
-    paddingLeft: 4,
+    paddingLeft: 2,
+    marginTop: 4,
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#e6dfcc',
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: Spacing.three,
-    height: 56,
+    height: 48,
   },
   searchContainerFocused: {
     borderColor: '#101e0f',
@@ -326,53 +368,25 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 14,
     color: '#101e0f',
-    fontWeight: '500',
-  },
-  infoNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#e6dfcc40',
-    padding: Spacing.three,
-    borderRadius: 16,
-    marginTop: Spacing.two,
-    borderWidth: 1,
-    borderColor: '#e6dfcc',
-    gap: 10,
-  },
-  infoIcon: {
-    marginTop: 2,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#101e0f',
-    lineHeight: 18,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   listContainer: {
     flex: 1,
-    marginTop: Spacing.three,
-    gap: Spacing.two,
-  },
-  listHeader: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#5a6258',
-    paddingLeft: 4,
+    marginTop: 4,
   },
   scrollView: {
     flex: 1,
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e6dfcc',
   },
   gicListItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 10,
     paddingHorizontal: Spacing.three,
     borderBottomWidth: 1,
     borderBottomColor: '#f3ecd8',
@@ -381,40 +395,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#e6dfcc40',
   },
   listIconBg: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     borderRadius: 8,
     backgroundColor: '#f3ecd8',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 10,
   },
   listIconBgSelected: {
     backgroundColor: '#101e0f',
   },
   gicListText: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#5a6258',
   },
   gicListTextSelected: {
     color: '#101e0f',
+    fontWeight: '800',
   },
   checkIcon: {
     marginLeft: 8,
   },
-  emptyList: {
-    padding: Spacing.four,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 13,
-    color: '#5a6258',
-    textAlign: 'center',
-  },
   footer: {
-    marginTop: Spacing.three,
+    marginTop: Spacing.two,
   },
   primaryButton: {
     backgroundColor: '#101e0f',
@@ -424,19 +430,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#101e0f',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  primaryButtonDisabled: {
-    backgroundColor: '#9ca49a',
-    opacity: 0.5,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 3,
   },
   primaryButtonText: {
     color: '#f3ecd8',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
   },
   btnIcon: {
     marginLeft: 8,

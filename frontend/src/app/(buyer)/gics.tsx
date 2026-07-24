@@ -1,10 +1,11 @@
 import { Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Spacing } from '@/constants/theme';
 import { ConfidentialGic, dbService, ProductOffer } from '@/services/database';
+import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 
@@ -19,45 +20,65 @@ export default function BuyerGicsScreen() {
   const [products, setProducts] = useState<ProductOffer[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
-      await dbService.initDatabase();
-      setGics(await dbService.getConfidentialGics());
-      setProducts(await dbService.getProducts());
-    };
-    load();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      let isMounted = true;
+      const load = async () => {
+        await dbService.initDatabase();
+        await dbService.syncRemoteData().catch(() => {});
+        const [gList, pList] = await Promise.all([
+          dbService.getConfidentialGics(),
+          dbService.getProducts(),
+        ]);
+        if (isMounted) {
+          setGics(gList);
+          setProducts(pList);
+        }
+      };
+      load();
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   const offers = selectedId
     ? products.filter((p) => p.gicId === selectedId)
     : [];
 
+  const { addToCart: addProductToCart } = useCart();
+
   const handleAddToCart = async (product: ProductOffer) => {
     try {
-      await dbService.addToCart({
+      await addProductToCart({
         productId: product.id,
         name: product.name,
         price: product.price,
         unit: product.unit,
       });
-      showToast({ message: `${product.name} ajouté au panier !`, type: 'success' });
+      showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
     } catch (err) {
       showToast({ message: 'Erreur ajout panier.', type: 'error' });
     }
   };
 
   return (
-    <SafeAreaView style={styles.outer}>
+    <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
         
-        {/* Header */}
+        {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Feather name="arrow-left" size={20} color="#f3ecd8" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Annuaire GIC Certifiés MINADER</Text>
-          <View style={styles.iconBtn} />
+          <View style={styles.headerTitleGroup}>
+            <Text style={styles.headerTitle}>Annuaire GIC Certifiés MINADER</Text>
+            <Text style={styles.headerSubtitle}>Coopératives & Audits de Sol Vérifiés</Text>
+          </View>
+
+          <View style={styles.headerIcons}>
+            <View style={styles.iconButton}>
+              <Feather name="shield" size={18} color="#f3ecd8" />
+            </View>
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -110,7 +131,7 @@ export default function BuyerGicsScreen() {
                 <View style={styles.gicFooterRow}>
                   <TouchableOpacity 
                     style={styles.prefinanceBtn} 
-                    onPress={() => router.push('/(buyer)/prefinancing')}
+                    onPress={() => router.replace('/(buyer)/prefinancing')}
                     activeOpacity={0.8}
                   >
                     <Feather name="trending-up" size={13} color="#ffffff" />
@@ -156,21 +177,31 @@ export default function BuyerGicsScreen() {
 }
 
 const styles = StyleSheet.create({
-  outer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
-  container: { width: CONTAINER_WIDTH, height: '100%', backgroundColor: '#f3ecd8' },
+  outerContainer: { flex: 1, backgroundColor: '#101e0f', alignItems: 'center' },
+  container: { flex: 1, width: CONTAINER_WIDTH, backgroundColor: '#f3ecd8' },
   header: {
+    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
     backgroundColor: '#101e0f',
     borderBottomWidth: 1,
     borderBottomColor: '#1d331b',
   },
-  iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#1d331b', alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 15, fontWeight: '800', color: '#f3ecd8' },
-  scroll: { padding: Spacing.four, gap: 12 },
+  headerTitleGroup: { gap: 1 },
+  headerTitle: { fontSize: 15, fontWeight: '900', color: '#f3ecd8' },
+  headerSubtitle: { fontSize: 10, fontWeight: '600', color: '#889e87' },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#1d331b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scroll: { padding: Spacing.four, gap: 12, paddingBottom: 90 },
   infoBanner: {
     flexDirection: 'row',
     alignItems: 'center',

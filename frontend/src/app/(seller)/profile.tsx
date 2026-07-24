@@ -21,24 +21,26 @@ export default function SellerProfileScreen() {
   const [members, setMembers] = useState<GicMember[]>([]);
   const [needs, setNeeds] = useState<GicNeed[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
   const [needCategory, setNeedCategory] = useState('Intrants');
   const [needDescription, setNeedDescription] = useState('');
   const [surfaceDraft, setSurfaceDraft] = useState('');
 
+  const loadData = async () => {
+    await dbService.initDatabase();
+    const [p, m, n] = await Promise.all([
+      dbService.getGicProfile(),
+      dbService.getGicMembers(),
+      dbService.getGicNeeds(),
+    ]);
+    setProfile(p);
+    setMembers(m);
+    setNeeds(n);
+    setSurfaceDraft(String(p.surfaceHa || 12.5));
+  };
+
   useEffect(() => {
-    const load = async () => {
-      await dbService.initDatabase();
-      const [p, m, n] = await Promise.all([
-        dbService.getGicProfile(),
-        dbService.getGicMembers(),
-        dbService.getGicNeeds(),
-      ]);
-      setProfile(p);
-      setMembers(m);
-      setNeeds(n);
-      setSurfaceDraft(String(p.surfaceHa));
-    };
-    load();
+    loadData();
   }, []);
 
   const handleSaveSurface = async () => {
@@ -52,16 +54,43 @@ export default function SellerProfileScreen() {
     showToast({ message: `Surface mise à jour : ${value} ha`, type: 'success' });
   };
 
-  const handleAddNeed = async () => {
+  const handleOpenAddNeed = () => {
+    setEditingNeedId(null);
+    setNeedCategory('Intrants');
+    setNeedDescription('');
+    setModalVisible(true);
+  };
+
+  const handleEditNeed = (need: GicNeed) => {
+    setEditingNeedId(need.id);
+    setNeedCategory(need.category);
+    setNeedDescription(need.description);
+    setModalVisible(true);
+  };
+
+  const handleDeleteNeed = async (id: string) => {
+    const updated = await dbService.deleteGicNeed(id);
+    setNeeds(updated);
+    showToast({ message: 'Besoin supprimé.', type: 'info' });
+  };
+
+  const handleSaveNeed = async () => {
     if (!needDescription.trim()) {
       showToast({ message: 'Veuillez décrire le besoin.', type: 'warning' });
       return;
     }
-    const need = await dbService.addGicNeed(needCategory, needDescription.trim());
-    setNeeds((prev) => [need, ...prev]);
+    if (editingNeedId) {
+      const updated = await dbService.updateGicNeed(editingNeedId, needCategory, needDescription.trim());
+      setNeeds(updated);
+      showToast({ message: 'Besoin mis à jour !', type: 'success' });
+    } else {
+      await dbService.addGicNeed(needCategory, needDescription.trim());
+      const fresh = await dbService.getGicNeeds();
+      setNeeds(fresh);
+      showToast({ message: 'Besoin recensé avec succès !', type: 'success' });
+    }
     setNeedDescription('');
     setModalVisible(false);
-    showToast({ message: 'Besoin recensé avec succès !', type: 'success' });
   };
 
   return (
@@ -144,7 +173,7 @@ export default function SellerProfileScreen() {
 
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Besoins Recensés ({needs.length})</Text>
-            <TouchableOpacity onPress={() => setModalVisible(true)}>
+            <TouchableOpacity onPress={handleOpenAddNeed}>
               <Feather name="plus-circle" size={20} color="#d97834" />
             </TouchableOpacity>
           </View>
@@ -156,9 +185,17 @@ export default function SellerProfileScreen() {
             ) : (
               needs.map((n) => (
                 <View key={n.id} style={styles.listItem}>
-                  <View>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.itemTitle}>{n.category}</Text>
                     <Text style={styles.itemSub}>{n.description}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity onPress={() => handleEditNeed(n)}>
+                      <Feather name="edit-2" size={16} color="#15803d" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteNeed(n.id)}>
+                      <Feather name="trash-2" size={16} color="#d97834" />
+                    </TouchableOpacity>
                   </View>
                 </View>
               ))
@@ -170,7 +207,7 @@ export default function SellerProfileScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Nouveau besoin GIC</Text>
+                <Text style={styles.modalTitle}>{editingNeedId ? 'Modifier le besoin GIC' : 'Nouveau besoin GIC'}</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
                   <Feather name="x" size={22} color="#101e0f" />
                 </TouchableOpacity>
@@ -187,17 +224,18 @@ export default function SellerProfileScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <Text style={styles.label}>Description</Text>
+              <Text style={styles.label}>Description du besoin</Text>
               <TextInput
-                style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+                style={styles.modalInput}
                 multiline
+                numberOfLines={3}
                 value={needDescription}
                 onChangeText={setNeedDescription}
-                placeholder="Ex: 20 sacs engrais NPK manquants"
-                placeholderTextColor="#9ca49a"
+                placeholder="Décrivez clairement votre besoin (ex: 20 sacs engrais NPK)..."
+                placeholderTextColor="#788876"
               />
-              <TouchableOpacity style={styles.submitBtn} onPress={handleAddNeed} activeOpacity={0.85}>
-                <Text style={styles.submitText}>Enregistrer le besoin</Text>
+              <TouchableOpacity style={styles.submitBtn} onPress={handleSaveNeed} activeOpacity={0.85}>
+                <Text style={styles.submitText}>{editingNeedId ? 'Enregistrer les modifications' : 'Enregistrer le besoin'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -295,17 +333,19 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 10, fontWeight: '800', color: '#d97834' },
   modalOverlay: { flex: 1, backgroundColor: '#101e0f70', justifyContent: 'flex-end' },
   modalContent: {
-    backgroundColor: '#f3ecd8',
+    backgroundColor: '#ffffff',
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     padding: Spacing.four,
-    gap: 10,
+    gap: 12,
+    borderTopWidth: 2,
+    borderTopColor: '#d97834',
   },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 17, fontWeight: '800', color: '#101e0f' },
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f9f6ef',
     borderWidth: 1,
     borderColor: '#e6dfcc',
     borderRadius: 14,
@@ -314,7 +354,20 @@ const styles = StyleSheet.create({
   },
   pillActive: { backgroundColor: '#d97834', borderColor: '#d97834' },
   pillText: { fontSize: 12, fontWeight: '600', color: '#5a6258' },
-  pillTextActive: { color: '#f3ecd8', fontWeight: '800' },
+  pillTextActive: { color: '#ffffff', fontWeight: '800' },
+  modalInput: {
+    backgroundColor: '#f9f6ef',
+    borderWidth: 1.5,
+    borderColor: '#d97834',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#101e0f',
+    fontSize: 14,
+    fontWeight: '700',
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
   submitBtn: {
     backgroundColor: '#101e0f',
     borderRadius: 16,

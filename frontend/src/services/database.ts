@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { apiClient } from './api';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -43,6 +44,29 @@ import {
   WeatherRecord,
   nowIso,
 } from './database.shared';
+
+export {
+  DEFAULT_AGRONOMIST_QUESTIONS,
+  DEFAULT_ALERT_PREFS,
+  DEFAULT_B2B_OFFERS,
+  DEFAULT_CART,
+  DEFAULT_EXPENSES,
+  DEFAULT_GICS_PUBLIC,
+  DEFAULT_GIC_MEMBERS,
+  DEFAULT_GIC_NEEDS,
+  DEFAULT_GIC_PROFILE,
+  DEFAULT_HARVESTS,
+  DEFAULT_MARKET,
+  DEFAULT_PARCELS,
+  DEFAULT_PHYTO,
+  DEFAULT_PREFINANCING,
+  DEFAULT_PRODUCTS,
+  DEFAULT_PROGRAMS,
+  DEFAULT_SYNC_PEER,
+  DEFAULT_TRUST_RATINGS,
+  DEFAULT_WEATHER,
+  STORAGE_KEYS,
+};
 
 export type {
   AgriProgramRecord,
@@ -94,6 +118,7 @@ class DatabaseService {
   private readKv<T>(key: string, fallback: T): T {
     try {
       const db = this.getDb();
+      db.execSync(`CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
       const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as
         | { value: string }
         | null;
@@ -104,11 +129,46 @@ class DatabaseService {
   }
 
   private writeKv(key: string, value: unknown) {
-    const db = this.getDb();
-    db.runSync(
-      'INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);',
-      [key, JSON.stringify(value)]
-    );
+    try {
+      const db = this.getDb();
+      db.execSync(`CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+      db.runSync(
+        'INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);',
+        [key, JSON.stringify(value)]
+      );
+    } catch (err) {
+      console.warn('Erreur writeKv:', err);
+    }
+  }
+
+  async syncRemoteData(): Promise<boolean> {
+    try {
+      const [productsRes, gicsRes, terrainRes] = await Promise.all([
+        apiClient.getProducts().catch(() => null),
+        apiClient.getPublicGics().catch(() => null),
+        apiClient.getTerrain().catch(() => null),
+      ]);
+
+      let updated = false;
+      if (productsRes?.products?.length) {
+        this.writeKv(STORAGE_KEYS.PRODUCTS, productsRes.products);
+        updated = true;
+      }
+      if (gicsRes?.gics?.length) {
+        this.writeKv(STORAGE_KEYS.GICS_PUBLIC, gicsRes.gics);
+        updated = true;
+      }
+      if (terrainRes) {
+        if (terrainRes.weather?.length) this.writeKv(STORAGE_KEYS.WEATHER, terrainRes.weather);
+        if (terrainRes.market?.length) this.writeKv(STORAGE_KEYS.MARKET, terrainRes.market);
+        if (terrainRes.phytoAlerts?.length) this.writeKv(STORAGE_KEYS.PHYTO, terrainRes.phytoAlerts);
+        if (terrainRes.programs?.length) this.writeKv(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
+        updated = true;
+      }
+      return updated;
+    } catch {
+      return false;
+    }
   }
 
   async initDatabase(): Promise<void> {
@@ -136,8 +196,16 @@ class DatabaseService {
       this.ensureKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
       this.ensureKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
       this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
+      this.ensureKv(STORAGE_KEYS.AGRONOMIST_QUESTIONS, DEFAULT_AGRONOMIST_QUESTIONS);
+      this.ensureKv(STORAGE_KEYS.B2B_OFFERS, DEFAULT_B2B_OFFERS);
+      this.ensureKv(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
+      this.ensureKv(STORAGE_KEYS.PREFINANCING, DEFAULT_PREFINANCING);
+      this.ensureKv(STORAGE_KEYS.TRUST_RATINGS, DEFAULT_TRUST_RATINGS);
+
+      // Async sync from remote backend if network is online
+      this.syncRemoteData().catch(() => {});
     } catch (err) {
-      console.warn('Erreur init expo-sqlite:', err);
+      console.warn('Erreur initDatabase:', err);
     }
   }
 
@@ -166,6 +234,12 @@ class DatabaseService {
     };
     const harvests = await this.getHarvests();
     this.writeKv(STORAGE_KEYS.HARVESTS, [newHarvest, ...harvests]);
+
+    // Push to backend PostgreSQL DB so it appears in the Buyer Market
+    apiClient.addHarvest(product, volume).then(() => {
+      this.syncRemoteData().catch(() => {});
+    }).catch(() => {});
+
     return newHarvest;
   }
 
@@ -208,8 +282,9 @@ class DatabaseService {
     price: string;
     unit: string;
   }): Promise<CartItemRecord> {
+    const targetId = String(product.productId);
     const cart = await this.getCart();
-    const existing = cart.find((item) => item.productId === product.productId);
+    const existing = cart.find((item) => String(item.productId) === targetId);
 
     if (existing) {
       const updatedItem: CartItemRecord = {
@@ -217,16 +292,14 @@ class DatabaseService {
         quantity: existing.quantity + 1,
         synced: false,
       };
-      this.writeKv(
-        STORAGE_KEYS.CART,
-        cart.map((item) => (item.productId === product.productId ? updatedItem : item))
-      );
+      const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
+      this.writeKv(STORAGE_KEYS.CART, updatedCart);
       return updatedItem;
     }
 
     const newItem: CartItemRecord = {
-      id: Date.now().toString(),
-      productId: product.productId,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      productId: targetId,
       name: product.name,
       price: product.price,
       unit: product.unit,
@@ -265,7 +338,7 @@ class DatabaseService {
   async addGicNeed(category: string, description: string): Promise<GicNeed> {
     const role = await this.getLocalRole();
     const need: GicNeed = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       category,
       description,
       updatedAt: nowIso(),
@@ -274,6 +347,20 @@ class DatabaseService {
     const needs = await this.getGicNeeds();
     this.writeKv(STORAGE_KEYS.GIC_NEEDS, [need, ...needs]);
     return need;
+  }
+
+  async updateGicNeed(id: string, category: string, description: string): Promise<GicNeed[]> {
+    const needs = await this.getGicNeeds();
+    const updated = needs.map((n) => (n.id === id ? { ...n, category, description, updatedAt: nowIso() } : n));
+    this.writeKv(STORAGE_KEYS.GIC_NEEDS, updated);
+    return updated;
+  }
+
+  async deleteGicNeed(id: string): Promise<GicNeed[]> {
+    const needs = await this.getGicNeeds();
+    const filtered = needs.filter((n) => n.id !== id);
+    this.writeKv(STORAGE_KEYS.GIC_NEEDS, filtered);
+    return filtered;
   }
 
   async getWeather(): Promise<WeatherRecord[]> {
@@ -450,7 +537,7 @@ class DatabaseService {
   async addAgronomistQuestion(crop: string, category: string, question: string, photoUrl?: string): Promise<AgronomistQuestion> {
     const list = await this.getAgronomistQuestions();
     const newQ: AgronomistQuestion = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       crop,
       category,
       question,
@@ -480,7 +567,7 @@ class DatabaseService {
   ): Promise<B2BOffer> {
     const list = await this.getB2BOffers();
     const newOffer: B2BOffer = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       title,
       type,
       category,

@@ -103,6 +103,7 @@ export interface ProductOffer {
   price: string;
   unit: string;
   emoji: string;
+  imageUrl?: string;
   bassin: string;
   maturite: string;
   volumeDisponible: number;
@@ -114,6 +115,7 @@ export interface ConfidentialGic {
   name: string;
   identifiantREF: string;
   emoji: string;
+  logoUrl?: string;
   bassin: string;
 }
 
@@ -170,16 +172,9 @@ export const STORAGE_KEYS = {
   TRUST_RATINGS: 'sitcha_trust_ratings',
 } as const;
 
-export const DEFAULT_HARVESTS: HarvestRecord[] = [
-  { id: '1', product: 'Pommes de terre', volume: 1200, date: '12 Juillet 2026', synced: true, updatedAt: '2026-07-12T10:00:00.000Z', authorRole: 'leader' },
-  { id: '2', product: 'Tomates', volume: 800, date: '18 Juillet 2026', synced: true, updatedAt: '2026-07-18T10:00:00.000Z', authorRole: 'leader' },
-];
+export const DEFAULT_HARVESTS: HarvestRecord[] = [];
 
-export const DEFAULT_EXPENSES: ExpenseRecord[] = [
-  { id: '1', label: 'Fertilisants NPK', amount: 150000, category: 'Intrants', synced: true, updatedAt: '2026-07-10T10:00:00.000Z', authorRole: 'leader' },
-  { id: '2', label: 'Transport récolte', amount: 45000, category: 'Transport', synced: true, updatedAt: '2026-07-11T10:00:00.000Z', authorRole: 'member' },
-  { id: '3', label: 'Main d\'œuvre semis', amount: 80000, category: 'Main d\'œuvre', synced: true, updatedAt: '2026-07-09T10:00:00.000Z', authorRole: 'leader' },
-];
+export const DEFAULT_EXPENSES: ExpenseRecord[] = [];
 
 export const DEFAULT_CART: CartItemRecord[] = [];
 
@@ -189,81 +184,146 @@ export const DEFAULT_GIC_PROFILE: GicProfile = {
   identifiantREF: 'GIC-OUEST-2024-014',
   bassin: 'Ouest',
   statutLegalisation: 'Légalisé',
-  activitesPrincipales: 'Maraîchage, tubercules',
-  leaderName: 'Jean Fotso',
-  reglementInterieur: 'Assemblées mensuelles. Décisions à majorité. Leader tranche les conflits de données.',
-  surfaceHa: 12,
-  updatedAt: '2026-07-20T08:00:00.000Z',
+  activitesPrincipales: 'Maraîchage, maïs et tubercules',
+  leaderName: 'Paul Nguema (Leader GIC)',
+  reglementInterieur: 'Gestion communautaire des stocks et vente groupée des récoltes certifiées MINADER.',
+  surfaceHa: 12.5,
+  updatedAt: new Date().toISOString(),
   authorRole: 'leader',
 };
 
 export const DEFAULT_GIC_MEMBERS: GicMember[] = [
-  { id: 'm1', name: 'Jean Fotso', phone: '+237 690 00 00 01', isLeader: true, updatedAt: '2026-07-01T08:00:00.000Z' },
-  { id: 'm2', name: 'Marie Nguemo', phone: '+237 690 00 00 02', isLeader: false, updatedAt: '2026-07-01T08:00:00.000Z' },
-  { id: 'm3', name: 'Paul Tchoumi', phone: '+237 690 00 00 03', isLeader: false, updatedAt: '2026-07-01T08:00:00.000Z' },
+  { id: 'm1', name: 'Paul Nguema', phone: '+237 690 00 00 01', isLeader: true, updatedAt: new Date().toISOString() },
+  { id: 'm2', name: 'Jeanne Kamga', phone: '+237 699 12 34 56', isLeader: false, updatedAt: new Date().toISOString() },
+  { id: 'm3', name: 'Michel Fotso', phone: '+237 677 88 99 00', isLeader: false, updatedAt: new Date().toISOString() },
 ];
 
-export const DEFAULT_GIC_NEEDS: GicNeed[] = [
-  { id: 'n1', category: 'Intrants', description: 'NPK 20 sacs manquants pour saison', updatedAt: '2026-07-15T08:00:00.000Z', authorRole: 'leader' },
-  { id: 'n2', category: 'Financement', description: 'Crédit campagne 2M FCFA', updatedAt: '2026-07-16T08:00:00.000Z', authorRole: 'leader' },
-];
+export const DEFAULT_GIC_NEEDS: GicNeed[] = [];
 
-export const DEFAULT_WEATHER: WeatherRecord[] = [
-  { id: 'w1', bassin: 'Ouest', temperature: 24.5, pluviometrie: 12, date: '2026-07-21' },
-  { id: 'w2', bassin: 'Ouest', temperature: 23.1, pluviometrie: 8, date: '2026-07-20' },
-  { id: 'w3', bassin: 'Littoral', temperature: 28.2, pluviometrie: 3, date: '2026-07-21' },
-];
+export const DEFAULT_WEATHER: WeatherRecord[] = [];
 
-export const DEFAULT_MARKET: MarketPriceRecord[] = [
-  { id: 'mk1', product: 'Tomates', bassin: 'Ouest', prixMoyen: 480, rentabilite: 18, date: '2026-07-01' },
-  { id: 'mk2', product: 'Pommes de terre', bassin: 'Ouest', prixMoyen: 350, rentabilite: 22, date: '2026-07-01' },
-  { id: 'mk3', product: 'Maïs', bassin: 'Nord', prixMoyen: 320, rentabilite: 15, date: '2025-07-01' },
-  { id: 'mk4', product: 'Tomates', bassin: 'Ouest', prixMoyen: 420, rentabilite: 14, date: '2024-07-01' },
-];
+export const DEFAULT_MARKET: MarketPriceRecord[] = [];
 
-export const DEFAULT_PHYTO: PhytoAlertRecord[] = [
-  {
-    id: 'p1',
-    bassin: 'Ouest',
-    ravageurMaladie: 'Mildiou de la tomate',
-    protocoleUrgence: 'Retirer feuilles atteintes, fongicide cuivre, espacer irrigations.',
-    dateEmission: '2026-07-19',
-  },
-];
+export const DEFAULT_PHYTO: PhytoAlertRecord[] = [];
 
-export const DEFAULT_PROGRAMS: AgriProgramRecord[] = [
-  {
-    id: 'pr1',
-    nom: 'Crédit Campagne MINADER',
-    description: 'Prêt saisonnier taux bonifié',
-    criteresEligibilite: 'GIC légalisé, 2 ans d\'activité',
-    dateLimite: '2026-09-30',
-  },
-  {
-    id: 'pr2',
-    nom: 'Subvention Intrants Ouest',
-    description: 'Aide engrais NPK 30%',
-    criteresEligibilite: 'Bassin Ouest, surface > 5 ha',
-    dateLimite: '2026-08-15',
-  },
-];
+export const DEFAULT_PROGRAMS: AgriProgramRecord[] = [];
 
 export const DEFAULT_PRODUCTS: ProductOffer[] = [
-  { id: '1', name: 'Tomates fraîches', category: 'Légumes', gicId: 'gic-2', gicName: 'GIC Champs Verts', gicRef: 'GIC-CEN-011', price: '500', unit: 'kg', emoji: '🍅', bassin: 'Centre', maturite: 'Mature', volumeDisponible: 2400, dateDispo: '2026-07-25' },
-  { id: '2', name: 'Maïs jaune', category: 'Céréales', gicId: 'gic-1', gicName: 'GIC Agro-Vallée', gicRef: 'GIC-OUEST-2024-014', price: '350', unit: 'kg', emoji: '🌽', bassin: 'Ouest', maturite: 'En maturation', volumeDisponible: 5000, dateDispo: '2026-08-10' },
-  { id: '3', name: 'Manioc frais', category: 'Tubercules', gicId: 'gic-3', gicName: 'GIC Récoltes du Nord', gicRef: 'GIC-NORD-008', price: '200', unit: 'kg', emoji: '🥔', bassin: 'Nord', maturite: 'Mature', volumeDisponible: 3200, dateDispo: '2026-07-28' },
-  { id: '4', name: 'Régimes de Plantains', category: 'Fruits', gicId: 'gic-4', gicName: 'GIC Producteurs Centre', gicRef: 'GIC-CEN-022', price: '800', unit: 'régime', emoji: '🍌', bassin: 'Centre', maturite: 'Précoce', volumeDisponible: 450, dateDispo: '2026-08-05' },
-  { id: '5', name: 'Poivrons rouges', category: 'Légumes', gicId: 'gic-5', gicName: 'GIC Terres Fertiles', gicRef: 'GIC-OUEST-031', price: '600', unit: 'kg', emoji: '🫑', bassin: 'Ouest', maturite: 'Mature', volumeDisponible: 900, dateDispo: '2026-07-22' },
-  { id: '6', name: 'Arachides séchées', category: 'Légumineuses', gicId: 'gic-6', gicName: 'GIC Fermes CEMAC', gicRef: 'GIC-LIT-019', price: '700', unit: 'kg', emoji: '🥜', bassin: 'Littoral', maturite: 'Séché', volumeDisponible: 1800, dateDispo: '2026-07-30' },
+  {
+    id: 'p1',
+    name: 'Tomates fraîches',
+    category: 'Légumes',
+    gicId: 'g1',
+    gicName: 'GIC Champs Verts',
+    gicRef: 'GIC-CEN-011',
+    price: '480',
+    unit: 'kg',
+    emoji: '🍅',
+    imageUrl: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?w=600&auto=format&fit=crop',
+    bassin: 'Centre',
+    maturite: 'Mature',
+    volumeDisponible: 2400,
+    dateDispo: '2026-07-25',
+  },
+  {
+    id: 'p2',
+    name: 'Maïs jaune',
+    category: 'Céréales',
+    gicId: 'g2',
+    gicName: 'GIC Agro-Vallée Bafoussam',
+    gicRef: 'GIC-OUEST-2024-014',
+    price: '350',
+    unit: 'kg',
+    emoji: '🌽',
+    imageUrl: 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?w=600&auto=format&fit=crop',
+    bassin: 'Ouest',
+    maturite: 'En maturation',
+    volumeDisponible: 5000,
+    dateDispo: '2026-08-10',
+  },
+  {
+    id: 'p3',
+    name: 'Manioc frais',
+    category: 'Tubercules',
+    gicId: 'g3',
+    gicName: 'GIC Récoltes du Nord',
+    gicRef: 'GIC-NORD-008',
+    price: '200',
+    unit: 'kg',
+    emoji: '🥔',
+    imageUrl: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?w=600&auto=format&fit=crop',
+    bassin: 'Nord',
+    maturite: 'Mature',
+    volumeDisponible: 3200,
+    dateDispo: '2026-07-28',
+  },
+  {
+    id: 'p4',
+    name: 'Régimes de Plantains',
+    category: 'Fruits',
+    gicId: 'g4',
+    gicName: 'GIC Producteurs Centre',
+    gicRef: 'GIC-CEN-022',
+    price: '1500',
+    unit: 'régime',
+    emoji: '🍌',
+    imageUrl: 'https://images.unsplash.com/photo-1528825871115-3581a5387919?w=600&auto=format&fit=crop',
+    bassin: 'Centre',
+    maturite: 'Précoce',
+    volumeDisponible: 450,
+    dateDispo: '2026-08-05',
+  },
+  {
+    id: 'p5',
+    name: 'Ananas',
+    category: 'Fruits',
+    gicId: 'g2',
+    gicName: 'GIC Agro-Vallée Bafoussam',
+    gicRef: 'GIC-OUEST-2024-014',
+    price: '600',
+    unit: 'kg',
+    emoji: '🍍',
+    imageUrl: 'https://images.unsplash.com/photo-1550258987-190a2d41a8ba?w=600&auto=format&fit=crop',
+    bassin: 'Ouest',
+    maturite: 'Mature',
+    volumeDisponible: 1200,
+    dateDispo: '2026-07-26',
+  },
 ];
 
 export const DEFAULT_GICS_PUBLIC: ConfidentialGic[] = [
-  { id: 'gic-1', name: 'GIC Agro-Vallée', identifiantREF: 'GIC-OUEST-2024-014', emoji: '🌿', bassin: 'Ouest' },
-  { id: 'gic-2', name: 'GIC Champs Verts', identifiantREF: 'GIC-CEN-011', emoji: '🥬', bassin: 'Centre' },
-  { id: 'gic-3', name: 'GIC Récoltes du Nord', identifiantREF: 'GIC-NORD-008', emoji: '🌾', bassin: 'Nord' },
-  { id: 'gic-4', name: 'GIC Producteurs Centre', identifiantREF: 'GIC-CEN-022', emoji: '🍌', bassin: 'Centre' },
-  { id: 'gic-5', name: 'GIC Terres Fertiles', identifiantREF: 'GIC-OUEST-031', emoji: '🪴', bassin: 'Ouest' },
-  { id: 'gic-6', name: 'GIC Fermes CEMAC', identifiantREF: 'GIC-LIT-019', emoji: '🥜', bassin: 'Littoral' },
+  {
+    id: 'g1',
+    name: 'GIC Champs Verts',
+    identifiantREF: 'GIC-CEN-011',
+    emoji: '🌿',
+    logoUrl: 'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=200',
+    bassin: 'Centre',
+  },
+  {
+    id: 'g2',
+    name: 'GIC Agro-Vallée Bafoussam',
+    identifiantREF: 'GIC-OUEST-2024-014',
+    emoji: '🌿',
+    logoUrl: 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?w=200',
+    bassin: 'Ouest',
+  },
+  {
+    id: 'g3',
+    name: 'GIC Récoltes du Nord',
+    identifiantREF: 'GIC-NORD-008',
+    emoji: '🌿',
+    logoUrl: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=200',
+    bassin: 'Nord',
+  },
+  {
+    id: 'g4',
+    name: 'GIC Producteurs Centre',
+    identifiantREF: 'GIC-CEN-022',
+    emoji: '🌿',
+    logoUrl: 'https://images.unsplash.com/photo-1523348837708-15d4a09cfac2?w=200',
+    bassin: 'Centre',
+  },
 ];
 
 export const DEFAULT_ALERT_PREFS: AlertPreferences = {
@@ -271,18 +331,11 @@ export const DEFAULT_ALERT_PREFS: AlertPreferences = {
   bassins: [],
 };
 
-/** Peer mock pour sync Xender : version membre plus récente sur une dépense (conflit) */
+/** Peer mock pour sync Xender : initialisé vide */
 export const DEFAULT_SYNC_PEER = {
-  expenses: [
-    { id: '2', label: 'Transport récolte (membre)', amount: 50000, category: 'Transport', synced: false, updatedAt: '2026-07-21T18:00:00.000Z', authorRole: 'member' as const },
-    { id: 'peer-new', label: 'Location motopompe', amount: 25000, category: 'Matériel', synced: false, updatedAt: '2026-07-21T19:00:00.000Z', authorRole: 'member' as const },
-  ] as ExpenseRecord[],
-  harvests: [
-    { id: 'peer-h1', product: 'Haricots verts', volume: 300, date: 'Aujourd\'hui', synced: false, updatedAt: '2026-07-21T17:00:00.000Z', authorRole: 'member' as const },
-  ] as HarvestRecord[],
-  needs: [
-    { id: 'peer-n1', category: 'Matériel', description: 'Besoin pulvérisateur (saisie membre)', updatedAt: '2026-07-21T16:00:00.000Z', authorRole: 'member' as const },
-  ] as GicNeed[],
+  expenses: [] as ExpenseRecord[],
+  harvests: [] as HarvestRecord[],
+  needs: [] as GicNeed[],
 };
 
 export interface AgronomistQuestion {
@@ -309,52 +362,9 @@ export interface B2BOffer {
   createdAt: string;
 }
 
-export const DEFAULT_AGRONOMIST_QUESTIONS: AgronomistQuestion[] = [
-  {
-    id: 'aq1',
-    crop: 'Tomates',
-    category: 'Maladie',
-    question: 'Taches noires et jaunissement sur les feuilles basales après les pluies.',
-    status: 'repondu',
-    answer: 'Il s\'agit du Mildiou. Traiter au fongicide à base de cuivre et enlever les feuilles touchées.',
-    createdAt: '2026-07-20T10:00:00.000Z',
-    synced: true,
-  },
-  {
-    id: 'aq2',
-    crop: 'Maïs',
-    category: 'Fertilisation',
-    question: 'Quel est le meilleur moment pour apporter la 2ème fraction d\'azote ?',
-    status: 'en_attente',
-    createdAt: '2026-07-21T14:30:00.000Z',
-    synced: false,
-  },
-];
+export const DEFAULT_AGRONOMIST_QUESTIONS: AgronomistQuestion[] = [];
 
-export const DEFAULT_B2B_OFFERS: B2BOffer[] = [
-  {
-    id: 'b2b1',
-    title: 'Location Motopompe 5.5 HP',
-    type: 'rent',
-    category: 'Matériel Irrigaton',
-    priceOrExchange: '5 000 FCFA / jour',
-    gicName: 'GIC Agro-Vallée Bafoussam',
-    location: 'Bafoussam (Ouest)',
-    contact: '+237 699 00 11 22',
-    createdAt: '2026-07-20T08:00:00.000Z',
-  },
-  {
-    id: 'b2b2',
-    title: 'Troc: 5 sacs NPK contre 10 sacs Semences Maïs',
-    type: 'barter',
-    category: 'Intrants & Semences',
-    priceOrExchange: 'Échange équivalent',
-    gicName: 'GIC Champs Verts',
-    location: 'Yaoundé (Centre)',
-    contact: '+237 677 33 44 55',
-    createdAt: '2026-07-21T11:00:00.000Z',
-  },
-];
+export const DEFAULT_B2B_OFFERS: B2BOffer[] = [];
 
 export interface ParcelGrowthRecord {
   id: string;
@@ -390,55 +400,11 @@ export interface TrustRating {
   createdAt: string;
 }
 
-export const DEFAULT_PARCELS: ParcelGrowthRecord[] = [
-  {
-    id: 'par1',
-    parcelName: 'Parcelle Nord Bafoussam (2 ha)',
-    crop: 'Tomates',
-    sowingDate: '2026-05-10',
-    stage: 'Maturation',
-    estimatedHarvestDate: '2026-07-28',
-    estimatedVolumeKg: 3000,
-    actualHarvestVolumeKg: 2200, // Drop > 15%! (2200 < 2550) -> Triggers alert
-    updatedAt: '2026-07-21T08:00:00.000Z',
-  },
-  {
-    id: 'par2',
-    parcelName: 'Champ Est Foumbot (3.5 ha)',
-    crop: 'Maïs jaune',
-    sowingDate: '2026-04-15',
-    stage: 'Prêt à récolter',
-    estimatedHarvestDate: '2026-08-05',
-    estimatedVolumeKg: 5500,
-    updatedAt: '2026-07-20T10:00:00.000Z',
-  },
-];
+export const DEFAULT_PARCELS: ParcelGrowthRecord[] = [];
 
-export const DEFAULT_PREFINANCING: PrefinancingDeal[] = [
-  {
-    id: 'pf1',
-    gicName: 'GIC Agro-Vallée Bafoussam',
-    buyerName: 'Brasseries du Cameroun',
-    amountFcfa: 1500000,
-    inputDescription: 'Avance 30 sacs Engrais NPK + Semences certifiées',
-    reservedProduct: 'Maïs jaune',
-    reservedVolumeKg: 5000,
-    status: 'accepte',
-    createdAt: '2026-07-10T09:00:00.000Z',
-  },
-];
+export const DEFAULT_PREFINANCING: PrefinancingDeal[] = [];
 
-export const DEFAULT_TRUST_RATINGS: TrustRating[] = [
-  {
-    id: 'tr1',
-    targetId: 'gic-1',
-    targetType: 'gic',
-    rating: 4.8,
-    comment: 'Livraison conforme dans les délais à Bafoussam. Excellente qualité de tubercules.',
-    authorName: 'SOCIÉTÉ AGRO-CENTRE',
-    createdAt: '2026-07-18T14:00:00.000Z',
-  },
-];
+export const DEFAULT_TRUST_RATINGS: TrustRating[] = [];
 
 export function nowIso() {
   return new Date().toISOString();

@@ -18,7 +18,7 @@ interface SessionResponse {
 }
 
 const defaultApiUrl = Platform.select({
-  android: 'http://10.0.2.2:4000/api',
+  android: 'http://172.20.10.3:4000/api',
   ios: 'http://localhost:4000/api',
   default: 'http://localhost:4000/api',
 });
