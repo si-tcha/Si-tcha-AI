@@ -1,5 +1,5 @@
 import * as http from 'http';
-import { startAgroCronJobs } from './jobs/agroMonitoring.cron';
+import { startAgroCronJobs } from './jobs/agroMonitoring.cron.js';
 
 async function startServer() {
   // Utilisation de l'importation dynamique pour une meilleure compatibilité des modules
