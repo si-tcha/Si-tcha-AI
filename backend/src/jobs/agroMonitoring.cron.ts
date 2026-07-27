@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import axios from 'axios';
-import prisma from '../lib/prisma';
+import prisma from '../lib/prisma.js';
 
 const AGRO_API_KEY = process.env.AGROMONITORING_API_KEY;
 const BASE_URL = 'http://api.agromonitoring.com/agro/1.0';

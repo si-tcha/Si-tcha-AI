@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { listGics, listPendingMembers, manageMemberStatus } from '../controllers/gic.controller';
-import { asyncHandler } from '../../utils/asyncHandler';
-import { isGicLeader, protect } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validation.middleware';
+import { listGics, listPendingMembers, manageMemberStatus } from '../controllers/gic.controller.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { isGicLeader, protect } from '../middlewares/auth.middleware.js';
+import { validate } from '../middlewares/validation.middleware.js';
 
 const router = Router();
 

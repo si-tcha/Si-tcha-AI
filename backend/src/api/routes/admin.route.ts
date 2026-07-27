@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { asyncHandler } from '../../utils/asyncHandler';
-import { protect, isAdmin } from '../middlewares/auth.middleware';
-import { createGic, listGicsWithStats } from '../controllers/admin.controller';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { protect, isAdmin } from '../middlewares/auth.middleware.js';
+import { createGic, listGicsWithStats } from '../controllers/admin.controller.js';
 
 const router = Router();
 

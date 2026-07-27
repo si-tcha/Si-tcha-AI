@@ -1,14 +1,14 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import healthRouter from './api/routes/health.route';
-import authRouter from './api/routes/auth.route';
-import gicRouter from './api/routes/gic.route';
-import adminRouter from './api/routes/admin.route'; // Ajout de la route admin
-import weatherRoutes from './api/routes/weather.route';
+import healthRouter from './api/routes/health.route.js';
+import authRouter from './api/routes/auth.route.js';
+import gicRouter from './api/routes/gic.route.js';
+import adminRouter from './api/routes/admin.route.js'; // Ajout de la route admin
+import weatherRoutes from './api/routes/weather.route.js';
 import swaggerUi from 'swagger-ui-express';
-import swaggerSpec from './config/swagger';
-import { errorHandler } from './api/middlewares/errorHandler.middleware';
+import swaggerSpec from './config/swagger.js';
+import { errorHandler } from './api/middlewares/errorHandler.middleware.js';
 
 dotenv.config();
 

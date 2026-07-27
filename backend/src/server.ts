@@ -3,7 +3,7 @@ import { startAgroCronJobs } from './jobs/agroMonitoring.cron.js';
 
 async function startServer() {
   // Utilisation de l'importation dynamique pour une meilleure compatibilité des modules
-  const { default: app } = await import('./app');
+  const { default: app } = await import('./app.js');
 
   const port = process.env.PORT || 8080;
   const server = http.createServer(app);
