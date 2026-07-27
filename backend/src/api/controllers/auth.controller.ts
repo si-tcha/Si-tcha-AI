@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import * as authService from '../../services/auth.service';
+import * as authService from '../../services/auth.service.js';
 import jwt from 'jsonwebtoken';
-import { AcheteurRegisterData, AgriculteurRegisterData, LoginData, VerifyAccountData } from '../../types/user.types';
+import { AcheteurRegisterData, AgriculteurRegisterData, LoginData, VerifyAccountData } from '../../types/user.types.js';
 
 
 // Contrôleur pour l'authentification et l'enregistrement des utilisateurs

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../../lib/prisma';
+import prisma from '../../lib/prisma.js';
 
 // Dictionnaire de traduction pour les descriptions météo d'AgroMonitoring
 const translateWeatherDescription = (desc: string): string => {

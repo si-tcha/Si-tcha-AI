@@ -1,5 +1,5 @@
-import prisma from '../lib/prisma';
-import { GicCreationData, LeaderCreationData } from '../types/admin.types';
+import prisma from '../lib/prisma.js';
+import { GicCreationData, LeaderCreationData } from '../types/admin.types.js';
 
 
 

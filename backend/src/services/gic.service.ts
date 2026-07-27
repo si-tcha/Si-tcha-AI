@@ -1,5 +1,5 @@
-import prisma from '../lib/prisma';
-import { GicListData } from '../types/gic.types';
+import prisma from '../lib/prisma.js';
+import { GicListData } from '../types/gic.types.js';
 
 
 export const findAllGics = async (): Promise<GicListData[]> => {

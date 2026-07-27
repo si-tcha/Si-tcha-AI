@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { login, registerAcheteur, registerAgriculteur, verifyAccount, logout, adminLogin } from '../controllers/auth.controller';
-import { validate } from '../middlewares/validation.middleware';
-import { asyncHandler } from '../../utils/asyncHandler';
-import { protect } from '../middlewares/auth.middleware';
+import { login, registerAcheteur, registerAgriculteur, verifyAccount, logout, adminLogin } from '../controllers/auth.controller.js';
+import { validate } from '../middlewares/validation.middleware.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { protect } from '../middlewares/auth.middleware.js';
 
 const router = Router();
 

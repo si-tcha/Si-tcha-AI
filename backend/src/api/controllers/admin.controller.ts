@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import * as adminService from '../../services/admin.service';
+import * as adminService from '../../services/admin.service.js';
 
 export const createGic = async (req: Request, res: Response) => {
     const { gicData, leaderData } = req.body;

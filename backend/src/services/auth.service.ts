@@ -1,6 +1,6 @@
-import prisma from '../lib/prisma';
-import { AcheteurRegisterData, AgriculteurRegisterData } from '../types/user.types';
-import { notifyGicLeaderForApproval, sendVerificationSms } from './notification.service';
+import prisma from '../lib/prisma.js';
+import { AcheteurRegisterData, AgriculteurRegisterData } from '../types/user.types.js';
+import { notifyGicLeaderForApproval, sendVerificationSms } from './notification.service.js';
 import bcrypt from 'bcrypt';
 
 export const registerAcheteur = async (data: AcheteurRegisterData) => {

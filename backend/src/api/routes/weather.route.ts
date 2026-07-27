@@ -1,8 +1,8 @@
 // src/api/routes/weather.route.ts
 import { Router } from 'express';
-import { getWeatherDashboard } from '../controllers/weather.controller';
-import { protect } from '../middlewares/auth.middleware';
-import { asyncHandler } from '../../utils/asyncHandler';
+import { getWeatherDashboard } from '../controllers/weather.controller.js';
+import { protect } from '../middlewares/auth.middleware.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
 

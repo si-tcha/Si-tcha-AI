@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import * as gicService from '../../services/gic.service';
+import * as gicService from '../../services/gic.service.js';
 
 export const listGics = async (req: Request, res: Response) => {
     const gics = await gicService.findAllGics();
