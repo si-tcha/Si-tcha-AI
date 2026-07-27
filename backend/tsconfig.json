@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
+    "outDir": "dist",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "target": "ES2023",
     "strict": true,
     "esModuleInterop": true
   },
-   "include": ["src/**/*", "scripts"],
+   "include": ["src/**/*"],
    "exclude": ["node_modules"],
   
 }
