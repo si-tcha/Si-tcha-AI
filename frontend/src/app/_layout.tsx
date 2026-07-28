@@ -4,11 +4,26 @@ import { Stack } from 'expo-router';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { ToastProvider } from '@/components/ui/toast';
 
+import { useEffect } from 'react';
+import { setSyncErrorHandler } from '@/services/database';
+import { useToast } from '@/components/ui/toast';
+
+function SyncErrorListener() {
+  const { showToast } = useToast();
+  useEffect(() => {
+    setSyncErrorHandler((message?: string) => {
+      showToast({ message: message || 'Mode hors-ligne activé.', type: 'warning' });
+    });
+  }, [showToast]);
+  return null;
+}
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <ToastProvider>
+        <SyncErrorListener />
         <AnimatedSplashOverlay />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />

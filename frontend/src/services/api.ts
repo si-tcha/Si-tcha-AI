@@ -1,50 +1,94 @@
 import { Platform } from 'react-native';
+let SecureStore: any;
+if (Platform.OS !== 'web') {
+  SecureStore = require('expo-secure-store');
+}
 import { AlertPreferences, OrderType } from './database.shared';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT';
 
-interface SessionResponse {
-  token: string;
-  user: {
-    id: string;
-    role: 'seller' | 'buyer';
-    name: string;
-    phone: string;
-    status: 'active' | 'pending';
-    buyerId?: string;
-    gicId?: string;
-    gicRole?: 'leader' | 'member';
-  };
+export interface UserProfile {
+  id: string;
+  role: 'seller' | 'buyer';
+  name: string;
+  phone: string;
+  status: 'active' | 'pending';
+  buyerId?: string;
+  gicId?: string;
+  gicRole?: 'leader' | 'member';
 }
 
-const defaultApiUrl = Platform.select({
+export interface SessionResponse {
+  token?: string;
+  user?: UserProfile;
+  message?: string;
+  requireOtp?: boolean;
+  phone?: string;
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+// En production, utilise l'URL Render. En dev, utilise l'IP locale.
+const PROD_API_URL = 'https://si-tcha-ai-mobile.onrender.com/api';
+
+const devApiUrl = Platform.select({
   android: 'http://172.20.10.3:4000/api',
   ios: 'http://localhost:4000/api',
   default: 'http://localhost:4000/api',
 });
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? defaultApiUrl;
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? PROD_API_URL;
 const TOKEN_KEY = 'sitcha_api_token';
 
 let memoryToken: string | null = null;
 
-function readToken() {
+async function readToken(): Promise<string | null> {
   if (memoryToken) return memoryToken;
-  if (typeof localStorage !== 'undefined') {
-    memoryToken = localStorage.getItem(TOKEN_KEY);
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      memoryToken = localStorage.getItem(TOKEN_KEY);
+    }
+  } else {
+    try {
+      memoryToken = await SecureStore.getItemAsync(TOKEN_KEY);
+    } catch {}
   }
   return memoryToken;
 }
 
-function saveToken(token: string) {
+async function saveToken(token: string): Promise<void> {
   memoryToken = token;
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(TOKEN_KEY, token);
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(TOKEN_KEY, token);
+    }
+  } else {
+    try {
+      await SecureStore.setItemAsync(TOKEN_KEY, token);
+    } catch {}
+  }
+}
+
+export async function clearToken(): Promise<void> {
+  memoryToken = null;
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(TOKEN_KEY);
+    }
+  } else {
+    try {
+      await SecureStore.deleteItemAsync(TOKEN_KEY);
+    } catch {}
   }
 }
 
 async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
-  const token = readToken();
+  const token = await readToken();
   const response = await fetch(`${API_URL}${path}`, {
     method,
     headers: {
@@ -62,36 +106,51 @@ async function request<T>(path: string, method: HttpMethod = 'GET', body?: unkno
 }
 
 export const apiClient = {
-  async login(phone: string, role?: 'seller' | 'buyer') {
-    const session = await request<SessionResponse>('/auth/login', 'POST', { phone, role });
-    saveToken(session.token);
+  // Login : téléphone + PIN, le backend auto-détecte le rôle
+  async login(phone: string, pin: string) {
+    const session = await request<SessionResponse>('/auth/login', 'POST', { phone, pin });
+    if (session.token) {
+      await saveToken(session.token);
+    }
     return session;
   },
 
-  async registerBuyer(input: { companyName: string; phone: string; regNumber: string }) {
+  async verifyOtp(phone: string, code: string) {
+    const session = await request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code });
+    if (session.token) {
+      await saveToken(session.token);
+    }
+    return session;
+  },
+
+  async registerBuyer(input: { companyName: string; phone: string; pin: string; address?: string }) {
     const session = await request<SessionResponse>('/auth/register/buyer', 'POST', input);
-    saveToken(session.token);
+    if (session.token) {
+      await saveToken(session.token);
+    }
     return session;
   },
 
-  async registerSeller(input: { fullName: string; phone: string; gicName: string }) {
+  async registerSeller(input: { fullName: string; phone: string; pin: string; gicName: string }) {
     const session = await request<SessionResponse>('/auth/register/seller', 'POST', input);
-    saveToken(session.token);
+    if (session.token) {
+      await saveToken(session.token);
+    }
     return session;
   },
 
-  getProducts: () => request<{ products: unknown[] }>('/catalog/products'),
-  getPublicGics: () => request<{ gics: unknown[] }>('/gics/public'),
+  getProducts: (page = 1, limit = 20) => request<{ products: unknown[]; meta: PaginationMeta }>(`/catalog/products?page=${page}&limit=${limit}`),
+  getPublicGics: (page = 1, limit = 20) => request<{ gics: unknown[]; meta: PaginationMeta }>(`/gics/public?page=${page}&limit=${limit}`),
   getTerrain: () => request<{ weather: unknown[]; market: unknown[]; phytoAlerts: unknown[]; programs: unknown[] }>('/terrain'),
   getGicProfile: () => request<{ profile: unknown; members: unknown[]; needs: unknown[] }>('/gic/profile'),
-  getHarvests: () => request<{ harvests: unknown[] }>('/gic/harvests'),
+  getHarvests: (page = 1, limit = 20) => request<{ harvests: unknown[]; meta: PaginationMeta }>(`/gic/harvests?page=${page}&limit=${limit}`),
   addHarvest: (product: string, volume: number) => request<{ harvest: unknown }>('/gic/harvests', 'POST', { product, volume }),
-  getExpenses: () => request<{ expenses: unknown[] }>('/gic/expenses'),
+  getExpenses: (page = 1, limit = 20) => request<{ expenses: unknown[]; meta: PaginationMeta }>(`/gic/expenses?page=${page}&limit=${limit}`),
   addExpense: (label: string, amount: number, category: string) =>
     request<{ expense: unknown }>('/gic/expenses', 'POST', { label, amount, category }),
   createOrder: (type: OrderType, items: Array<{ productId: string; quantity: number }>) =>
     request<{ orders: unknown[] }>('/buyer/orders', 'POST', { type, items }),
-  getOrders: () => request<{ orders: unknown[] }>('/buyer/orders'),
+  getOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/buyer/orders?page=${page}&limit=${limit}`),
   getAlertPreferences: () => request<{ preferences: AlertPreferences }>('/buyer/alert-preferences'),
   saveAlertPreferences: (preferences: AlertPreferences) =>
     request<{ preferences: AlertPreferences }>('/buyer/alert-preferences', 'PUT', preferences),

@@ -34,6 +34,7 @@ import {
   MarketPriceRecord,
   OrderRecord,
   OrderType,
+  OrderStatus,
   ParcelGrowthRecord,
   PhytoAlertRecord,
   PrefinancingDeal,
@@ -93,10 +94,11 @@ export type {
   WeatherRecord,
 } from './database.shared';
 
-/**
- * Implémentation native (iOS/Android) — stockage via expo-sqlite.
- * Table kv_store = miroir des clés JSON (même API que database.web.ts).
- */
+let syncErrorHandler: ((message?: string) => void) | null = null;
+export function setSyncErrorHandler(handler: (message?: string) => void) {
+  syncErrorHandler = handler;
+}
+
 class DatabaseService {
   private getDb() {
     return SQLite.openDatabaseSync('sitcha.db');
@@ -104,14 +106,9 @@ class DatabaseService {
 
   private ensureKv(key: string, fallback: unknown) {
     const db = this.getDb();
-    const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as
-      | { value: string }
-      | null;
+    const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as { value: string } | null;
     if (!row) {
-      db.runSync('INSERT INTO kv_store (key, value) VALUES (?, ?);', [
-        key,
-        JSON.stringify(fallback),
-      ]);
+      db.runSync('INSERT INTO kv_store (key, value) VALUES (?, ?);', [key, JSON.stringify(fallback)]);
     }
   }
 
@@ -119,9 +116,7 @@ class DatabaseService {
     try {
       const db = this.getDb();
       db.execSync(`CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-      const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as
-        | { value: string }
-        | null;
+      const row = db.getFirstSync('SELECT value FROM kv_store WHERE key = ?;', [key]) as { value: string } | null;
       return row ? (JSON.parse(row.value) as T) : fallback;
     } catch {
       return fallback;
@@ -132,10 +127,7 @@ class DatabaseService {
     try {
       const db = this.getDb();
       db.execSync(`CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-      db.runSync(
-        'INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);',
-        [key, JSON.stringify(value)]
-      );
+      db.runSync('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);', [key, JSON.stringify(value)]);
     } catch (err) {
       console.warn('Erreur writeKv:', err);
     }
@@ -143,13 +135,19 @@ class DatabaseService {
 
   async syncRemoteData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes] = await Promise.all([
+      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, ordersRes] = await Promise.all([
         apiClient.getProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
+        apiClient.getHarvests().catch(() => null),
+        apiClient.getExpenses().catch(() => null),
+        apiClient.getGicProfile().catch(() => null),
+        apiClient.getOrders().catch(() => null),
       ]);
 
       let updated = false;
+      const db = this.getDb();
+
       if (productsRes?.products?.length) {
         this.writeKv(STORAGE_KEYS.PRODUCTS, productsRes.products);
         updated = true;
@@ -165,6 +163,51 @@ class DatabaseService {
         if (terrainRes.programs?.length) this.writeKv(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
         updated = true;
       }
+      if (harvestsRes?.harvests) {
+        db.runSync('DELETE FROM harvests');
+        for (const h of (harvestsRes.harvests as any[])) {
+          db.runSync(
+            'INSERT INTO harvests (id, product, volume, date, synced, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [h.id, h.product, h.volume, h.date, 1, h.updatedAt || nowIso(), h.authorRole || 'member']
+          );
+        }
+        updated = true;
+      }
+      if (expensesRes?.expenses) {
+        db.runSync('DELETE FROM expenses');
+        for (const e of (expensesRes.expenses as any[])) {
+          db.runSync(
+            'INSERT INTO expenses (id, label, amount, category, synced, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [e.id, e.label, e.amount, e.category, 1, e.updatedAt || nowIso(), e.authorRole || 'member']
+          );
+        }
+        updated = true;
+      }
+      if (profileRes?.profile) {
+        this.writeKv(STORAGE_KEYS.GIC_PROFILE, profileRes.profile);
+        if (profileRes.members) this.writeKv(STORAGE_KEYS.GIC_MEMBERS, profileRes.members);
+        if (profileRes.needs) {
+          db.runSync('DELETE FROM gic_needs');
+          for (const n of (profileRes.needs as any[])) {
+            db.runSync(
+              'INSERT INTO gic_needs (id, category, description, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?)',
+              [n.id, n.category, n.description, n.updatedAt || nowIso(), n.authorRole || 'member']
+            );
+          }
+        }
+        updated = true;
+      }
+      if (ordersRes?.orders) {
+        db.runSync('DELETE FROM orders');
+        for (const o of (ordersRes.orders as any[])) {
+          db.runSync(
+            'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt]
+          );
+        }
+        updated = true;
+      }
+      
       return updated;
     } catch {
       return false;
@@ -179,28 +222,49 @@ class DatabaseService {
           key TEXT PRIMARY KEY NOT NULL,
           value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS harvests (
+          id TEXT PRIMARY KEY, product TEXT, volume REAL, date TEXT, synced INTEGER, updatedAt TEXT, authorRole TEXT
+        );
+        CREATE TABLE IF NOT EXISTS expenses (
+          id TEXT PRIMARY KEY, label TEXT, amount REAL, category TEXT, synced INTEGER, updatedAt TEXT, authorRole TEXT
+        );
+        CREATE TABLE IF NOT EXISTS cart_items (
+          id TEXT PRIMARY KEY, productId TEXT, name TEXT, price TEXT, unit TEXT, quantity INTEGER, synced INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS orders (
+          id TEXT PRIMARY KEY, type TEXT, status TEXT, productId TEXT, productName TEXT, quantity REAL, unit TEXT, price TEXT, gicName TEXT, createdAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS gic_needs (
+          id TEXT PRIMARY KEY, category TEXT, description TEXT, updatedAt TEXT, authorRole TEXT
+        );
+        CREATE TABLE IF NOT EXISTS agronomist_questions (
+          id TEXT PRIMARY KEY, crop TEXT, category TEXT, question TEXT, photoUrl TEXT, status TEXT, answer TEXT, createdAt TEXT, synced INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS b2b_offers (
+          id TEXT PRIMARY KEY, title TEXT, type TEXT, category TEXT, priceOrExchange TEXT, gicName TEXT, location TEXT, contact TEXT, createdAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS parcels (
+          id TEXT PRIMARY KEY, parcelName TEXT, crop TEXT, sowingDate TEXT, stage TEXT, estimatedHarvestDate TEXT, estimatedVolumeKg REAL, actualHarvestVolumeKg REAL, updatedAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS prefinancing (
+          id TEXT PRIMARY KEY, gicName TEXT, buyerName TEXT, amountFcfa REAL, inputDescription TEXT, reservedProduct TEXT, reservedVolumeKg REAL, status TEXT, createdAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS trust_ratings (
+          id TEXT PRIMARY KEY, targetId TEXT, targetType TEXT, rating INTEGER, comment TEXT, authorName TEXT, createdAt TEXT
+        );
       `);
-      this.ensureKv(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
-      this.ensureKv(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
-      this.ensureKv(STORAGE_KEYS.CART, DEFAULT_CART);
+
       this.ensureKv(STORAGE_KEYS.GIC_PROFILE, DEFAULT_GIC_PROFILE);
       this.ensureKv(STORAGE_KEYS.GIC_MEMBERS, DEFAULT_GIC_MEMBERS);
-      this.ensureKv(STORAGE_KEYS.GIC_NEEDS, DEFAULT_GIC_NEEDS);
       this.ensureKv(STORAGE_KEYS.WEATHER, DEFAULT_WEATHER);
       this.ensureKv(STORAGE_KEYS.MARKET, DEFAULT_MARKET);
       this.ensureKv(STORAGE_KEYS.PHYTO, DEFAULT_PHYTO);
       this.ensureKv(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
       this.ensureKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
       this.ensureKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
-      this.ensureKv(STORAGE_KEYS.ORDERS, []);
       this.ensureKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
       this.ensureKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
       this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
-      this.ensureKv(STORAGE_KEYS.AGRONOMIST_QUESTIONS, DEFAULT_AGRONOMIST_QUESTIONS);
-      this.ensureKv(STORAGE_KEYS.B2B_OFFERS, DEFAULT_B2B_OFFERS);
-      this.ensureKv(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
-      this.ensureKv(STORAGE_KEYS.PREFINANCING, DEFAULT_PREFINANCING);
-      this.ensureKv(STORAGE_KEYS.TRUST_RATINGS, DEFAULT_TRUST_RATINGS);
 
       // Async sync from remote backend if network is online
       this.syncRemoteData().catch(() => {});
@@ -218,96 +282,90 @@ class DatabaseService {
   }
 
   async getHarvests(): Promise<HarvestRecord[]> {
-    return this.readKv(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
+    const rows = this.getDb().getAllSync('SELECT * FROM harvests ORDER BY updatedAt DESC') as any[];
+    return rows.map(r => ({ ...r, synced: !!r.synced }));
   }
 
   async addHarvest(product: string, volume: number): Promise<HarvestRecord> {
     const role = await this.getLocalRole();
-    const newHarvest: HarvestRecord = {
-      id: Date.now().toString(),
-      product,
-      volume,
-      date: 'Aujourd\'hui',
-      synced: false,
-      updatedAt: nowIso(),
-      authorRole: role,
-    };
-    const harvests = await this.getHarvests();
-    this.writeKv(STORAGE_KEYS.HARVESTS, [newHarvest, ...harvests]);
+    const id = Date.now().toString();
+    const date = 'Aujourd\'hui';
+    const updatedAt = nowIso();
+    const db = this.getDb();
+    
+    db.runSync(
+      'INSERT INTO harvests (id, product, volume, date, synced, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, product, volume, date, 0, updatedAt, role]
+    );
 
-    // Push to backend PostgreSQL DB so it appears in the Buyer Market
     apiClient.addHarvest(product, volume).then(() => {
+      db.runSync('UPDATE harvests SET synced = 1 WHERE id = ?', [id]);
       this.syncRemoteData().catch(() => {});
-    }).catch(() => {});
+    }).catch(() => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : récolte sauvegardée localement.");
+    });
 
-    return newHarvest;
+    return { id, product, volume, date, synced: false, updatedAt, authorRole: role };
   }
 
   async getExpenses(): Promise<ExpenseRecord[]> {
-    return this.readKv(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
+    const rows = this.getDb().getAllSync('SELECT * FROM expenses ORDER BY updatedAt DESC') as any[];
+    return rows.map(r => ({ ...r, synced: !!r.synced }));
   }
 
   async addExpense(label: string, amount: number, category: string): Promise<ExpenseRecord> {
     const role = await this.getLocalRole();
-    const newExpense: ExpenseRecord = {
-      id: Date.now().toString(),
-      label,
-      amount,
-      category,
-      synced: false,
-      updatedAt: nowIso(),
-      authorRole: role,
-    };
-    const expenses = await this.getExpenses();
-    this.writeKv(STORAGE_KEYS.EXPENSES, [newExpense, ...expenses]);
-    return newExpense;
+    const id = Date.now().toString();
+    const updatedAt = nowIso();
+    const db = this.getDb();
+    
+    db.runSync(
+      'INSERT INTO expenses (id, label, amount, category, synced, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, label, amount, category, 0, updatedAt, role]
+    );
+    
+    apiClient.addExpense(label, amount, category).then(() => {
+      db.runSync('UPDATE expenses SET synced = 1 WHERE id = ?', [id]);
+      this.syncRemoteData().catch(() => {});
+    }).catch(() => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : dépense sauvegardée localement.");
+    });
+    
+    return { id, label, amount, category, synced: false, updatedAt, authorRole: role };
   }
 
   async getCart(): Promise<CartItemRecord[]> {
-    return this.readKv(STORAGE_KEYS.CART, DEFAULT_CART);
+    const rows = this.getDb().getAllSync('SELECT * FROM cart_items') as any[];
+    return rows.map(r => ({ ...r, synced: !!r.synced }));
   }
 
   async getCartCount(): Promise<number> {
-    const cart = await this.getCart();
-    return cart.reduce((acc, item) => acc + item.quantity, 0);
+    const row = this.getDb().getFirstSync('SELECT SUM(quantity) as count FROM cart_items') as { count: number | null };
+    return row?.count || 0;
   }
 
   async clearCart(): Promise<void> {
-    this.writeKv(STORAGE_KEYS.CART, []);
+    this.getDb().runSync('DELETE FROM cart_items');
   }
 
-  async addToCart(product: {
-    productId: string;
-    name: string;
-    price: string;
-    unit: string;
-  }): Promise<CartItemRecord> {
+  async addToCart(product: { productId: string; name: string; price: string; unit: string; }): Promise<CartItemRecord> {
     const targetId = String(product.productId);
-    const cart = await this.getCart();
-    const existing = cart.find((item) => String(item.productId) === targetId);
+    const db = this.getDb();
+    
+    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
 
     if (existing) {
-      const updatedItem: CartItemRecord = {
-        ...existing,
-        quantity: existing.quantity + 1,
-        synced: false,
-      };
-      const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-      this.writeKv(STORAGE_KEYS.CART, updatedCart);
-      return updatedItem;
+      const newQuantity = existing.quantity + 1;
+      db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+      return { ...existing, quantity: newQuantity, synced: false };
     }
 
-    const newItem: CartItemRecord = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      productId: targetId,
-      name: product.name,
-      price: product.price,
-      unit: product.unit,
-      quantity: 1,
-      synced: false,
-    };
-    this.writeKv(STORAGE_KEYS.CART, [newItem, ...cart]);
-    return newItem;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    db.runSync(
+      'INSERT INTO cart_items (id, productId, name, price, unit, quantity, synced) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, targetId, product.name, product.price, product.unit, 1, 0]
+    );
+    return { id, productId: targetId, name: product.name, price: product.price, unit: product.unit, quantity: 1, synced: false };
   }
 
   async getGicProfile(): Promise<GicProfile> {
@@ -317,12 +375,7 @@ class DatabaseService {
   async updateGicProfile(patch: Partial<GicProfile>): Promise<GicProfile> {
     const role = await this.getLocalRole();
     const current = await this.getGicProfile();
-    const updated: GicProfile = {
-      ...current,
-      ...patch,
-      updatedAt: nowIso(),
-      authorRole: role,
-    };
+    const updated: GicProfile = { ...current, ...patch, updatedAt: nowIso(), authorRole: role };
     this.writeKv(STORAGE_KEYS.GIC_PROFILE, updated);
     return updated;
   }
@@ -332,120 +385,93 @@ class DatabaseService {
   }
 
   async getGicNeeds(): Promise<GicNeed[]> {
-    return this.readKv(STORAGE_KEYS.GIC_NEEDS, DEFAULT_GIC_NEEDS);
+    const rows = this.getDb().getAllSync('SELECT * FROM gic_needs ORDER BY updatedAt DESC') as any[];
+    return rows;
   }
 
   async addGicNeed(category: string, description: string): Promise<GicNeed> {
     const role = await this.getLocalRole();
-    const need: GicNeed = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      category,
-      description,
-      updatedAt: nowIso(),
-      authorRole: role,
-    };
-    const needs = await this.getGicNeeds();
-    this.writeKv(STORAGE_KEYS.GIC_NEEDS, [need, ...needs]);
-    return need;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const updatedAt = nowIso();
+    this.getDb().runSync(
+      'INSERT INTO gic_needs (id, category, description, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?)',
+      [id, category, description, updatedAt, role]
+    );
+    return { id, category, description, updatedAt, authorRole: role };
   }
 
   async updateGicNeed(id: string, category: string, description: string): Promise<GicNeed[]> {
-    const needs = await this.getGicNeeds();
-    const updated = needs.map((n) => (n.id === id ? { ...n, category, description, updatedAt: nowIso() } : n));
-    this.writeKv(STORAGE_KEYS.GIC_NEEDS, updated);
-    return updated;
+    this.getDb().runSync('UPDATE gic_needs SET category = ?, description = ?, updatedAt = ? WHERE id = ?', [category, description, nowIso(), id]);
+    return this.getGicNeeds();
   }
 
   async deleteGicNeed(id: string): Promise<GicNeed[]> {
-    const needs = await this.getGicNeeds();
-    const filtered = needs.filter((n) => n.id !== id);
-    this.writeKv(STORAGE_KEYS.GIC_NEEDS, filtered);
-    return filtered;
+    this.getDb().runSync('DELETE FROM gic_needs WHERE id = ?', [id]);
+    return this.getGicNeeds();
   }
 
-  async getWeather(): Promise<WeatherRecord[]> {
-    return this.readKv(STORAGE_KEYS.WEATHER, DEFAULT_WEATHER);
-  }
-
-  async getMarketPrices(): Promise<MarketPriceRecord[]> {
-    return this.readKv(STORAGE_KEYS.MARKET, DEFAULT_MARKET);
-  }
-
-  async getPhytoAlerts(): Promise<PhytoAlertRecord[]> {
-    return this.readKv(STORAGE_KEYS.PHYTO, DEFAULT_PHYTO);
-  }
-
-  async getAgriPrograms(): Promise<AgriProgramRecord[]> {
-    return this.readKv(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
-  }
-
-  async getProducts(): Promise<ProductOffer[]> {
-    return this.readKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
-  }
-
-  async getConfidentialGics(): Promise<ConfidentialGic[]> {
-    return this.readKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
-  }
+  async getWeather(): Promise<WeatherRecord[]> { return this.readKv(STORAGE_KEYS.WEATHER, DEFAULT_WEATHER); }
+  async getMarketPrices(): Promise<MarketPriceRecord[]> { return this.readKv(STORAGE_KEYS.MARKET, DEFAULT_MARKET); }
+  async getPhytoAlerts(): Promise<PhytoAlertRecord[]> { return this.readKv(STORAGE_KEYS.PHYTO, DEFAULT_PHYTO); }
+  async getAgriPrograms(): Promise<AgriProgramRecord[]> { return this.readKv(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS); }
+  async getProducts(): Promise<ProductOffer[]> { return this.readKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS); }
+  async getConfidentialGics(): Promise<ConfidentialGic[]> { return this.readKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC); }
 
   async getOrders(): Promise<OrderRecord[]> {
-    return this.readKv(STORAGE_KEYS.ORDERS, []);
+    return this.getDb().getAllSync('SELECT * FROM orders ORDER BY createdAt DESC') as any[];
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
     const cart = await this.getCart();
     if (!cart.length) return [];
-    const products = await this.getProducts();
-    const created: OrderRecord[] = cart.map((item, index) => {
-      const offer = products.find((p) => p.id === item.productId);
-      return {
-        id: `${Date.now()}-${index}`,
-        type,
-        status: type === 'reservation' ? 'en_attente' : 'confirmee',
-        productId: item.productId,
-        productName: item.name,
-        quantity: item.quantity,
-        unit: item.unit,
-        price: item.price,
-        gicName: offer?.gicName ?? 'GIC partenaire',
-        createdAt: nowIso(),
-      };
-    });
-    const existing = await this.getOrders();
-    this.writeKv(STORAGE_KEYS.ORDERS, [...created, ...existing]);
-    await this.clearCart();
-    return created;
+    
+    try {
+      const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
+      await apiClient.createOrder(type, items);
+      await this.syncRemoteData();
+      await this.clearCart();
+      return await this.getOrders();
+    } catch (err) {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : commande sauvegardée localement.");
+      const products = await this.getProducts();
+      const db = this.getDb();
+      
+      const created: OrderRecord[] = [];
+      for (let i = 0; i < cart.length; i++) {
+        const item = cart[i];
+        const offer = products.find((p) => p.id === item.productId);
+        const id = `${Date.now()}-${i}`;
+        const status = type === 'reservation' ? 'en_attente' : 'confirmee';
+        const gicName = offer?.gicName ?? 'GIC partenaire';
+        const createdAt = nowIso();
+        
+        db.runSync(
+          'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, type, status, item.productId, item.name, item.quantity, item.unit, item.price, gicName, createdAt]
+        );
+        created.push({ id, type, status, productId: item.productId, productName: item.name, quantity: item.quantity, unit: item.unit, price: item.price, gicName, createdAt });
+      }
+      
+      await this.clearCart();
+      return await this.getOrders();
+    }
   }
 
-  async getAlertPreferences(): Promise<AlertPreferences> {
-    return this.readKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
-  }
-
-  async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> {
-    this.writeKv(STORAGE_KEYS.ALERT_PREFS, prefs);
-    return prefs;
-  }
+  async getAlertPreferences(): Promise<AlertPreferences> { return this.readKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS); }
+  async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> { this.writeKv(STORAGE_KEYS.ALERT_PREFS, prefs); return prefs; }
 
   async getMatchingAlertCount(): Promise<number> {
     const prefs = await this.getAlertPreferences();
     if (!prefs.productNames.length && !prefs.bassins.length) return 0;
     const products = await this.getProducts();
     return products.filter((p) => {
-      const matchProduct =
-        !prefs.productNames.length ||
-        prefs.productNames.includes(p.name) ||
-        prefs.productNames.includes(p.category);
+      const matchProduct = !prefs.productNames.length || prefs.productNames.includes(p.name) || prefs.productNames.includes(p.category);
       const matchBassin = !prefs.bassins.length || prefs.bassins.includes(p.bassin);
       return matchProduct && matchBassin;
     }).length;
   }
 
-  async getFinancialSummary(): Promise<{
-    totalVolume: number;
-    totalExpenses: number;
-    costPricePerKg: number;
-    costPricePerHa: number;
-    surfaceHa: number;
-  }> {
+  async getFinancialSummary(): Promise<{ totalVolume: number; totalExpenses: number; costPricePerKg: number; costPricePerHa: number; surfaceHa: number; }> {
     const harvests = await this.getHarvests();
     const expenses = await this.getExpenses();
     const profile = await this.getGicProfile();
@@ -457,216 +483,88 @@ class DatabaseService {
     return { totalVolume, totalExpenses, costPricePerKg, costPricePerHa, surfaceHa };
   }
 
-  async getLastSyncAt(): Promise<string | null> {
-    return this.readKv<string | null>(STORAGE_KEYS.LAST_SYNC, null);
-  }
+  async getLastSyncAt(): Promise<string | null> { return this.readKv<string | null>(STORAGE_KEYS.LAST_SYNC, null); }
 
   async runMockSync(): Promise<SyncResult> {
-    const peer = this.readKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
-    let conflictsResolvedByLeader = 0;
-    let mergedCount = 0;
-
-    const mergeById = <T extends { id: string; updatedAt?: string; authorRole?: 'leader' | 'member' }>(
-      local: T[],
-      remote: T[]
-    ): T[] => {
-      const map = new Map<string, T>();
-      local.forEach((item) => map.set(item.id, item));
-      remote.forEach((remoteItem) => {
-        const existing = map.get(remoteItem.id);
-        if (!existing) {
-          map.set(remoteItem.id, remoteItem);
-          mergedCount += 1;
-          return;
-        }
-        const localTs = existing.updatedAt ? Date.parse(existing.updatedAt) : 0;
-        const remoteTs = remoteItem.updatedAt ? Date.parse(remoteItem.updatedAt) : 0;
-        if (remoteTs > localTs) {
-          if (existing.authorRole === 'leader' && remoteItem.authorRole === 'member') {
-            conflictsResolvedByLeader += 1;
-            return;
-          }
-          if (remoteItem.authorRole === 'leader' && existing.authorRole === 'member') {
-            map.set(remoteItem.id, remoteItem);
-            conflictsResolvedByLeader += 1;
-            mergedCount += 1;
-            return;
-          }
-          map.set(remoteItem.id, remoteItem);
-          mergedCount += 1;
-        } else if (
-          remoteTs === localTs &&
-          remoteItem.authorRole === 'leader' &&
-          existing.authorRole !== 'leader'
-        ) {
-          map.set(remoteItem.id, remoteItem);
-          conflictsResolvedByLeader += 1;
-          mergedCount += 1;
-        }
-      });
-      return Array.from(map.values());
-    };
-
-    const harvests = mergeById(await this.getHarvests(), peer.harvests ?? []);
-    const expenses = mergeById(await this.getExpenses(), peer.expenses ?? []);
-    const needs = mergeById(await this.getGicNeeds(), peer.needs ?? []);
-
-    this.writeKv(STORAGE_KEYS.HARVESTS, harvests);
-    this.writeKv(STORAGE_KEYS.EXPENSES, expenses);
-    this.writeKv(STORAGE_KEYS.GIC_NEEDS, needs);
-
+    // For local mock sync, we just update the timestamp since SQLite is already local.
     const lastSyncAt = nowIso();
     this.writeKv(STORAGE_KEYS.LAST_SYNC, lastSyncAt);
-
-    return {
-      mergedCount,
-      conflictsResolvedByLeader,
-      lastSyncAt,
-      summary:
-        mergedCount === 0 && conflictsResolvedByLeader === 0
-          ? 'Aucune nouveauté à fusionner. Données déjà à jour.'
-          : `Fusion terminée : ${mergedCount} élément(s) intégré(s), ${conflictsResolvedByLeader} conflit(s) tranché(s) en faveur du Leader GIC.`,
-    };
+    return { mergedCount: 0, conflictsResolvedByLeader: 0, lastSyncAt, summary: 'Données déjà à jour (SQLite natif).' };
   }
 
   // --- Agronome (Lot C) ---
   async getAgronomistQuestions(): Promise<AgronomistQuestion[]> {
-    return this.readKv(STORAGE_KEYS.AGRONOMIST_QUESTIONS, DEFAULT_AGRONOMIST_QUESTIONS);
+    const rows = this.getDb().getAllSync('SELECT * FROM agronomist_questions ORDER BY createdAt DESC') as any[];
+    return rows.map(r => ({ ...r, synced: !!r.synced }));
   }
 
   async addAgronomistQuestion(crop: string, category: string, question: string, photoUrl?: string): Promise<AgronomistQuestion> {
-    const list = await this.getAgronomistQuestions();
-    const newQ: AgronomistQuestion = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      crop,
-      category,
-      question,
-      photoUrl,
-      status: 'en_attente',
-      createdAt: nowIso(),
-      synced: false,
-    };
-    list.unshift(newQ);
-    this.writeKv(STORAGE_KEYS.AGRONOMIST_QUESTIONS, list);
-    return newQ;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const createdAt = nowIso();
+    this.getDb().runSync(
+      'INSERT INTO agronomist_questions (id, crop, category, question, photoUrl, status, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, crop, category, question, photoUrl || null, 'en_attente', createdAt, 0]
+    );
+    return { id, crop, category, question, photoUrl, status: 'en_attente', createdAt, synced: false };
   }
 
   // --- B2B Trade & Equipment (Lot C) ---
   async getB2BOffers(): Promise<B2BOffer[]> {
-    return this.readKv(STORAGE_KEYS.B2B_OFFERS, DEFAULT_B2B_OFFERS);
+    return this.getDb().getAllSync('SELECT * FROM b2b_offers ORDER BY createdAt DESC') as any[];
   }
 
-  async addB2BOffer(
-    title: string,
-    type: 'rent' | 'barter',
-    category: string,
-    priceOrExchange: string,
-    gicName: string,
-    location: string,
-    contact: string
-  ): Promise<B2BOffer> {
-    const list = await this.getB2BOffers();
-    const newOffer: B2BOffer = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      title,
-      type,
-      category,
-      priceOrExchange,
-      gicName,
-      location,
-      contact,
-      createdAt: nowIso(),
-    };
-    list.unshift(newOffer);
-    this.writeKv(STORAGE_KEYS.B2B_OFFERS, list);
-    return newOffer;
+  async addB2BOffer(title: string, type: 'rent' | 'barter', category: string, priceOrExchange: string, gicName: string, location: string, contact: string): Promise<B2BOffer> {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const createdAt = nowIso();
+    this.getDb().runSync(
+      'INSERT INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, title, type, category, priceOrExchange, gicName, location, contact, createdAt]
+    );
+    return { id, title, type, category, priceOrExchange, gicName, location, contact, createdAt };
   }
 
   // --- Journal de Croissance & Alertes Rendement (Lot D) ---
   async getParcels(): Promise<ParcelGrowthRecord[]> {
-    return this.readKv(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
+    return this.getDb().getAllSync('SELECT * FROM parcels ORDER BY updatedAt DESC') as any[];
   }
 
-  async addParcel(
-    parcelName: string,
-    crop: string,
-    sowingDate: string,
-    stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter',
-    estimatedHarvestDate: string,
-    estimatedVolumeKg: number,
-    actualHarvestVolumeKg?: number
-  ): Promise<ParcelGrowthRecord> {
-    const list = await this.getParcels();
-    const newParcel: ParcelGrowthRecord = {
-      id: Date.now().toString(),
-      parcelName,
-      crop,
-      sowingDate,
-      stage,
-      estimatedHarvestDate,
-      estimatedVolumeKg,
-      actualHarvestVolumeKg,
-      updatedAt: nowIso(),
-    };
-    list.unshift(newParcel);
-    this.writeKv(STORAGE_KEYS.PARCELS, list);
-    return newParcel;
+  async addParcel(parcelName: string, crop: string, sowingDate: string, stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter', estimatedHarvestDate: string, estimatedVolumeKg: number, actualHarvestVolumeKg?: number): Promise<ParcelGrowthRecord> {
+    const id = Date.now().toString();
+    const updatedAt = nowIso();
+    this.getDb().runSync(
+      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg || null, updatedAt]
+    );
+    return { id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt };
   }
 
   // --- Préfinancement & Trust Score (Lot D) ---
   async getPrefinancingDeals(): Promise<PrefinancingDeal[]> {
-    return this.readKv(STORAGE_KEYS.PREFINANCING, DEFAULT_PREFINANCING);
+    return this.getDb().getAllSync('SELECT * FROM prefinancing ORDER BY createdAt DESC') as any[];
   }
 
-  async addPrefinancingDeal(
-    gicName: string,
-    buyerName: string,
-    amountFcfa: number,
-    inputDescription: string,
-    reservedProduct: string,
-    reservedVolumeKg: number
-  ): Promise<PrefinancingDeal> {
-    const list = await this.getPrefinancingDeals();
-    const newDeal: PrefinancingDeal = {
-      id: Date.now().toString(),
-      gicName,
-      buyerName,
-      amountFcfa,
-      inputDescription,
-      reservedProduct,
-      reservedVolumeKg,
-      status: 'propose',
-      createdAt: nowIso(),
-    };
-    list.unshift(newDeal);
-    this.writeKv(STORAGE_KEYS.PREFINANCING, list);
-    return newDeal;
+  async addPrefinancingDeal(gicName: string, buyerName: string, amountFcfa: number, inputDescription: string, reservedProduct: string, reservedVolumeKg: number): Promise<PrefinancingDeal> {
+    const id = Date.now().toString();
+    const createdAt = nowIso();
+    this.getDb().runSync(
+      'INSERT INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, 'propose', createdAt]
+    );
+    return { id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status: 'propose', createdAt };
   }
 
   async getTrustRatings(): Promise<TrustRating[]> {
-    return this.readKv(STORAGE_KEYS.TRUST_RATINGS, DEFAULT_TRUST_RATINGS);
+    return this.getDb().getAllSync('SELECT * FROM trust_ratings ORDER BY createdAt DESC') as any[];
   }
 
-  async addTrustRating(
-    targetId: string,
-    targetType: 'gic' | 'buyer',
-    rating: number,
-    comment: string,
-    authorName: string
-  ): Promise<TrustRating> {
-    const list = await this.getTrustRatings();
-    const newRating: TrustRating = {
-      id: Date.now().toString(),
-      targetId,
-      targetType,
-      rating,
-      comment,
-      authorName,
-      createdAt: nowIso(),
-    };
-    list.unshift(newRating);
-    this.writeKv(STORAGE_KEYS.TRUST_RATINGS, list);
-    return newRating;
+  async addTrustRating(targetId: string, targetType: 'gic' | 'buyer', rating: number, comment: string, authorName: string): Promise<TrustRating> {
+    const id = Date.now().toString();
+    const createdAt = nowIso();
+    this.getDb().runSync(
+      'INSERT INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, targetId, targetType, rating, comment, authorName, createdAt]
+    );
+    return { id, targetId, targetType, rating, comment, authorName, createdAt };
   }
 }
 

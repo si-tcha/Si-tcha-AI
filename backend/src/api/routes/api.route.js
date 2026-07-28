@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { login, me, registerBuyer, registerSeller, requireAuth } from '../auth';
-import { readStore } from '../../lib/store';
 import prisma from '../../lib/prisma';
 const router = Router();
 function getEmojiForCategory(category, name) {
@@ -89,8 +88,7 @@ router.get('/catalog/products', async (_req, res) => {
         res.json({ products });
     }
     catch (error) {
-        const data = await readStore();
-        res.json({ products: data.products });
+        res.json({ products: [] });
     }
 });
 router.get('/gics/public', async (_req, res) => {
@@ -111,15 +109,7 @@ router.get('/gics/public', async (_req, res) => {
         res.json({ gics });
     }
     catch (error) {
-        const data = await readStore();
-        const gics = data.gics.map((gic) => ({
-            id: gic.id,
-            name: gic.name,
-            identifiantREF: gic.identifiantREF,
-            bassin: gic.bassin,
-            logoUrl: gic.logoUrl,
-        }));
-        res.json({ gics });
+        res.json({ gics: [] });
     }
 });
 router.get('/terrain', async (_req, res) => {
@@ -162,12 +152,11 @@ router.get('/terrain', async (_req, res) => {
         res.json({ weather, market, phytoAlerts, programs });
     }
     catch (error) {
-        const data = await readStore();
         res.json({
-            weather: data.weather,
-            market: data.market,
-            phytoAlerts: data.phytoAlerts,
-            programs: data.programs,
+            weather: [],
+            market: [],
+            phytoAlerts: [],
+            programs: [],
         });
     }
 });
