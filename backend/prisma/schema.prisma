@@ -119,6 +119,8 @@ model GIC {
   echangesB2B           EchangeB2B[]
   prefinancements       Prefinancement[]
   agriculteurs          Agriculteur[]
+  b2bOfferEntries       B2BOfferEntry[]  @relation("gicB2BEntries")
+  parcelEntries         ParcelEntry[]    @relation("gicParcels")
 }
 
 model RecolteOffre {
@@ -243,4 +245,55 @@ model OtpCode {
   phone     String   @unique @db.VarChar(50)
   code      String   @db.VarChar(10)
   expiresAt DateTime
+}
+model B2BOfferEntry {
+  id              String   @id
+  title           String   @db.VarChar(200)
+  type            String   @db.VarChar(20)
+  category        String   @db.VarChar(100)
+  priceOrExchange String   @db.VarChar(200)
+  gicName         String   @db.VarChar(100)
+  location        String   @db.VarChar(200)
+  contact         String   @db.VarChar(50)
+  createdAt       DateTime @default(now())
+  gicId           BigInt
+  gic             GIC      @relation("gicB2BEntries", fields: [gicId], references: [id])
+}
+
+model ParcelEntry {
+  id                    String   @id
+  parcelName            String   @db.VarChar(200)
+  crop                  String   @db.VarChar(100)
+  sowingDate            String   @db.VarChar(50)
+  stage                 String   @db.VarChar(50)
+  estimatedHarvestDate  String   @db.VarChar(50)
+  estimatedVolumeKg     Float
+  actualHarvestVolumeKg Float?
+  updatedAt             DateTime @default(now())
+  gicId                 BigInt
+  gic                   GIC      @relation("gicParcels", fields: [gicId], references: [id])
+}
+
+model PrefinancingEntry {
+  id               String   @id
+  gicName          String   @db.VarChar(200)
+  buyerName        String   @db.VarChar(200)
+  amountFcfa       Float
+  inputDescription String   @db.Text
+  reservedProduct  String   @db.VarChar(100)
+  reservedVolumeKg Float
+  status           String   @default("propose") @db.VarChar(50)
+  createdAt        DateTime @default(now())
+  acheteurId       BigInt?
+  gicId            BigInt?
+}
+
+model TrustRatingEntry {
+  id         String   @id
+  targetId   String   @db.VarChar(50)
+  targetType String   @db.VarChar(20)
+  rating     Int
+  comment    String   @db.Text
+  authorName String   @db.VarChar(100)
+  createdAt  DateTime @default(now())
 }

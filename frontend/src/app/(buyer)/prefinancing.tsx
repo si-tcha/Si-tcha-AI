@@ -18,6 +18,7 @@ export default function PrefinancingScreen() {
   const [deals, setDeals] = useState<PrefinancingDeal[]>([]);
   const [ratings, setRatings] = useState<TrustRating[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Form states
   const [gicName, setGicName] = useState('GIC Agro-Vallée Bafoussam');
@@ -33,6 +34,7 @@ export default function PrefinancingScreen() {
 
   const loadData = async () => {
     try {
+      setIsLoading(true);
       await dbService.initDatabase();
       const [storedDeals, storedRatings] = await Promise.all([
         dbService.getPrefinancingDeals(),
@@ -42,6 +44,8 @@ export default function PrefinancingScreen() {
       setRatings(storedRatings);
     } catch (err) {
       console.warn('Erreur chargement préfinancement:', err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -88,6 +92,12 @@ export default function PrefinancingScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={{ paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.three }}>
+            <Text style={{ fontSize: 14, color: '#8a9488', lineHeight: 20 }}>
+              Investir dans un contrat de culture vous permet d'avancer des fonds ou des intrants à une coopérative agricole. En retour, vous obtenez l'exclusivité d'achat sur une partie de la future récolte à un prix garanti à l'avance.
+            </Text>
+          </View>
+          
           {/* Carte Trust Score */}
           <View style={styles.trustCard}>
             <View style={styles.trustHeader}>
@@ -133,7 +143,15 @@ export default function PrefinancingScreen() {
           {/* Liste des accords */}
           <Text style={styles.sectionTitle}>Accords en cours ({deals.length})</Text>
 
-          {deals.map((d) => (
+          {isLoading ? (
+            <View style={{ padding: Spacing.five, alignItems: 'center' }}>
+              <Text style={{ color: '#8a9488' }}>Chargement des accords...</Text>
+            </View>
+          ) : deals.length === 0 ? (
+            <View style={{ padding: Spacing.five, alignItems: 'center' }}>
+              <Text style={{ color: '#8a9488' }}>Aucun accord en cours.</Text>
+            </View>
+          ) : deals.map((d) => (
             <View key={d.id} style={styles.dealCard}>
               <View style={styles.dealHeader}>
                 <Text style={styles.dealGic}>{d.gicName}</Text>
@@ -159,8 +177,14 @@ export default function PrefinancingScreen() {
         <Modal visible={modalVisible} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
+              <View style={{ paddingHorizontal: Spacing.five, paddingTop: Spacing.three, paddingBottom: Spacing.two }}>
+                <Text style={{ fontSize: 14, color: '#8a9488', lineHeight: 20 }}>
+                  Le préfinancement (ou contrat de culture) permet aux acheteurs d'avancer des fonds ou des intrants agricoles à un GIC en échange de l'exclusivité et d'un prix garanti sur une partie de la future récolte. Cela sécurise l'approvisionnement de l'acheteur et assure un financement initial au GIC.
+                </Text>
+              </View>
+
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Nouveau Préfinancement</Text>
+                <Text style={styles.sectionTitle}>GICs Recommandés (Indice de Confiance)</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
                   <Feather name="x" size={24} color="#101e0f" />
                 </TouchableOpacity>

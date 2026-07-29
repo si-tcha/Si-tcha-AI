@@ -18,7 +18,11 @@ export default function RegisterRoleScreen() {
   const { showToast } = useToast();
 
   const handleBack = () => {
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/onboarding');
+    }
   };
 
   const handleContinue = () => {

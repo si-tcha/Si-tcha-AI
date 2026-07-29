@@ -100,8 +100,13 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 }
 
 class DatabaseService {
+  private dbInstance: SQLite.SQLiteDatabase | null = null;
+
   private getDb() {
-    return SQLite.openDatabaseSync('sitcha.db');
+    if (!this.dbInstance) {
+      this.dbInstance = SQLite.openDatabaseSync('sitcha.db');
+    }
+    return this.dbInstance;
   }
 
   private ensureKv(key: string, fallback: unknown) {
@@ -135,7 +140,7 @@ class DatabaseService {
 
   async syncRemoteData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, ordersRes] = await Promise.all([
+      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, ordersRes, b2bRes, parcelsRes, prefinRes, trustRes] = await Promise.all([
         apiClient.getProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
@@ -143,27 +148,31 @@ class DatabaseService {
         apiClient.getExpenses().catch(() => null),
         apiClient.getGicProfile().catch(() => null),
         apiClient.getOrders().catch(() => null),
+        apiClient.getB2BOffers().catch(() => null),
+        apiClient.getParcels().catch(() => null),
+        apiClient.getPrefinancingDeals().catch(() => null),
+        apiClient.getTrustRatings().catch(() => null),
       ]);
 
       let updated = false;
       const db = this.getDb();
 
-      if (productsRes?.products?.length) {
+      if (Array.isArray(productsRes?.products)) {
         this.writeKv(STORAGE_KEYS.PRODUCTS, productsRes.products);
         updated = true;
       }
-      if (gicsRes?.gics?.length) {
+      if (Array.isArray(gicsRes?.gics)) {
         this.writeKv(STORAGE_KEYS.GICS_PUBLIC, gicsRes.gics);
         updated = true;
       }
       if (terrainRes) {
-        if (terrainRes.weather?.length) this.writeKv(STORAGE_KEYS.WEATHER, terrainRes.weather);
-        if (terrainRes.market?.length) this.writeKv(STORAGE_KEYS.MARKET, terrainRes.market);
-        if (terrainRes.phytoAlerts?.length) this.writeKv(STORAGE_KEYS.PHYTO, terrainRes.phytoAlerts);
-        if (terrainRes.programs?.length) this.writeKv(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
+        if (Array.isArray(terrainRes.weather)) this.writeKv(STORAGE_KEYS.WEATHER, terrainRes.weather);
+        if (Array.isArray(terrainRes.market)) this.writeKv(STORAGE_KEYS.MARKET, terrainRes.market);
+        if (Array.isArray(terrainRes.phytoAlerts)) this.writeKv(STORAGE_KEYS.PHYTO, terrainRes.phytoAlerts);
+        if (Array.isArray(terrainRes.programs)) this.writeKv(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
         updated = true;
       }
-      if (harvestsRes?.harvests) {
+      if (Array.isArray(harvestsRes?.harvests)) {
         db.runSync('DELETE FROM harvests');
         for (const h of (harvestsRes.harvests as any[])) {
           db.runSync(
@@ -203,6 +212,46 @@ class DatabaseService {
           db.runSync(
             'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt]
+          );
+        }
+        updated = true;
+      }
+      if (Array.isArray(b2bRes?.offers)) {
+        db.runSync('DELETE FROM b2b_offers');
+        for (const o of (b2bRes.offers as any[])) {
+          db.runSync(
+            'INSERT OR REPLACE INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [o.id, o.title, o.type, o.category, o.priceOrExchange, o.gicName, o.location, o.contact, o.createdAt]
+          );
+        }
+        updated = true;
+      }
+      if (Array.isArray(parcelsRes?.parcels)) {
+        db.runSync('DELETE FROM parcels');
+        for (const p of (parcelsRes.parcels as any[])) {
+          db.runSync(
+            'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [p.id, p.parcelName, p.crop, p.sowingDate, p.stage, p.estimatedHarvestDate, p.estimatedVolumeKg, p.actualHarvestVolumeKg || null, p.updatedAt]
+          );
+        }
+        updated = true;
+      }
+      if (Array.isArray(prefinRes?.deals)) {
+        db.runSync('DELETE FROM prefinancing');
+        for (const d of (prefinRes.deals as any[])) {
+          db.runSync(
+            'INSERT OR REPLACE INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [d.id, d.gicName, d.buyerName, d.amountFcfa, d.inputDescription, d.reservedProduct, d.reservedVolumeKg, d.status, d.createdAt]
+          );
+        }
+        updated = true;
+      }
+      if (Array.isArray(trustRes?.ratings)) {
+        db.runSync('DELETE FROM trust_ratings');
+        for (const r of (trustRes.ratings as any[])) {
+          db.runSync(
+            'INSERT OR REPLACE INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [r.id, r.targetId, r.targetType, r.rating, r.comment, r.authorName, r.createdAt]
           );
         }
         updated = true;
@@ -486,10 +535,18 @@ class DatabaseService {
   async getLastSyncAt(): Promise<string | null> { return this.readKv<string | null>(STORAGE_KEYS.LAST_SYNC, null); }
 
   async runMockSync(): Promise<SyncResult> {
-    // For local mock sync, we just update the timestamp since SQLite is already local.
     const lastSyncAt = nowIso();
-    this.writeKv(STORAGE_KEYS.LAST_SYNC, lastSyncAt);
-    return { mergedCount: 0, conflictsResolvedByLeader: 0, lastSyncAt, summary: 'Données déjà à jour (SQLite natif).' };
+    try {
+      const synced = await this.syncRemoteData();
+      this.writeKv(STORAGE_KEYS.LAST_SYNC, lastSyncAt);
+      if (synced) {
+        return { mergedCount: 1, conflictsResolvedByLeader: 0, lastSyncAt, summary: 'Données synchronisées avec le serveur.' };
+      }
+      return { mergedCount: 0, conflictsResolvedByLeader: 0, lastSyncAt, summary: 'Données déjà à jour.' };
+    } catch {
+      this.writeKv(STORAGE_KEYS.LAST_SYNC, lastSyncAt);
+      return { mergedCount: 0, conflictsResolvedByLeader: 0, lastSyncAt, summary: 'Synchronisation hors-ligne. Données locales conservées.' };
+    }
   }
 
   // --- Agronome (Lot C) ---
@@ -501,11 +558,34 @@ class DatabaseService {
   async addAgronomistQuestion(crop: string, category: string, question: string, photoUrl?: string): Promise<AgronomistQuestion> {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const createdAt = nowIso();
+    
+    // 1. Sauvegarde locale "en attente"
     this.getDb().runSync(
       'INSERT INTO agronomist_questions (id, crop, category, question, photoUrl, status, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [id, crop, category, question, photoUrl || null, 'en_attente', createdAt, 0]
     );
-    return { id, crop, category, question, photoUrl, status: 'en_attente', createdAt, synced: false };
+
+    let finalStatus = 'en_attente';
+    let answer = undefined;
+
+    // 2. Appel au backend pour l'IA Gemini
+    try {
+      const res = await apiClient.askAgronomist(crop, category, question);
+      if (res && res.answer) {
+        answer = res.answer;
+        finalStatus = 'repondu';
+        
+        // Mise à jour de la question locale
+        this.getDb().runSync(
+          'UPDATE agronomist_questions SET status = ?, answer = ?, synced = ? WHERE id = ?',
+          [finalStatus, answer, 1, id]
+        );
+      }
+    } catch (e) {
+      console.warn('Erreur appel IA Agronome, restera en attente:', e);
+    }
+
+    return { id, crop, category, question, photoUrl, status: finalStatus as any, answer, createdAt, synced: finalStatus === 'repondu' };
   }
 
   // --- B2B Trade & Equipment (Lot C) ---
@@ -520,6 +600,12 @@ class DatabaseService {
       'INSERT INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, title, type, category, priceOrExchange, gicName, location, contact, createdAt]
     );
+
+    // Background sync to backend
+    apiClient.createB2BOffer({ title, type, category, priceOrExchange, gicName, location, contact }).catch((e) => {
+      console.warn('B2B offer sync failed (offline):', e);
+    });
+
     return { id, title, type, category, priceOrExchange, gicName, location, contact, createdAt };
   }
 
@@ -535,6 +621,12 @@ class DatabaseService {
       'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg || null, updatedAt]
     );
+
+    // Background sync to backend
+    apiClient.createParcel({ parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg }).catch((e) => {
+      console.warn('Parcel sync failed (offline):', e);
+    });
+
     return { id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt };
   }
 
@@ -550,6 +642,12 @@ class DatabaseService {
       'INSERT INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, 'propose', createdAt]
     );
+
+    // Background sync to backend
+    apiClient.createPrefinancingDeal({ gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg }).catch((e) => {
+      console.warn('Prefinancing sync failed (offline):', e);
+    });
+
     return { id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status: 'propose', createdAt };
   }
 
@@ -564,6 +662,12 @@ class DatabaseService {
       'INSERT INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [id, targetId, targetType, rating, comment, authorName, createdAt]
     );
+
+    // Background sync to backend
+    apiClient.createTrustRating({ targetId, targetType, rating, comment, authorName }).catch((e) => {
+      console.warn('Trust rating sync failed (offline):', e);
+    });
+
     return { id, targetId, targetType, rating, comment, authorName, createdAt };
   }
 }

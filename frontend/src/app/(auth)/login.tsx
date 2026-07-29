@@ -14,12 +14,13 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export function isValidCameroonPhone(phone: string): boolean {
   const cleaned = phone.replace(/[\s\-\+\(\)]/g, '');
   return (cleaned.length === 9 && /^6[2-9]\d{7}$/.test(cleaned)) ||
-         (cleaned.length === 11 && /^2376[2-9]\d{7}$/.test(cleaned));
+         (cleaned.length === 12 && /^2376[2-9]\d{7}$/.test(cleaned));
 }
 
 export default function LoginScreen() {
   const [phone, setPhone] = useState('');
   const [pin, setPin] = useState('');
+  const [role, setRole] = useState<'buyer' | 'seller'>('buyer');
   const [showPin, setShowPin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'phone' | 'pin' | null>(null);
@@ -27,7 +28,11 @@ export default function LoginScreen() {
   const { showToast } = useToast();
 
   const handleBack = () => {
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/onboarding');
+    }
   };
 
   const handleContinue = async () => {
@@ -46,11 +51,11 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const session = await apiClient.login(phone, pin);
+      const session = await apiClient.login(phone, pin, role);
       
       if (session.requireOtp) {
         showToast({ message: session.message || 'Vérification requise', type: 'info' });
-        router.push({ pathname: '/(auth)/otp-verification', params: { phone } });
+        router.push({ pathname: '/(auth)/otp-verification', params: { phone, role } });
         return;
       }
       
@@ -97,7 +102,7 @@ export default function LoginScreen() {
                 <View style={styles.heroSection}>
                   <Text style={styles.heroTitle}>Content de vous revoir.</Text>
                   <Text style={styles.heroSubtitle}>
-                    Connectez-vous à votre espace sécurisé. Votre profil (Agriculteur ou Acheteur) sera automatiquement détecté.
+                    Connectez-vous à votre espace sécurisé.
                   </Text>
                 </View>
               </View>
@@ -105,6 +110,24 @@ export default function LoginScreen() {
               <View style={styles.bottomSection}>
                 <View style={styles.formCard}>
                   
+                  {/* Sélecteur de rôle */}
+                  <View style={styles.roleToggle}>
+                    <TouchableOpacity 
+                      style={[styles.roleBtn, role === 'buyer' && styles.roleBtnActive]} 
+                      onPress={() => setRole('buyer')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.roleBtnText, role === 'buyer' && styles.roleBtnTextActive]}>Acheteur</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.roleBtn, role === 'seller' && styles.roleBtnActive]} 
+                      onPress={() => setRole('seller')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.roleBtnText, role === 'seller' && styles.roleBtnTextActive]}>GIC / Vendeur</Text>
+                    </TouchableOpacity>
+                  </View>
+
                   <View style={styles.fieldWrapper}>
                     <Text style={styles.label}>Téléphone</Text>
                     <View style={[styles.inputContainer, focusedField === 'phone' && styles.inputFocused]}>
@@ -223,11 +246,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   heroSection: {
-    marginTop: Spacing.five,
-    gap: 12,
+    marginTop: Spacing.three,
+    gap: 8,
   },
   heroTitle: {
-    fontSize: 34,
+    fontSize: 28,
     fontWeight: '900',
     color: '#f3ecd8',
     letterSpacing: -1,
@@ -242,17 +265,47 @@ const styles = StyleSheet.create({
   bottomSection: {
     flex: 1,
     backgroundColor: '#f3ecd8',
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
     paddingHorizontal: Spacing.four,
-    paddingTop: 40,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+    paddingTop: 24,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
   },
   formCard: {
-    gap: 24,
+    gap: 16,
+    flex: 1,
+  },
+  roleToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#e2d8c3',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 8,
+  },
+  roleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  roleBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#101e0f',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  roleBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8a9488',
+  },
+  roleBtnTextActive: {
+    color: '#101e0f',
   },
   fieldWrapper: {
-    gap: 8,
+    gap: 4,
   },
   label: {
     fontSize: 14,
@@ -266,9 +319,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 2,
     borderColor: '#e2d8c3',
-    borderRadius: 20,
+    borderRadius: 16,
     paddingHorizontal: 16,
-    height: 64,
+    height: 52,
     shadowColor: '#101e0f',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.03,
@@ -284,7 +337,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    fontSize: 17,
+    fontSize: 15,
     color: '#101e0f',
     fontWeight: '700',
     height: '100%',
@@ -294,12 +347,12 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: '#101e0f',
-    height: 64,
-    borderRadius: 20,
+    height: 56,
+    borderRadius: 16,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 4,
     shadowColor: '#101e0f',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,

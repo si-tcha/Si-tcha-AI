@@ -53,7 +53,11 @@ export default function RegisterSellerScreen() {
     if (step === 2) {
       setStep(1);
     } else {
-      router.back();
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(auth)/register-role');
+      }
     }
   };
 
@@ -94,7 +98,7 @@ export default function RegisterSellerScreen() {
       
       if (res.requireOtp) {
         showToast({ message: res.message || 'Code envoyé par SMS', type: 'info' });
-        router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim() } });
+        router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim(), role: 'seller' } });
       } else if (res.user) {
         showToast({ message: 'Demande de création de compte enregistrée !', type: 'success' });
         router.push(res.user.status === 'active' ? '/(auth)/activation-success' : '/(auth)/activation-pending');
@@ -231,7 +235,7 @@ export default function RegisterSellerScreen() {
                   )}
 
                   {step === 2 && (
-                    <View style={{ flex: 1, minHeight: 400 }}>
+                    <View style={{ flex: 1 }}>
                       <View style={styles.fieldWrapper}>
                         <Text style={styles.label}>Rechercher votre GIC</Text>
                         <View style={[styles.inputContainer, focusedField === 'search' && styles.inputFocused]}>
@@ -378,11 +382,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3ecd8',
   },
   heroSection: {
-    marginTop: Spacing.five,
-    gap: 12,
+    marginTop: Spacing.three,
+    gap: 8,
   },
   heroTitle: {
-    fontSize: 34,
+    fontSize: 28,
     fontWeight: '900',
     color: '#f3ecd8',
     letterSpacing: -1,
@@ -397,18 +401,18 @@ const styles = StyleSheet.create({
   bottomSection: {
     flex: 1,
     backgroundColor: '#f3ecd8',
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
     paddingHorizontal: Spacing.four,
-    paddingTop: 40,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+    paddingTop: 24,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
   },
   formCard: {
-    gap: 24,
+    gap: 16,
     flex: 1,
   },
   fieldWrapper: {
-    gap: 8,
+    gap: 4,
   },
   label: {
     fontSize: 14,
@@ -422,9 +426,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 2,
     borderColor: '#e2d8c3',
-    borderRadius: 20,
+    borderRadius: 16,
     paddingHorizontal: 16,
-    height: 64,
+    height: 52,
     shadowColor: '#101e0f',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.03,
@@ -440,7 +444,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    fontSize: 17,
+    fontSize: 15,
     color: '#101e0f',
     fontWeight: '700',
     height: '100%',
@@ -450,6 +454,7 @@ const styles = StyleSheet.create({
   },
   listWrapper: {
     flex: 1,
+    maxHeight: 260,
     marginTop: 16,
     backgroundColor: '#ffffff',
     borderRadius: 20,
@@ -495,12 +500,12 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: '#101e0f',
-    height: 64,
-    borderRadius: 20,
+    height: 56,
+    borderRadius: 16,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 4,
     shadowColor: '#101e0f',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,

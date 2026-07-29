@@ -65,7 +65,10 @@ export interface WeatherRecord {
   bassin: string;
   temperature: number;
   pluviometrie: number;
+  humidity?: number;
+  description?: string;
   date: string;
+  icon?: string;
 }
 
 export interface MarketPriceRecord {

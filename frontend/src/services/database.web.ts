@@ -503,6 +503,24 @@ class DatabaseService {
     };
     list.unshift(newQ);
     writeJson(STORAGE_KEYS.AGRONOMIST_QUESTIONS, list);
+
+    try {
+      const res = await apiClient.askAgronomist(crop, category, question);
+      if (res && res.answer) {
+        newQ.answer = res.answer;
+        newQ.status = 'repondu';
+        newQ.synced = true;
+        // Mettre à jour dans la liste
+        const index = list.findIndex(q => q.id === newQ.id);
+        if (index !== -1) {
+          list[index] = newQ;
+          writeJson(STORAGE_KEYS.AGRONOMIST_QUESTIONS, list);
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur appel IA Agronome, restera en attente:', e);
+    }
+
     return newQ;
   }
 

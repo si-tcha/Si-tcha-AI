@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 // Base rate limit for standard API endpoints
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
+  max: 5000, // Limit each IP to 5000 requests per window during dev
   message: {
     message: 'Trop de requêtes depuis cette adresse IP, veuillez réessayer plus tard.',
   },
@@ -14,7 +14,7 @@ export const apiLimiter = rateLimit({
 // Stricter rate limit for authentication endpoints (prevent brute-force)
 export const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit each IP to 10 login/register requests per hour
+  max: 1000, // Limit each IP to 1000 login/register requests per hour during dev
   message: {
     message: 'Trop de tentatives de connexion, veuillez réessayer dans une heure.',
   },

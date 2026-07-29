@@ -17,10 +17,14 @@ export default function OtpVerificationScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { showToast } = useToast();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const { phone, role } = useLocalSearchParams<{ phone: string; role?: 'buyer' | 'seller' }>();
 
   const handleBack = () => {
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(auth)/login');
+    }
   };
 
   const handleVerify = async () => {
@@ -31,7 +35,7 @@ export default function OtpVerificationScreen() {
     
     setIsLoading(true);
     try {
-      const res = await apiClient.verifyOtp(phone || '', code);
+      const res = await apiClient.verifyOtp(phone || '', code, role);
       if (res.token && res.user) {
         showToast({ message: 'Numéro vérifié avec succès !', type: 'success' });
         // Synchroniser la BDD locale (pour remplir le store local avec le profil)

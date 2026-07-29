@@ -7,6 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { dbService, GicMember, GicNeed, GicProfile } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { clearToken, clearRole } from '@/services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -91,6 +92,13 @@ export default function SellerProfileScreen() {
     }
     setNeedDescription('');
     setModalVisible(false);
+  };
+
+  const handleLogout = async () => {
+    await clearToken();
+    await clearRole();
+    showToast({ message: 'Déconnecté avec succès', type: 'info' });
+    router.replace('/onboarding');
   };
 
   return (
@@ -201,6 +209,12 @@ export default function SellerProfileScreen() {
               ))
             )}
           </View>
+
+          {/* Bouton de déconnexion */}
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
+            <Feather name="log-out" size={20} color="#ef4444" />
+            <Text style={styles.logoutText}>Se Déconnecter</Text>
+          </TouchableOpacity>
         </ScrollView>
 
         <Modal visible={modalVisible} animationType="slide" transparent>
@@ -376,4 +390,22 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   submitText: { color: '#f3ecd8', fontWeight: '800' },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1.5,
+    borderColor: '#fca5a5',
+    borderRadius: 16,
+    paddingVertical: 14,
+    marginTop: 10,
+    marginBottom: 20,
+  },
+  logoutText: {
+    color: '#ef4444',
+    fontSize: 15,
+    fontWeight: '800',
+  },
 });

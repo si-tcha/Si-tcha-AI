@@ -229,7 +229,7 @@ export async function registerSeller(req: Request, res: Response) {
 // ─── Verify OTP ─────────────────────────────────────────────────────────────
 
 export async function verifyOtp(req: Request, res: Response) { console.log("I AM IN VERIFY");
-  const { phone, code } = req.body;
+  const { phone, code, role } = req.body;
 
   if (!phone || !code) {
     return res.status(400).json({ message: 'Téléphone et code OTP requis.' });
@@ -256,25 +256,28 @@ export async function verifyOtp(req: Request, res: Response) { console.log("I AM
     return res.status(400).json({ message: 'Le code OTP a expiré.' });
   }
 
-  // Marquer comme vérifié (Acheteur ou Agriculteur)
+  // Marquer comme vérifié
   let user: UserAccount | null = null;
 
   const acheteur = await prisma.acheteur.findUnique({ where: { contact: normalizedPhone } });
-  if (acheteur) {
-    await prisma.acheteur.update({
-      where: { contact: normalizedPhone },
-      data: { phoneVerified: true },
-    });
-    user = {
-      id: acheteur.id.toString(),
-      role: 'buyer',
-      name: acheteur.nomEntreprise,
-      phone: acheteur.contact,
-      buyerId: acheteur.id.toString(),
-      status: 'active',
-    };
+  const agriculteur = await prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } });
+
+  if (role === 'buyer' || (!role && acheteur)) {
+    if (acheteur) {
+      await prisma.acheteur.update({
+        where: { contact: normalizedPhone },
+        data: { phoneVerified: true },
+      });
+      user = {
+        id: acheteur.id.toString(),
+        role: 'buyer',
+        name: acheteur.nomEntreprise,
+        phone: acheteur.contact,
+        buyerId: acheteur.id.toString(),
+        status: 'active',
+      };
+    }
   } else {
-    const agriculteur = await prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } });
     if (agriculteur) {
       await prisma.agriculteur.update({
         where: { contact: normalizedPhone },
@@ -339,9 +342,10 @@ export async function verifyOtp(req: Request, res: Response) { console.log("I AM
  *         description: Numéro ou PIN incorrect
  */
 export async function login(req: Request, res: Response) { console.log("LOGIN CALLED WITH PATH:", req.path);
-  const { phone, pin } = req.body as {
+  const { phone, pin, role } = req.body as {
     phone?: string;
     pin?: string;
+    role?: 'buyer' | 'seller';
   };
 
   if (!phone?.trim() || !pin) {
@@ -357,19 +361,35 @@ export async function login(req: Request, res: Response) { console.log("LOGIN CA
     });
   }
 
-  // 1. Chercher dans Acheteur
+  // 1. Chercher dans Acheteur si rôle buyer demandé (ou par défaut)
   const acheteur = await prisma.acheteur.findUnique({
     where: { contact: normalizedPhone },
   });
+  console.log("LOGIN acheteur found:", !!acheteur, "pinHash:", !!acheteur?.pinHash, "role:", role);
 
-  if (acheteur && acheteur.pinHash) {
+  // 2. Chercher dans Agriculteur si rôle seller demandé (ou par défaut si non trouvé en acheteur)
+  const agriculteur = await prisma.agriculteur.findUnique({
+    where: { contact: normalizedPhone },
+    include: { gic: true },
+  });
+  console.log("LOGIN agriculteur found:", !!agriculteur, "pinHash:", !!agriculteur?.pinHash, "role:", role);
+
+  const isBuyerLogin = role === 'buyer' || (!role && acheteur);
+  if (acheteur && acheteur.pinHash && isBuyerLogin) {
     const pinValid = await bcrypt.compare(pin, acheteur.pinHash);
     if (!pinValid) {
       return res.status(401).json({ message: 'Numéro ou code PIN incorrect.' });
     }
 
     if (!acheteur.phoneVerified) {
-      return res.status(403).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      await prisma.otpCode.upsert({
+        where: { phone: normalizedPhone },
+        update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+        create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+      });
+      console.log(`[AfroSMS Mock] OTP pour ${normalizedPhone}: ${otpCode}`);
+      return res.status(200).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
     }
 
     const user: UserAccount = {
@@ -385,20 +405,24 @@ export async function login(req: Request, res: Response) { console.log("LOGIN CA
     return res.json({ token, user });
   }
 
-  // 2. Chercher dans Agriculteur
-  const agriculteur = await prisma.agriculteur.findUnique({
-    where: { contact: normalizedPhone },
-    include: { gic: true },
-  });
 
-  if (agriculteur && agriculteur.pinHash) {
+
+  const isSellerLogin = role === 'seller' || (!role && agriculteur && !acheteur);
+  if (agriculteur && agriculteur.pinHash && isSellerLogin) {
     const pinValid = await bcrypt.compare(pin, agriculteur.pinHash);
     if (!pinValid) {
       return res.status(401).json({ message: 'Numéro ou code PIN incorrect.' });
     }
 
     if (!agriculteur.phoneVerified) {
-      return res.status(403).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      await prisma.otpCode.upsert({
+        where: { phone: normalizedPhone },
+        update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+        create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+      });
+      console.log(`[AfroSMS Mock] OTP pour ${normalizedPhone}: ${otpCode}`);
+      return res.status(200).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
     }
 
     const user: UserAccount = {

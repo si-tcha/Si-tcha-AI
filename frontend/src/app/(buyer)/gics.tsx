@@ -19,6 +19,7 @@ export default function BuyerGicsScreen() {
   const [gics, setGics] = useState<ConfidentialGic[]>([]);
   const [products, setProducts] = useState<ProductOffer[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -33,6 +34,7 @@ export default function BuyerGicsScreen() {
         if (isMounted) {
           setGics(gList);
           setProducts(pList);
+          setIsLoading(false);
         }
       };
       load();
@@ -82,16 +84,32 @@ export default function BuyerGicsScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Banner */}
-          <View style={styles.infoBanner}>
-            <Feather name="check-circle" size={20} color="#15803d" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.infoBannerTitle}>GICs Vérifiés sur le Terrain</Text>
-              <Text style={styles.infoBannerSub}>
-                Toutes les coopératives affichées possèdent un identifiant légal REF et un audit de sol valide.
-              </Text>
-            </View>
+          <View style={{ paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: Spacing.four }}>
+            <Text style={{ fontSize: 14, color: '#8a9488', lineHeight: 20 }}>
+              Cette section vous permet de découvrir les Groupements d'Initiative Commune (GIC) certifiés et de consulter leurs catalogues de produits. Vous pouvez contacter les responsables ou acheter directement chez eux sans intermédiaire.
+            </Text>
           </View>
+
+          {isLoading ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>Chargement des GICs...</Text>
+            </View>
+          ) : gics.length === 0 ? (
+            <View style={styles.empty}>
+              <Feather name="users" size={40} color="#889e87" />
+              <Text style={styles.emptyText}>Aucun GIC enregistré pour le moment.</Text>
+            </View>
+          ) : (
+            <View style={styles.infoBanner}>
+              <Feather name="check-circle" size={20} color="#15803d" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoBannerTitle}>GICs Vérifiés sur le Terrain</Text>
+                <Text style={styles.infoBannerSub}>
+                  Toutes les coopératives affichées possèdent un identifiant légal REF et un audit de sol valide.
+                </Text>
+              </View>
+            </View>
+          )}
 
           {gics.map((gic) => {
             const isSelected = selectedId === gic.id;
@@ -262,4 +280,15 @@ const styles = StyleSheet.create({
   offerRight: { alignItems: 'flex-end', gap: 4 },
   price: { fontSize: 12, fontWeight: '800', color: '#d97834' },
   addCartMiniBtn: { width: 26, height: 26, borderRadius: 8, backgroundColor: '#101e0f', alignItems: 'center', justifyContent: 'center' },
+  empty: {
+    padding: Spacing.four,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.six,
+  },
+  emptyText: {
+    color: '#889e87',
+    marginTop: Spacing.two,
+    fontSize: 14,
+  },
 });

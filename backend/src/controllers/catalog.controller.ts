@@ -102,7 +102,10 @@ export async function getTerrain(req: Request, res: Response) {
       bassin: m.bassinProduction.nom,
       temperature: Number(m.temperature),
       pluviometrie: Number(m.pluviometrie),
+      humidity: 70, // Fallback
+      description: 'Partiellement nuageux', // Fallback
       date: m.timestampMesure.toISOString().slice(0, 10),
+      icon: '04d',
     }));
 
     if (OWM_KEY) {
@@ -110,7 +113,7 @@ export async function getTerrain(req: Request, res: Response) {
         const uniqueBassins = [...new Set(meteoDb.map(m => m.bassinProduction.nom))];
         const owmWeather = await Promise.all(uniqueBassins.map(async (bassin) => {
           const city = cityMap[bassin] || 'Yaounde';
-          const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${city},CM&units=metric&appid=${OWM_KEY}`);
+          const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${city},CM&units=metric&lang=fr&appid=${OWM_KEY}`);
           if (!response.ok) return null;
           const data = await response.json();
           return {
@@ -118,6 +121,8 @@ export async function getTerrain(req: Request, res: Response) {
             bassin: bassin,
             temperature: Math.round(data.main.temp),
             pluviometrie: data.rain ? data.rain['1h'] || 0 : 0,
+            humidity: data.main.humidity,
+            description: data.weather[0]?.description || 'Nuageux',
             date: new Date().toISOString().slice(0, 10),
             icon: data.weather[0]?.icon
           };
@@ -125,7 +130,7 @@ export async function getTerrain(req: Request, res: Response) {
         
         const validOwmWeather = owmWeather.filter(w => w !== null);
         if (validOwmWeather.length > 0) {
-          weather = validOwmWeather as typeof weather;
+          weather = validOwmWeather as any;
         }
       } catch (e) {
         console.error("OpenWeatherMap fetch failed:", e);

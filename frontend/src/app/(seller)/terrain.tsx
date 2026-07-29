@@ -10,6 +10,7 @@ import {
   MarketPriceRecord,
   PhytoAlertRecord,
   WeatherRecord,
+  ParcelGrowthRecord,
 } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 
@@ -26,21 +27,24 @@ export default function SellerTerrainScreen() {
   const [market, setMarket] = useState<MarketPriceRecord[]>([]);
   const [programs, setPrograms] = useState<AgriProgramRecord[]>([]);
   const [phyto, setPhyto] = useState<PhytoAlertRecord[]>([]);
+  const [parcels, setParcels] = useState<ParcelGrowthRecord[]>([]);
 
   const loadTerrainData = useCallback(async () => {
     try {
       await dbService.initDatabase();
       await dbService.syncRemoteData().catch(() => {});
-      const [w, m, p, ph] = await Promise.all([
+      const [w, m, p, ph, par] = await Promise.all([
         dbService.getWeather(),
         dbService.getMarketPrices(),
         dbService.getAgriPrograms(),
         dbService.getPhytoAlerts(),
+        dbService.getParcels(),
       ]);
       setWeather(w);
       setMarket(m);
       setPrograms(p);
       setPhyto(ph);
+      setParcels(par);
     } catch (err) {
       console.warn('Erreur chargement terrain:', err);
     }
@@ -105,14 +109,17 @@ export default function SellerTerrainScreen() {
 
                 {/* Satellite representation box */}
                 <View style={styles.satelliteBox}>
-                  <View style={styles.parcelOverlay}>
-                    <Text style={styles.parcelLabel}>P-01: Pommes de terre (1.2 ha)</Text>
-                    <Text style={styles.parcelStatus}>Santé Sol: NPK Équilibré · Humidité 68%</Text>
-                  </View>
-                  <View style={[styles.parcelOverlay, { borderColor: '#d97834', backgroundColor: 'rgba(217,120,52,0.15)' }]}>
-                    <Text style={styles.parcelLabel}>P-02: Maïs Hybride (1.3 ha)</Text>
-                    <Text style={styles.parcelStatus}>Santé Sol: pH 6.2 · Stade Floraison</Text>
-                  </View>
+                  {parcels.length > 0 ? parcels.map((parcel, idx) => (
+                    <View key={parcel.id} style={[styles.parcelOverlay, idx % 2 !== 0 && { borderColor: '#d97834', backgroundColor: 'rgba(217,120,52,0.15)' }]}>
+                      <Text style={styles.parcelLabel}>{parcel.parcelName}: {parcel.crop} ({parcel.estimatedVolumeKg} kg attendus)</Text>
+                      <Text style={styles.parcelStatus}>Stade: {parcel.stage} · Récolte prévue: {parcel.estimatedHarvestDate}</Text>
+                    </View>
+                  )) : (
+                    <View style={styles.parcelOverlay}>
+                      <Text style={styles.parcelLabel}>Aucune parcelle synchronisée</Text>
+                      <Text style={styles.parcelStatus}>Ajoutez vos parcelles dans Suivi des Cultures</Text>
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.sigStatsRow}>
@@ -145,54 +152,73 @@ export default function SellerTerrainScreen() {
           )}
 
           {tab === 'meteo' &&
-            weather.map((w) => (
-              <View key={w.id} style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.cardTitle}>{w.bassin}</Text>
-                  <Text style={styles.badgeDate}>{w.date}</Text>
-                </View>
-                <View style={styles.weatherMetricsRow}>
-                  <View style={styles.wMetric}>
-                    <Feather name="thermometer" size={18} color="#d97834" />
-                    <Text style={styles.wVal}>{w.temperature} °C</Text>
-                    <Text style={styles.wSub}>Température</Text>
-                  </View>
-                  <View style={styles.wMetric}>
-                    <Feather name="droplet" size={18} color="#0284c7" />
-                    <Text style={styles.wVal}>{w.pluviometrie} mm</Text>
-                    <Text style={styles.wSub}>Pluviométrie</Text>
-                  </View>
-                </View>
+            (weather.length === 0 ? (
+              <View style={styles.card}>
+                <Text style={styles.meta}>Aucune donnée météorologique disponible.</Text>
               </View>
+            ) : (
+              weather.map((w) => (
+                <View key={w.id} style={styles.card}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={styles.cardTitle}>{w.bassin}</Text>
+                    <Text style={styles.badgeDate}>{w.date}</Text>
+                  </View>
+                  {w.description && <Text style={{ color: '#5a6258', marginBottom: 12, textTransform: 'capitalize' }}>{w.description}</Text>}
+                  <View style={styles.weatherMetricsRow}>
+                    <View style={styles.wMetric}>
+                      <Feather name="thermometer" size={18} color="#d97834" />
+                      <Text style={styles.wVal}>{w.temperature} °C</Text>
+                      <Text style={styles.wSub}>Température</Text>
+                    </View>
+                    <View style={styles.wMetric}>
+                      <Feather name="cloud-rain" size={18} color="#0284c7" />
+                      <Text style={styles.wVal}>{w.humidity !== undefined ? w.humidity + ' %' : w.pluviometrie + ' mm'}</Text>
+                      <Text style={styles.wSub}>{w.humidity !== undefined ? 'Humidité' : 'Pluviométrie'}</Text>
+                    </View>
+                  </View>
+                </View>
+              ))
             ))}
 
           {tab === 'marche' &&
-            market.map((m) => (
-              <View key={m.id} style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.cardTitle}>{m.product}</Text>
-                  <View style={styles.rentaBadge}>
-                    <Text style={styles.rentaBadgeText}>Rentabilité +{m.rentabilite}%</Text>
-                  </View>
-                </View>
-                <Text style={styles.meta}>Bassin: {m.bassin} · {m.date}</Text>
-                <Text style={styles.priceHighlight}>{m.prixMoyen} FCFA / kg</Text>
+            (market.length === 0 ? (
+              <View style={styles.card}>
+                <Text style={styles.meta}>Aucune donnée de marché disponible pour le moment.</Text>
               </View>
+            ) : (
+              market.map((m) => (
+                <View key={m.id} style={styles.card}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={styles.cardTitle}>{m.product}</Text>
+                    <View style={styles.rentaBadge}>
+                      <Text style={styles.rentaBadgeText}>Rentabilité +{m.rentabilite}%</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.meta}>Bassin: {m.bassin} · {m.date}</Text>
+                  <Text style={styles.priceHighlight}>{m.prixMoyen} FCFA / kg</Text>
+                </View>
+              ))
             ))}
 
           {tab === 'programmes' &&
-            programs.map((p) => (
-              <View key={p.id} style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.cardTitle}>{p.nom}</Text>
-                  <Feather name="award" size={18} color="#d97834" />
-                </View>
-                <Text style={styles.meta}>{p.description}</Text>
-                <View style={styles.eligibilityBox}>
-                  <Text style={styles.eligibilityText}>Critères : {p.criteresEligibilite}</Text>
-                </View>
-                <Text style={styles.dateLimit}>Date Limite : {p.dateLimite}</Text>
+            (programs.length === 0 ? (
+              <View style={styles.card}>
+                <Text style={styles.meta}>Aucun programme d'aide disponible pour le moment.</Text>
               </View>
+            ) : (
+              programs.map((p) => (
+                <View key={p.id} style={styles.card}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={styles.cardTitle}>{p.nom}</Text>
+                    <Feather name="award" size={18} color="#d97834" />
+                  </View>
+                  <Text style={styles.meta}>{p.description}</Text>
+                  <View style={styles.eligibilityBox}>
+                    <Text style={styles.eligibilityText}>Critères : {p.criteresEligibilite}</Text>
+                  </View>
+                  <Text style={styles.dateLimit}>Date Limite : {p.dateLimite}</Text>
+                </View>
+              ))
             ))}
 
           {tab === 'phyto' &&

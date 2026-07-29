@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View, Image } from 'react-native';
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,12 +23,15 @@ export default function BuyerOrdersScreen() {
   const { showToast } = useToast();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
       const load = async () => {
+        setIsLoading(true);
         await dbService.initDatabase();
         setOrders(await dbService.getOrders());
+        setIsLoading(false);
       };
       load();
     }, [])
@@ -54,7 +57,11 @@ export default function BuyerOrdersScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {orders.length === 0 ? (
+          {isLoading ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>Chargement de vos commandes...</Text>
+            </View>
+          ) : orders.length === 0 ? (
             <View style={styles.empty}>
               <Feather name="shopping-bag" size={40} color="#889e87" />
               <Text style={styles.emptyText}>Aucune commande enregistrée pour l'instant.</Text>
@@ -128,7 +135,10 @@ export default function BuyerOrdersScreen() {
               {selectedOrder && (
                 <View style={styles.receiptBox}>
                   <View style={styles.qrPlaceholder}>
-                    <Feather name="grid" size={90} color="#101e0f" />
+                    <Image 
+                      source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(selectedOrder.id)}` }}
+                      style={{ width: 120, height: 120 }}
+                    />
                   </View>
                   <Text style={styles.receiptCode}>REF-{selectedOrder.id.substring(0, 8).toUpperCase()}</Text>
                   <Text style={styles.receiptProd}>{selectedOrder.productName}</Text>

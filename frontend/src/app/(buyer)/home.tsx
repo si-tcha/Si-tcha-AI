@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { clearToken } from '@/services/api';
 import { dbService, ProductOffer, DEFAULT_PRODUCTS } from '@/services/database';
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
@@ -73,8 +74,9 @@ export default function BuyerHomeScreen() {
     }, [])
   );
 
-  const handleLogout = () => {
-    router.replace('/(auth)/welcome');
+  const handleLogout = async () => {
+    await clearToken();
+    router.replace('/(auth)/login');
   };
 
   const handleAddToCart = async (product: ProductOffer) => {
@@ -179,8 +181,8 @@ export default function BuyerHomeScreen() {
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={handleLogout} style={styles.iconButton}>
-              <Feather name="log-out" size={16} color="#d97834" />
+            <TouchableOpacity style={styles.iconButton} onPress={handleLogout}>
+              <Feather name="log-out" size={18} color="#f3ecd8" />
             </TouchableOpacity>
           </View>
         </View>

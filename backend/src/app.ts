@@ -11,6 +11,7 @@ import { errorHandler } from './middlewares/errorHandler';
 dotenv.config();
 
 const app: Express = express();
+app.disable('etag'); // Prevent 304 Not Modified bugs with React Native fetch
 
 // Middlewares
 app.use(httpLogger); // Logging middleware (Pino)

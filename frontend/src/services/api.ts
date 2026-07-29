@@ -61,6 +61,31 @@ async function readToken(): Promise<string | null> {
   return memoryToken;
 }
 
+export async function readRole(): Promise<'buyer' | 'seller' | null> {
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('sitcha_user_role') as any;
+    }
+  } else {
+    try {
+      return (await SecureStore.getItemAsync('sitcha_user_role')) as any;
+    } catch {}
+  }
+  return null;
+}
+
+async function saveRole(role: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sitcha_user_role', role);
+    }
+  } else {
+    try {
+      await SecureStore.setItemAsync('sitcha_user_role', role);
+    } catch {}
+  }
+}
+
 async function saveToken(token: string): Promise<void> {
   memoryToken = token;
   if (Platform.OS === 'web') {
@@ -87,12 +112,25 @@ export async function clearToken(): Promise<void> {
   }
 }
 
+export async function clearRole(): Promise<void> {
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('sitcha_user_role');
+    }
+  } else {
+    try {
+      await SecureStore.deleteItemAsync('sitcha_user_role');
+    } catch {}
+  }
+}
+
 async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
   const token = await readToken();
   const response = await fetch(`${API_URL}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -107,18 +145,20 @@ async function request<T>(path: string, method: HttpMethod = 'GET', body?: unkno
 
 export const apiClient = {
   // Login : téléphone + PIN, le backend auto-détecte le rôle
-  async login(phone: string, pin: string) {
-    const session = await request<SessionResponse>('/auth/login', 'POST', { phone, pin });
+  async login(phone: string, pin: string, role?: 'buyer' | 'seller') {
+    const session = await request<SessionResponse>('/auth/login', 'POST', { phone, pin, role });
     if (session.token) {
       await saveToken(session.token);
+      if (session.user?.role) await saveRole(session.user.role);
     }
     return session;
   },
 
-  async verifyOtp(phone: string, code: string) {
-    const session = await request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code });
+  async verifyOtp(phone: string, code: string, role?: 'buyer' | 'seller') {
+    const session = await request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code, role });
     if (session.token) {
       await saveToken(session.token);
+      if (session.user?.role) await saveRole(session.user.role);
     }
     return session;
   },
@@ -127,6 +167,7 @@ export const apiClient = {
     const session = await request<SessionResponse>('/auth/register/buyer', 'POST', input);
     if (session.token) {
       await saveToken(session.token);
+      await saveRole('buyer');
     }
     return session;
   },
@@ -135,6 +176,7 @@ export const apiClient = {
     const session = await request<SessionResponse>('/auth/register/seller', 'POST', input);
     if (session.token) {
       await saveToken(session.token);
+      await saveRole('seller');
     }
     return session;
   },
@@ -154,4 +196,26 @@ export const apiClient = {
   getAlertPreferences: () => request<{ preferences: AlertPreferences }>('/buyer/alert-preferences'),
   saveAlertPreferences: (preferences: AlertPreferences) =>
     request<{ preferences: AlertPreferences }>('/buyer/alert-preferences', 'PUT', preferences),
+  askAgronomist: (crop: string, category: string, question: string) =>
+    request<{ answer: string }>('/gic/agronomist', 'POST', { crop, category, question }),
+
+  // B2B Marketplace
+  getB2BOffers: () => request<{ offers: unknown[] }>('/b2b/offers'),
+  createB2BOffer: (data: { title: string; type: string; category: string; priceOrExchange: string; gicName: string; location: string; contact: string }) =>
+    request<{ offer: unknown }>('/b2b/offers', 'POST', data),
+
+  // Parcelles / Journal de croissance
+  getParcels: () => request<{ parcels: unknown[] }>('/gic/parcels'),
+  createParcel: (data: { parcelName: string; crop: string; sowingDate: string; stage: string; estimatedHarvestDate: string; estimatedVolumeKg: number; actualHarvestVolumeKg?: number }) =>
+    request<{ parcel: unknown }>('/gic/parcels', 'POST', data),
+
+  // Préfinancement
+  getPrefinancingDeals: () => request<{ deals: unknown[] }>('/prefinancing/deals'),
+  createPrefinancingDeal: (data: { gicName: string; buyerName: string; amountFcfa: number; inputDescription: string; reservedProduct: string; reservedVolumeKg: number }) =>
+    request<{ deal: unknown }>('/prefinancing/deals', 'POST', data),
+
+  // Trust Ratings
+  getTrustRatings: () => request<{ ratings: unknown[] }>('/trust/ratings'),
+  createTrustRating: (data: { targetId: string; targetType: string; rating: number; comment: string; authorName: string }) =>
+    request<{ rating: unknown }>('/trust/ratings', 'POST', data),
 };
