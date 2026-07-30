@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,11 +29,14 @@ export default function GrowthLogScreen() {
   // Form states
   const [parcelName, setParcelName] = useState('');
   const [crop, setCrop] = useState('Tomates');
-  const [sowingDate, setSowingDate] = useState('2026-05-10');
+  const [sowingDate, setSowingDate] = useState('');
   const [stage, setStage] = useState<'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter'>('Maturation');
-  const [estimatedHarvestDate, setEstimatedHarvestDate] = useState('2026-08-15');
+  const [estimatedHarvestDate, setEstimatedHarvestDate] = useState('');
   const [estimatedVolumeKg, setEstimatedVolumeKg] = useState('2500');
   const [actualHarvestVolumeKg, setActualHarvestVolumeKg] = useState('');
+
+  const [editingParcelId, setEditingParcelId] = useState<string | null>(null);
+  const [editHarvestVolume, setEditHarvestVolume] = useState('');
 
   useEffect(() => {
     loadParcels();
@@ -67,10 +70,25 @@ export default function GrowthLogScreen() {
       setParcels(prev => [newP, ...prev]);
       setParcelName('');
       setActualHarvestVolumeKg('');
+      setSowingDate('');
+      setEstimatedHarvestDate('');
       setModalVisible(false);
       showToast({ message: 'Parcelle enregistrée avec succès !', type: 'success' });
     } catch (err) {
       showToast({ message: 'Erreur lors de l\'enregistrement de la parcelle.', type: 'error' });
+    }
+  };
+
+  const handleUpdateHarvest = async (id: string) => {
+    if (!editHarvestVolume.trim()) return;
+    try {
+      await dbService.updateParcelHarvest(id, parseFloat(editHarvestVolume));
+      showToast({ message: 'Volume réel mis à jour !', type: 'success' });
+      setEditingParcelId(null);
+      setEditHarvestVolume('');
+      loadParcels();
+    } catch (err) {
+      showToast({ message: 'Erreur lors de la mise à jour.', type: 'error' });
     }
   };
 
@@ -163,12 +181,37 @@ export default function GrowthLogScreen() {
                   <Text style={styles.volumeVal}>{p.estimatedVolumeKg} kg</Text>
                 </View>
 
-                {p.actualHarvestVolumeKg !== undefined && (
-                  <View style={[styles.volumeRow, { marginTop: 6 }]}>
+                {p.actualHarvestVolumeKg !== undefined && p.actualHarvestVolumeKg !== null ? (
+                  <TouchableOpacity style={[styles.volumeRow, { marginTop: 6 }]} onPress={() => { setEditingParcelId(p.id); setEditHarvestVolume(p.actualHarvestVolumeKg!.toString()); }} activeOpacity={0.7}>
                     <Text style={styles.volumeLabel}>Récolte Réelle Finale :</Text>
                     <Text style={[styles.volumeVal, hasDrop ? { color: '#b91c1c' } : { color: '#15803d' }]}>
                       {p.actualHarvestVolumeKg} kg {hasDrop ? '(Écart -15%+)' : '✓ Conforme'}
                     </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={[styles.volumeRow, { marginTop: 6 }]} onPress={() => { setEditingParcelId(p.id); setEditHarvestVolume(''); }} activeOpacity={0.7}>
+                    <Text style={styles.volumeLabel}>Récolte Réelle Finale :</Text>
+                    <Text style={[styles.volumeVal, { color: '#889e87' }]}>Non renseignée (Toucher pour ajouter)</Text>
+                  </TouchableOpacity>
+                )}
+
+                {editingParcelId === p.id && (
+                  <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center' }}>
+                    <TextInput
+                      style={[styles.textInput, { flex: 1, padding: 8, height: 40 }]}
+                      placeholder="Volume réel (kg)"
+                      placeholderTextColor="#889e87"
+                      keyboardType="numeric"
+                      value={editHarvestVolume}
+                      onChangeText={setEditHarvestVolume}
+                      autoFocus
+                    />
+                    <TouchableOpacity style={{ marginLeft: 8, backgroundColor: '#d97834', padding: 10, borderRadius: 10 }} onPress={() => handleUpdateHarvest(p.id)}>
+                      <Feather name="check" size={16} color="#ffffff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={{ marginLeft: 8, backgroundColor: '#fca5a5', padding: 10, borderRadius: 10 }} onPress={() => setEditingParcelId(null)}>
+                      <Feather name="x" size={16} color="#ffffff" />
+                    </TouchableOpacity>
                   </View>
                 )}
               </View>
@@ -178,6 +221,7 @@ export default function GrowthLogScreen() {
 
         {/* Modale de saisie de parcelle */}
         <Modal visible={modalVisible} animationType="slide" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -204,6 +248,24 @@ export default function GrowthLogScreen() {
                   placeholderTextColor="#889e87"
                   value={crop}
                   onChangeText={setCrop}
+                />
+
+                <Text style={styles.inputLabel}>Date de Semis</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="ex: 2026-05-10 ou 10/05/2026"
+                  placeholderTextColor="#889e87"
+                  value={sowingDate}
+                  onChangeText={setSowingDate}
+                />
+
+                <Text style={styles.inputLabel}>Date de Récolte Estimée</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="ex: 2026-08-15 ou 15/08/2026"
+                  placeholderTextColor="#889e87"
+                  value={estimatedHarvestDate}
+                  onChangeText={setEstimatedHarvestDate}
                 />
 
                 <Text style={styles.inputLabel}>Stade de croissance actuel</Text>
@@ -245,6 +307,7 @@ export default function GrowthLogScreen() {
               </ScrollView>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <BottomNavBar role="seller" />

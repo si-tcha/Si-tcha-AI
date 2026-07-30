@@ -256,6 +256,18 @@ export default function BuyerHomeScreen() {
           </View>
         )}
 
+        {/* B2B Marketplace Link */}
+        <TouchableOpacity style={styles.b2bPromoCard} onPress={() => router.push('/(buyer)/b2b')} activeOpacity={0.9}>
+          <View style={styles.b2bPromoLeft}>
+            <Feather name="truck" size={24} color="#d97834" />
+            <View>
+              <Text style={styles.b2bPromoTitle}>Marché B2B</Text>
+              <Text style={styles.b2bPromoSub}>Location de matériel & Terres</Text>
+            </View>
+          </View>
+          <Feather name="chevron-right" size={20} color="#101e0f" />
+        </TouchableOpacity>
+
         {/* Product Grid ultra-optimisée */}
         <View style={styles.productsSection}>
           <View style={styles.productsHeader}>
@@ -606,7 +618,22 @@ const styles = StyleSheet.create({
   },
   activeChipText: { fontSize: 10, fontWeight: '800', color: '#d97834' },
   resetText: { fontSize: 10, fontWeight: '700', color: '#889e87', textDecorationLine: 'underline' },
-  productsSection: { flex: 1, paddingHorizontal: Spacing.four, paddingTop: 6 },
+  b2bPromoCard: {
+    marginHorizontal: Spacing.four,
+    marginTop: 10,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#ffedd5',
+    borderRadius: 16,
+    padding: Spacing.three,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  b2bPromoLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  b2bPromoTitle: { fontSize: 14, fontWeight: '900', color: '#101e0f' },
+  b2bPromoSub: { fontSize: 11, fontWeight: '600', color: '#5a6258' },
+  productsSection: { flex: 1, paddingHorizontal: Spacing.four, paddingTop: 10 },
   productsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   productsTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   productsCount: { fontSize: 11, fontWeight: '600', color: '#5a6258' },

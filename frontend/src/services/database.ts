@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { Platform, Alert } from 'react-native';
 import { apiClient } from './api';
 import {
   AgriProgramRecord,
@@ -207,51 +208,51 @@ class DatabaseService {
         updated = true;
       }
       if (ordersRes?.orders) {
-        db.runSync('DELETE FROM orders');
+        db.runSync('DELETE FROM orders WHERE synced = 1 OR synced IS NULL');
         for (const o of (ordersRes.orders as any[])) {
           db.runSync(
-            'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt]
+            'INSERT OR REPLACE INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
           );
         }
         updated = true;
       }
       if (Array.isArray(b2bRes?.offers)) {
-        db.runSync('DELETE FROM b2b_offers');
+        db.runSync('DELETE FROM b2b_offers WHERE synced = 1 OR synced IS NULL');
         for (const o of (b2bRes.offers as any[])) {
           db.runSync(
-            'INSERT OR REPLACE INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [o.id, o.title, o.type, o.category, o.priceOrExchange, o.gicName, o.location, o.contact, o.createdAt]
+            'INSERT OR REPLACE INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [o.id, o.title, o.type, o.category, o.priceOrExchange, o.gicName, o.location, o.contact, o.createdAt, 1]
           );
         }
         updated = true;
       }
       if (Array.isArray(parcelsRes?.parcels)) {
-        db.runSync('DELETE FROM parcels');
+        db.runSync('DELETE FROM parcels WHERE synced = 1 OR synced IS NULL');
         for (const p of (parcelsRes.parcels as any[])) {
           db.runSync(
-            'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [p.id, p.parcelName, p.crop, p.sowingDate, p.stage, p.estimatedHarvestDate, p.estimatedVolumeKg, p.actualHarvestVolumeKg || null, p.updatedAt]
+            'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [p.id, p.parcelName, p.crop, p.sowingDate, p.stage, p.estimatedHarvestDate, p.estimatedVolumeKg, p.actualHarvestVolumeKg || null, p.updatedAt, 1]
           );
         }
         updated = true;
       }
       if (Array.isArray(prefinRes?.deals)) {
-        db.runSync('DELETE FROM prefinancing');
+        db.runSync('DELETE FROM prefinancing WHERE synced = 1 OR synced IS NULL');
         for (const d of (prefinRes.deals as any[])) {
           db.runSync(
-            'INSERT OR REPLACE INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [d.id, d.gicName, d.buyerName, d.amountFcfa, d.inputDescription, d.reservedProduct, d.reservedVolumeKg, d.status, d.createdAt]
+            'INSERT OR REPLACE INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [d.id, d.gicName, d.buyerName, d.amountFcfa, d.inputDescription, d.reservedProduct, d.reservedVolumeKg, d.status, d.createdAt, 1]
           );
         }
         updated = true;
       }
       if (Array.isArray(trustRes?.ratings)) {
-        db.runSync('DELETE FROM trust_ratings');
+        db.runSync('DELETE FROM trust_ratings WHERE synced = 1 OR synced IS NULL');
         for (const r of (trustRes.ratings as any[])) {
           db.runSync(
-            'INSERT OR REPLACE INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [r.id, r.targetId, r.targetType, r.rating, r.comment, r.authorName, r.createdAt]
+            'INSERT OR REPLACE INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [r.id, r.targetId, r.targetType, r.rating, r.comment, r.authorName, r.createdAt, 1]
           );
         }
         updated = true;
@@ -281,7 +282,7 @@ class DatabaseService {
           id TEXT PRIMARY KEY, productId TEXT, name TEXT, price TEXT, unit TEXT, quantity INTEGER, synced INTEGER
         );
         CREATE TABLE IF NOT EXISTS orders (
-          id TEXT PRIMARY KEY, type TEXT, status TEXT, productId TEXT, productName TEXT, quantity REAL, unit TEXT, price TEXT, gicName TEXT, createdAt TEXT
+          id TEXT PRIMARY KEY, type TEXT, status TEXT, productId TEXT, productName TEXT, quantity REAL, unit TEXT, price TEXT, gicName TEXT, createdAt TEXT, synced INTEGER
         );
         CREATE TABLE IF NOT EXISTS gic_needs (
           id TEXT PRIMARY KEY, category TEXT, description TEXT, updatedAt TEXT, authorRole TEXT
@@ -290,16 +291,16 @@ class DatabaseService {
           id TEXT PRIMARY KEY, crop TEXT, category TEXT, question TEXT, photoUrl TEXT, status TEXT, answer TEXT, createdAt TEXT, synced INTEGER
         );
         CREATE TABLE IF NOT EXISTS b2b_offers (
-          id TEXT PRIMARY KEY, title TEXT, type TEXT, category TEXT, priceOrExchange TEXT, gicName TEXT, location TEXT, contact TEXT, createdAt TEXT
+          id TEXT PRIMARY KEY, title TEXT, type TEXT, category TEXT, priceOrExchange TEXT, gicName TEXT, location TEXT, contact TEXT, createdAt TEXT, synced INTEGER
         );
         CREATE TABLE IF NOT EXISTS parcels (
-          id TEXT PRIMARY KEY, parcelName TEXT, crop TEXT, sowingDate TEXT, stage TEXT, estimatedHarvestDate TEXT, estimatedVolumeKg REAL, actualHarvestVolumeKg REAL, updatedAt TEXT
+          id TEXT PRIMARY KEY, parcelName TEXT, crop TEXT, sowingDate TEXT, stage TEXT, estimatedHarvestDate TEXT, estimatedVolumeKg REAL, actualHarvestVolumeKg REAL, updatedAt TEXT, synced INTEGER
         );
         CREATE TABLE IF NOT EXISTS prefinancing (
-          id TEXT PRIMARY KEY, gicName TEXT, buyerName TEXT, amountFcfa REAL, inputDescription TEXT, reservedProduct TEXT, reservedVolumeKg REAL, status TEXT, createdAt TEXT
+          id TEXT PRIMARY KEY, gicName TEXT, buyerName TEXT, amountFcfa REAL, inputDescription TEXT, reservedProduct TEXT, reservedVolumeKg REAL, status TEXT, createdAt TEXT, synced INTEGER
         );
         CREATE TABLE IF NOT EXISTS trust_ratings (
-          id TEXT PRIMARY KEY, targetId TEXT, targetType TEXT, rating INTEGER, comment TEXT, authorName TEXT, createdAt TEXT
+          id TEXT PRIMARY KEY, targetId TEXT, targetType TEXT, rating INTEGER, comment TEXT, authorName TEXT, createdAt TEXT, synced INTEGER
         );
       `);
 
@@ -314,6 +315,17 @@ class DatabaseService {
       this.ensureKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
       this.ensureKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
       this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
+
+      // Migrations pour s'assurer que les colonnes 'synced' existent dans les tables préexistantes
+      try {
+        db.runSync("ALTER TABLE prefinancing ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE trust_ratings ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
 
       // Async sync from remote backend if network is online
       this.syncRemoteData().catch(() => {});
@@ -446,7 +458,12 @@ class DatabaseService {
       'INSERT INTO gic_needs (id, category, description, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?)',
       [id, category, description, updatedAt, role]
     );
-    return { id, category, description, updatedAt, authorRole: role };
+    
+    // Tentative de push direct au backend
+    const needPayload = { id, category, description, updatedAt, authorRole: role };
+    apiClient.addGicNeed(needPayload).catch(() => console.log('Offline: besoin sauvegardé localement.'));
+    
+    return needPayload;
   }
 
   async updateGicNeed(id: string, category: string, description: string): Promise<GicNeed[]> {
@@ -468,6 +485,12 @@ class DatabaseService {
 
   async getOrders(): Promise<OrderRecord[]> {
     return this.getDb().getAllSync('SELECT * FROM orders ORDER BY createdAt DESC') as any[];
+  }
+
+  async updateOrderStatus(id: string, status: string): Promise<void> {
+    const db = this.getDb();
+    db.runSync('UPDATE orders SET status = ?, synced = 0 WHERE id = ?', [status, id]);
+    this.syncRemoteData().catch(() => {});
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
@@ -495,8 +518,8 @@ class DatabaseService {
         const createdAt = nowIso();
         
         db.runSync(
-          'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, type, status, item.productId, item.name, item.quantity, item.unit, item.price, gicName, createdAt]
+          'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, type, status, item.productId, item.name, item.quantity, item.unit, item.price, gicName, createdAt, 0]
         );
         created.push({ id, type, status, productId: item.productId, productName: item.name, quantity: item.quantity, unit: item.unit, price: item.price, gicName, createdAt });
       }
@@ -596,14 +619,18 @@ class DatabaseService {
   async addB2BOffer(title: string, type: 'rent' | 'barter', category: string, priceOrExchange: string, gicName: string, location: string, contact: string): Promise<B2BOffer> {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const createdAt = nowIso();
-    this.getDb().runSync(
-      'INSERT INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, title, type, category, priceOrExchange, gicName, location, contact, createdAt]
+    const db = this.getDb();
+    db.runSync(
+      'INSERT INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, title, type, category, priceOrExchange, gicName, location, contact, createdAt, 0]
     );
 
     // Background sync to backend
-    apiClient.createB2BOffer({ title, type, category, priceOrExchange, gicName, location, contact }).catch((e) => {
-      console.warn('B2B offer sync failed (offline):', e);
+    apiClient.createB2BOffer({ title, type, category, priceOrExchange, gicName, location, contact }).then(() => {
+      db.runSync('UPDATE b2b_offers SET synced = 1 WHERE id = ?', [id]);
+      this.syncRemoteData().catch(() => {});
+    }).catch((e) => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : offre B2B sauvegardée localement.");
     });
 
     return { id, title, type, category, priceOrExchange, gicName, location, contact, createdAt };
@@ -617,17 +644,31 @@ class DatabaseService {
   async addParcel(parcelName: string, crop: string, sowingDate: string, stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter', estimatedHarvestDate: string, estimatedVolumeKg: number, actualHarvestVolumeKg?: number): Promise<ParcelGrowthRecord> {
     const id = Date.now().toString();
     const updatedAt = nowIso();
-    this.getDb().runSync(
-      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg || null, updatedAt]
+    const db = this.getDb();
+    db.runSync(
+      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg || null, updatedAt, 0]
     );
 
     // Background sync to backend
-    apiClient.createParcel({ parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg }).catch((e) => {
-      console.warn('Parcel sync failed (offline):', e);
+    apiClient.createParcel({ parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg }).then(() => {
+      db.runSync('UPDATE parcels SET synced = 1 WHERE id = ?', [id]);
+      this.syncRemoteData().catch(() => {});
+    }).catch((e) => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : parcelle sauvegardée localement.");
     });
 
     return { id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt };
+  }
+
+  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number): Promise<void> {
+    const db = this.getDb();
+    const updatedAt = nowIso();
+    db.runSync(
+      'UPDATE parcels SET actualHarvestVolumeKg = ?, updatedAt = ?, synced = 0 WHERE id = ?',
+      [actualHarvestVolumeKg, updatedAt, id]
+    );
+    this.syncRemoteData().catch(() => {});
   }
 
   // --- Préfinancement & Trust Score (Lot D) ---
@@ -638,17 +679,66 @@ class DatabaseService {
   async addPrefinancingDeal(gicName: string, buyerName: string, amountFcfa: number, inputDescription: string, reservedProduct: string, reservedVolumeKg: number): Promise<PrefinancingDeal> {
     const id = Date.now().toString();
     const createdAt = nowIso();
-    this.getDb().runSync(
-      'INSERT INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, 'propose', createdAt]
-    );
+    const db = this.getDb();
+    try {
+      db.runSync(
+        'CREATE TABLE IF NOT EXISTS prefinancing (id TEXT PRIMARY KEY, gicName TEXT, buyerName TEXT, amountFcfa REAL, inputDescription TEXT, reservedProduct TEXT, reservedVolumeKg REAL, status TEXT, createdAt TEXT, synced INTEGER)'
+      );
+      try {
+        db.runSync('ALTER TABLE prefinancing ADD COLUMN synced INTEGER');
+      } catch (e) {
+        // Ignore if column already exists
+      }
+      db.runSync(
+        'INSERT INTO prefinancing (id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, 'propose', createdAt, 0]
+      );
+    } catch (err) {
+      console.error("Erreur SQL locale lors de l'insertion prefinancing:", err);
+      throw err;
+    }
 
     // Background sync to backend
-    apiClient.createPrefinancingDeal({ gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg }).catch((e) => {
-      console.warn('Prefinancing sync failed (offline):', e);
+    apiClient.createPrefinancingDeal({ gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg }).then(() => {
+      db.runSync('UPDATE prefinancing SET synced = 1 WHERE id = ?', [id]);
+      this.syncRemoteData().catch(() => {});
+    }).catch((e) => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : préfinancement sauvegardé localement.");
     });
 
     return { id, gicName, buyerName, amountFcfa, inputDescription, reservedProduct, reservedVolumeKg, status: 'propose', createdAt };
+  }
+
+  async updatePrefinancingDealStatus(id: string, status: string): Promise<void> {
+    const db = this.getDb();
+    db.runSync('UPDATE prefinancing SET status = ?, synced = 0 WHERE id = ?', [status, id]);
+    
+    // Auto-generate order if accepted
+    if (status === 'accepte') {
+      try {
+        const deals = this.getDb().getAllSync('SELECT * FROM prefinancing WHERE id = ?', [id]) as PrefinancingDeal[];
+        if (deals && deals.length > 0) {
+          const deal = deals[0];
+          const orderId = `pref-${deal.id}`;
+          const createdAt = nowIso();
+          
+          // Check if order already exists
+          const existing = db.getAllSync('SELECT id FROM orders WHERE id = ?', [orderId]);
+          if (existing.length === 0) {
+            const unitPrice = deal.reservedVolumeKg > 0 ? Math.round(deal.amountFcfa / deal.reservedVolumeKg) : deal.amountFcfa;
+            db.runSync(
+              'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [orderId, 'reservation', 'confirmee', `prod-${deal.id}`, deal.reservedProduct, deal.reservedVolumeKg, 'kg', unitPrice.toString(), deal.gicName, createdAt, 0]
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn('Erreur creation order automatique:', err);
+        Alert.alert('Erreur', 'Impossible de créer la commande: ' + (err.message || ''));
+      }
+    }
+
+    this.syncRemoteData().catch(() => {});
   }
 
   async getTrustRatings(): Promise<TrustRating[]> {
@@ -658,14 +748,25 @@ class DatabaseService {
   async addTrustRating(targetId: string, targetType: 'gic' | 'buyer', rating: number, comment: string, authorName: string): Promise<TrustRating> {
     const id = Date.now().toString();
     const createdAt = nowIso();
-    this.getDb().runSync(
-      'INSERT INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, targetId, targetType, rating, comment, authorName, createdAt]
+    const db = this.getDb();
+    
+    try {
+      db.runSync('ALTER TABLE trust_ratings ADD COLUMN synced INTEGER');
+    } catch (e) {
+      // Ignore if column exists
+    }
+
+    db.runSync(
+      'INSERT INTO trust_ratings (id, targetId, targetType, rating, comment, authorName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, targetId, targetType, rating, comment, authorName, createdAt, 0]
     );
 
     // Background sync to backend
-    apiClient.createTrustRating({ targetId, targetType, rating, comment, authorName }).catch((e) => {
-      console.warn('Trust rating sync failed (offline):', e);
+    apiClient.createTrustRating({ targetId, targetType, rating, comment, authorName }).then(() => {
+      db.runSync('UPDATE trust_ratings SET synced = 1 WHERE id = ?', [id]);
+      this.syncRemoteData().catch(() => {});
+    }).catch((e) => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : évaluation sauvegardée localement.");
     });
 
     return { id, targetId, targetType, rating, comment, authorName, createdAt };

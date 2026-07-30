@@ -1,10 +1,10 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Spacing } from '@/constants/theme';
-import { dbService, GicMember, GicNeed, GicProfile } from '@/services/database';
+import { dbService, GicMember, GicNeed, GicProfile, TrustRating } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { clearToken, clearRole } from '@/services/api';
@@ -21,6 +21,7 @@ export default function SellerProfileScreen() {
   const [profile, setProfile] = useState<GicProfile | null>(null);
   const [members, setMembers] = useState<GicMember[]>([]);
   const [needs, setNeeds] = useState<GicNeed[]>([]);
+  const [ratings, setRatings] = useState<TrustRating[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
   const [needCategory, setNeedCategory] = useState('Intrants');
@@ -29,14 +30,16 @@ export default function SellerProfileScreen() {
 
   const loadData = async () => {
     await dbService.initDatabase();
-    const [p, m, n] = await Promise.all([
+    const [p, m, n, r] = await Promise.all([
       dbService.getGicProfile(),
       dbService.getGicMembers(),
       dbService.getGicNeeds(),
+      dbService.getTrustRatings(),
     ]);
     setProfile(p);
     setMembers(m);
     setNeeds(n);
+    setRatings(r);
     setSurfaceDraft(String(p.surfaceHa || 12.5));
   };
 
@@ -210,6 +213,41 @@ export default function SellerProfileScreen() {
             )}
           </View>
 
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Avis & Évaluations ({ratings.length})</Text>
+            <Feather name="star" size={16} color="#d97834" />
+          </View>
+          <View style={styles.listCard}>
+            {ratings.length === 0 ? (
+              <View style={styles.listItem}>
+                <Text style={styles.itemSub}>Aucune évaluation reçue pour l'instant.</Text>
+              </View>
+            ) : (
+              ratings.map((rating) => (
+                <View key={rating.id} style={styles.listItem}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.ratingRow}>
+                      <Text style={styles.itemTitle}>{rating.authorName}</Text>
+                      <View style={styles.stars}>
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Feather 
+                            key={star} 
+                            name="star" 
+                            size={12} 
+                            color={star <= rating.rating ? '#d97834' : '#e6dfcc'} 
+                          />
+                        ))}
+                      </View>
+                    </View>
+                    {rating.comment ? (
+                      <Text style={styles.itemSub}>{rating.comment}</Text>
+                    ) : null}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+
           {/* Bouton de déconnexion */}
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
             <Feather name="log-out" size={20} color="#ef4444" />
@@ -218,8 +256,9 @@ export default function SellerProfileScreen() {
         </ScrollView>
 
         <Modal visible={modalVisible} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>{editingNeedId ? 'Modifier le besoin GIC' : 'Nouveau besoin GIC'}</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
@@ -253,6 +292,7 @@ export default function SellerProfileScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <BottomNavBar role="seller" />
@@ -345,6 +385,8 @@ const styles = StyleSheet.create({
   itemSub: { fontSize: 11, color: '#5a6258', marginTop: 2 },
   badge: { backgroundColor: '#d9783420', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 10, fontWeight: '800', color: '#d97834' },
+  ratingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  stars: { flexDirection: 'row', gap: 2 },
   modalOverlay: { flex: 1, backgroundColor: '#101e0f70', justifyContent: 'flex-end' },
   modalContent: {
     backgroundColor: '#ffffff',

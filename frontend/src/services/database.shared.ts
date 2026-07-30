@@ -120,6 +120,7 @@ export interface ConfidentialGic {
   emoji: string;
   logoUrl?: string;
   bassin: string;
+  needs?: GicNeed[];
 }
 
 export type OrderType = 'commande_ferme' | 'achat_direct' | 'reservation';

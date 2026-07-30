@@ -31,6 +31,7 @@ export const loginSchema = z.object({
   body: z.object({
     phone: phoneSchema,
     pin: pinSchema,
+    role: z.enum(['buyer', 'seller']).optional(),
   }),
 });
 
@@ -38,5 +39,6 @@ export const verifyOtpSchema = z.object({
   body: z.object({
     phone: phoneSchema,
     code: z.string().regex(/^\d{6}$/, 'Le code OTP doit contenir 6 chiffres'),
+    role: z.enum(['buyer', 'seller']).optional(),
   }),
 });

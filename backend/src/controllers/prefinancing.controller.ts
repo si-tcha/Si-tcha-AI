@@ -60,6 +60,14 @@ export async function createPrefinancingDeal(req: AuthRequest, res: Response) {
   }
 
   try {
+    let targetGicId: bigint | null = null;
+    if (gicName?.trim()) {
+      const gic = await prisma.gIC.findFirst({
+        where: { nom: { equals: gicName.trim(), mode: 'insensitive' } },
+      });
+      if (gic) targetGicId = gic.id;
+    }
+
     const id = Date.now().toString();
     const deal = await prisma.prefinancingEntry.create({
       data: {
@@ -72,7 +80,7 @@ export async function createPrefinancingDeal(req: AuthRequest, res: Response) {
         reservedVolumeKg: reservedVolumeKg ?? 0,
         status: 'propose',
         acheteurId: req.user.role === 'buyer' && req.user.buyerId ? BigInt(req.user.buyerId) : null,
-        gicId: req.user.role === 'seller' && req.user.gicId ? BigInt(req.user.gicId) : null,
+        gicId: req.user.role === 'seller' && req.user.gicId ? BigInt(req.user.gicId) : targetGicId,
       },
     });
 

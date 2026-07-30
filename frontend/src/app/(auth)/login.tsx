@@ -62,7 +62,7 @@ export default function LoginScreen() {
       if (session.user) {
         showToast({ message: `Bienvenue ${session.user.name} !`, type: 'success' });
         if (session.user.role === 'seller') {
-          router.replace(session.user.status === 'active' ? '/(auth)/activation-success' : '/(auth)/activation-pending');
+          router.replace(session.user.status === 'active' ? '/(seller)/home' : '/(auth)/activation-pending');
         } else {
           router.replace('/(buyer)/home');
         }
@@ -70,7 +70,7 @@ export default function LoginScreen() {
     } catch (error: any) {
       if (error.response?.data?.requireOtp) {
         showToast({ message: error.response.data.message, type: 'warning' });
-        router.push({ pathname: '/(auth)/otp-verification', params: { phone } });
+        router.push({ pathname: '/(auth)/otp-verification', params: { phone, role } });
       } else {
         showToast({ message: error.response?.data?.message || error.message || 'Numéro ou code PIN incorrect.', type: 'error' });
       }

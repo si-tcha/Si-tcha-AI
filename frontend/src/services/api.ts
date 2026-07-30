@@ -33,15 +33,8 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
-// En production, utilise l'URL Render. En dev, utilise l'IP locale.
+// URL de l'API — utilise la variable d'environnement ou le serveur de production par défaut.
 const PROD_API_URL = 'https://si-tcha-ai-mobile.onrender.com/api';
-
-const devApiUrl = Platform.select({
-  android: 'http://172.20.10.3:4000/api',
-  ios: 'http://localhost:4000/api',
-  default: 'http://localhost:4000/api',
-});
-
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? PROD_API_URL;
 const TOKEN_KEY = 'sitcha_api_token';
 
@@ -126,15 +119,20 @@ export async function clearRole(): Promise<void> {
 
 async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
   const token = await readToken();
-  const response = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error('Pas de connexion réseau. Vérifiez votre connexion Internet et réessayez.');
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -190,9 +188,12 @@ export const apiClient = {
   getExpenses: (page = 1, limit = 20) => request<{ expenses: unknown[]; meta: PaginationMeta }>(`/gic/expenses?page=${page}&limit=${limit}`),
   addExpense: (label: string, amount: number, category: string) =>
     request<{ expense: unknown }>('/gic/expenses', 'POST', { label, amount, category }),
+  addGicNeed: (need: { id: string; category: string; description: string; updatedAt?: string; authorRole?: string }) =>
+    request<{ need: unknown }>('/gic/needs', 'POST', need),
   createOrder: (type: OrderType, items: Array<{ productId: string; quantity: number }>) =>
     request<{ orders: unknown[] }>('/buyer/orders', 'POST', { type, items }),
   getOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/buyer/orders?page=${page}&limit=${limit}`),
+  getGicOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/gic/orders?page=${page}&limit=${limit}`),
   getAlertPreferences: () => request<{ preferences: AlertPreferences }>('/buyer/alert-preferences'),
   saveAlertPreferences: (preferences: AlertPreferences) =>
     request<{ preferences: AlertPreferences }>('/buyer/alert-preferences', 'PUT', preferences),

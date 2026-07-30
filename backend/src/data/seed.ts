@@ -67,10 +67,7 @@ export const seedData: AppData = {
     { id: 'm2', gicId: 'gic-1', name: 'Marie Nguemo', phone: '+237690000002', isLeader: false, updatedAt: now },
     { id: 'm3', gicId: 'gic-1', name: 'Paul Tchoumi', phone: '+237690000003', isLeader: false, updatedAt: now },
   ],
-  needs: [
-    { id: 'n1', gicId: 'gic-1', category: 'Intrants', description: 'NPK 20 sacs manquants pour saison', updatedAt: now, authorRole: 'leader' },
-    { id: 'n2', gicId: 'gic-1', category: 'Financement', description: 'Crédit campagne 2M FCFA', updatedAt: now, authorRole: 'leader' },
-  ],
+  needs: [],
   harvests: [
     { id: 'h1', gicId: 'gic-1', product: 'Pommes de terre', volume: 1200, date: '12 Juillet 2026', synced: true, updatedAt: now, authorRole: 'leader' },
     { id: 'h2', gicId: 'gic-1', product: 'Tomates', volume: 800, date: '18 Juillet 2026', synced: true, updatedAt: now, authorRole: 'leader' },

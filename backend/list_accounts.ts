@@ -1,0 +1,1 @@
+import prisma from './src/lib/prisma'; async function run() { console.log('Acheteurs:', await prisma.acheteur.findMany({ select: { contact: true, nomEntreprise: true } })); console.log('Agriculteurs:', await prisma.agriculteur.findMany({ select: { contact: true, nom: true } })); } run().finally(() => prisma.$disconnect());

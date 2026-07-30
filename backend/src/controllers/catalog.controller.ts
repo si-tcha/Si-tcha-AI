@@ -55,7 +55,7 @@ export async function getGicsPublic(req: Request, res: Response) {
       prisma.gIC.findMany({
         skip,
         take: limit,
-        include: { bassinProduction: true },
+        include: { bassinProduction: true, gicNeedEntries: true },
       }),
       prisma.gIC.count(),
     ]);
@@ -67,6 +67,12 @@ export async function getGicsPublic(req: Request, res: Response) {
       emoji: '🌿',
       bassin: gic.bassinProduction?.nom ?? 'Ouest',
       logoUrl: gic.logoURL,
+      needs: gic.gicNeedEntries.map(n => ({
+        id: n.id,
+        category: n.category,
+        description: n.description,
+        updatedAt: n.updatedAt.toISOString()
+      })),
     }));
 
     res.json({ 

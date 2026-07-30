@@ -15,7 +15,7 @@ export async function getGicProfile(req: AuthRequest, res: Response) {
       include: {
         bassinProduction: true,
         agriculteurs: true,
-        besoins: true,
+        gicNeedEntries: true,
       },
     });
 
@@ -43,12 +43,12 @@ export async function getGicProfile(req: AuthRequest, res: Response) {
       updatedAt: a.timestampMaj.toISOString(),
     }));
 
-    const needs = gic.besoins.map((b) => ({
-      id: b.id.toString(),
-      category: b.categorieBesoin,
+    const needs = gic.gicNeedEntries.map((b) => ({
+      id: b.id,
+      category: b.category,
       description: b.description,
-      updatedAt: b.timestampMaj.toISOString(),
-      authorRole: 'leader' as const,
+      updatedAt: b.updatedAt.toISOString(),
+      authorRole: b.authorRole,
     }));
 
     res.json({ profile, members, needs });
@@ -246,5 +246,94 @@ export async function createGicExpense(req: AuthRequest, res: Response) {
     res.status(201).json({ expense });
   } catch (error) {
     res.status(500).json({ message: 'Erreur lors de la création de la charge.' });
+  }
+}
+
+export async function getGicOrders(req: AuthRequest, res: Response) {
+  if (req.user?.role !== 'seller' || !req.user.gicId) return res.status(403).json({ message: 'Accès GIC requis.' });
+  try {
+    const gicId = BigInt(req.user.gicId);
+    const { page, limit, skip } = getPagination(req);
+
+    const [txs, total] = await Promise.all([
+      prisma.transactionAcheteur.findMany({
+        where: {
+          recolteOffre: {
+            gicId,
+          }
+        },
+        skip,
+        take: limit,
+        include: {
+          recolteOffre: {
+            include: { produitAgricole: true, gic: true },
+          },
+          acheteur: true,
+        },
+        orderBy: { id: 'desc' }
+      }),
+      prisma.transactionAcheteur.count({
+        where: {
+          recolteOffre: {
+            gicId,
+          }
+        }
+      }),
+    ]);
+
+    const orders = txs.map((tx) => ({
+      id: tx.id.toString(),
+      buyerId: tx.acheteurId.toString(),
+      buyerName: tx.acheteur?.nomEntreprise ?? 'Acheteur inconnu',
+      type: tx.type,
+      status: tx.statut,
+      productId: tx.recolteOffreId.toString(),
+      productName: tx.recolteOffre.produitAgricole.nom,
+      quantity: Number(tx.quantite),
+      unit: 'kg',
+      price: tx.prixConvenu.toString(),
+      gicId: tx.recolteOffre.gicId.toString(),
+      gicName: tx.recolteOffre.gic.nom,
+      createdAt: new Date().toISOString(),
+    }));
+
+    res.json({ 
+      orders,
+      meta: buildPaginationMeta(total, page, limit)
+    });
+  } catch (error) {
+    console.error('Erreur getGicOrders:', error);
+    res.json({ orders: [], meta: buildPaginationMeta(0, 1, 20) });
+  }
+}
+
+export async function createGicNeed(req: AuthRequest, res: Response) {
+  if (req.user?.role !== 'seller' || !req.user.gicId) return res.status(403).json({ message: 'Accès GIC requis.' });
+  const { id, category, description, updatedAt, authorRole } = req.body as { id: string; category: string; description: string; updatedAt?: string; authorRole?: string };
+  if (!id || !category || !description) return res.status(400).json({ message: 'id, category et description sont requis.' });
+
+  try {
+    const gicId = BigInt(req.user.gicId);
+    const need = await prisma.gicNeedEntry.upsert({
+      where: { id },
+      create: {
+        id,
+        category,
+        description,
+        updatedAt: updatedAt ? new Date(updatedAt) : new Date(),
+        authorRole: authorRole ?? 'member',
+        gicId,
+      },
+      update: {
+        category,
+        description,
+        updatedAt: updatedAt ? new Date(updatedAt) : new Date(),
+        authorRole: authorRole ?? 'member',
+      },
+    });
+
+    res.json({ need: { ...need, id: need.id, gicId: need.gicId.toString() } });
+  } catch (error) {
+    res.status(500).json({ message: 'Erreur création du besoin.' });
   }
 }

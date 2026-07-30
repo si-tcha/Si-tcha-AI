@@ -1,4 +1,3 @@
-console.log("LOADED AUTH.CONTROLLER");
 import { NextFunction, Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -23,7 +22,14 @@ export interface AuthRequest extends Request {
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret-change-me';
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('FATAL: La variable d\'environnement JWT_SECRET n\'est pas définie. Le serveur ne peut pas démarrer en toute sécurité.');
+  }
+  return secret;
+}
+const JWT_SECRET = getJwtSecret();
 const JWT_EXPIRES_IN = '30d'; // 30 jours — les fermiers ne se connectent pas tous les jours
 const SALT_ROUNDS = 10;
 
@@ -58,7 +64,7 @@ function signToken(user: UserAccount): string {
 
 // ─── Register Buyer ─────────────────────────────────────────────────────────
 
-export async function registerBuyer(req: Request, res: Response) { console.log("I AM IN REGISTER");
+export async function registerBuyer(req: Request, res: Response) {
   const { companyName, phone, pin, address } = req.body as {
     companyName?: string;
     phone?: string;
@@ -117,9 +123,9 @@ export async function registerBuyer(req: Request, res: Response) { console.log("
     create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
   });
 
-  console.log(`[AfroSMS Mock] OTP pour ${normalizedPhone}: ${otpCode}`);
 
-  console.log("SENDING REGISTER RESPONSE:", { message: "Compte..." }); return res.status(201).json({ 
+
+  return res.status(201).json({ 
     message: 'Compte créé avec succès. Veuillez vérifier votre numéro.',
     requireOtp: true,
     phone: normalizedPhone
@@ -217,9 +223,9 @@ export async function registerSeller(req: Request, res: Response) {
     create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
   });
 
-  console.log(`[AfroSMS Mock] OTP pour ${normalizedPhone}: ${otpCode}`);
 
-  console.log("SENDING REGISTER RESPONSE:", { message: "Compte..." }); return res.status(201).json({ 
+
+  return res.status(201).json({ 
     message: 'Compte créé avec succès. Veuillez vérifier votre numéro.',
     requireOtp: true,
     phone: normalizedPhone
@@ -228,7 +234,7 @@ export async function registerSeller(req: Request, res: Response) {
 
 // ─── Verify OTP ─────────────────────────────────────────────────────────────
 
-export async function verifyOtp(req: Request, res: Response) { console.log("I AM IN VERIFY");
+export async function verifyOtp(req: Request, res: Response) {
   const { phone, code, role } = req.body;
 
   if (!phone || !code) {
@@ -262,7 +268,7 @@ export async function verifyOtp(req: Request, res: Response) { console.log("I AM
   const acheteur = await prisma.acheteur.findUnique({ where: { contact: normalizedPhone } });
   const agriculteur = await prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } });
 
-  if (role === 'buyer' || (!role && acheteur)) {
+  if (role === 'buyer' || (!role && acheteur && !agriculteur)) {
     if (acheteur) {
       await prisma.acheteur.update({
         where: { contact: normalizedPhone },
@@ -341,7 +347,7 @@ export async function verifyOtp(req: Request, res: Response) { console.log("I AM
  *       401:
  *         description: Numéro ou PIN incorrect
  */
-export async function login(req: Request, res: Response) { console.log("LOGIN CALLED WITH PATH:", req.path);
+export async function login(req: Request, res: Response) {
   const { phone, pin, role } = req.body as {
     phone?: string;
     pin?: string;
@@ -365,16 +371,14 @@ export async function login(req: Request, res: Response) { console.log("LOGIN CA
   const acheteur = await prisma.acheteur.findUnique({
     where: { contact: normalizedPhone },
   });
-  console.log("LOGIN acheteur found:", !!acheteur, "pinHash:", !!acheteur?.pinHash, "role:", role);
 
   // 2. Chercher dans Agriculteur si rôle seller demandé (ou par défaut si non trouvé en acheteur)
   const agriculteur = await prisma.agriculteur.findUnique({
     where: { contact: normalizedPhone },
     include: { gic: true },
   });
-  console.log("LOGIN agriculteur found:", !!agriculteur, "pinHash:", !!agriculteur?.pinHash, "role:", role);
 
-  const isBuyerLogin = role === 'buyer' || (!role && acheteur);
+  const isBuyerLogin = role === 'buyer' || (!role && acheteur && !agriculteur);
   if (acheteur && acheteur.pinHash && isBuyerLogin) {
     const pinValid = await bcrypt.compare(pin, acheteur.pinHash);
     if (!pinValid) {
@@ -388,7 +392,7 @@ export async function login(req: Request, res: Response) { console.log("LOGIN CA
         update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
         create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
       });
-      console.log(`[AfroSMS Mock] OTP pour ${normalizedPhone}: ${otpCode}`);
+    
       return res.status(200).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
     }
 
@@ -421,7 +425,6 @@ export async function login(req: Request, res: Response) { console.log("LOGIN CA
         update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
         create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
       });
-      console.log(`[AfroSMS Mock] OTP pour ${normalizedPhone}: ${otpCode}`);
       return res.status(200).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
     }
 
@@ -456,7 +459,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   }
 
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as {
+    const payload = jwt.verify(token, JWT_SECRET) as unknown as {
       id: string;
       role: 'seller' | 'buyer';
       phone: string;

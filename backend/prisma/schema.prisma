@@ -121,6 +121,7 @@ model GIC {
   agriculteurs          Agriculteur[]
   b2bOfferEntries       B2BOfferEntry[]  @relation("gicB2BEntries")
   parcelEntries         ParcelEntry[]    @relation("gicParcels")
+  gicNeedEntries        GicNeedEntry[]   @relation("gicNeeds")
 }
 
 model RecolteOffre {
@@ -297,3 +298,14 @@ model TrustRatingEntry {
   authorName String   @db.VarChar(100)
   createdAt  DateTime @default(now())
 }
+
+model GicNeedEntry {
+  id          String   @id
+  category    String   @db.VarChar(50)
+  description String   @db.Text
+  updatedAt   DateTime @default(now())
+  authorRole  String   @default("member") @db.VarChar(50)
+  gicId       BigInt
+  gic         GIC      @relation("gicNeeds", fields: [gicId], references: [id])
+}
+
