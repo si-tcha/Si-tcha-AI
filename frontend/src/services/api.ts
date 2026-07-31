@@ -34,7 +34,7 @@ export interface PaginationMeta {
 }
 
 // URL de l'API — utilise la variable d'environnement ou le serveur de production par défaut.
-const PROD_API_URL = 'https://si-tcha-ai-mobile.onrender.com/api';
+const PROD_API_URL = 'http://172.20.10.3:4000/api';
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? PROD_API_URL;
 const TOKEN_KEY = 'sitcha_api_token';
 
@@ -126,6 +126,8 @@ async function request<T>(path: string, method: HttpMethod = 'GET', body?: unkno
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache',
+        'Bypass-Tunnel-Reminder': 'true',
+        'localtunnel-warning': 'ignore',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
