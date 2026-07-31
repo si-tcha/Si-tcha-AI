@@ -67,7 +67,7 @@ jobs:
           cd frontend/android
           ./gradlew assembleDebug --no-daemon
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=2"
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
