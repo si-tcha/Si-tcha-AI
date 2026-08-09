@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import axios from 'axios';
 import prisma from '../lib/prisma.js';
+import { sendSms } from '../services/notification.service.js';
 
 const AGRO_API_KEY = process.env.AGROMONITORING_API_KEY;
 const BASE_URL = 'http://api.agromonitoring.com/agro/1.0';
@@ -48,7 +49,7 @@ export const startAgroCronJobs = () => {
         // Analyse pour générer une Alerte Météo (Exemple de règle métier)
         const pop = forecastRes.data[0]?.pop || 0;
         if (pop > 0.7) { // Plus de 70% de chance de pluie
-          await prisma.alerteMeteo.create({
+          const alerte = await prisma.alerteMeteo.create({
             data: {
               messageCourt: "Risque élevé de pluie dans les prochaines heures, reportez l'épandage d'engrais.",
               detailsTechniques: forecastRes.data[0],
@@ -56,6 +57,20 @@ export const startAgroCronJobs = () => {
               gicId: gic.id
             }
           });
+
+          // ENVOI DE L'ALERTE PAR SMS AUX AGRICULTEURS DU GIC
+          const agriculteurs = await prisma.agriculteur.findMany({
+            where: { gicId: gic.id, statut: 'APPROUVE' }
+          });
+
+          console.log(`📲 Envoi de l'alerte '${alerte.type}' à ${agriculteurs.length} agriculteur(s) du GIC ${gic.nom}.`);
+          for (const agriculteur of agriculteurs) {
+            try {
+              await sendSms(agriculteur.contact, alerte.messageCourt);
+            } catch (smsError) {
+              console.error(`Erreur envoi SMS à ${agriculteur.contact}:`, smsError);
+            }
+          }
         }
 
         // --- B. CURRENT SOIL DATA ---
@@ -77,14 +92,28 @@ export const startAgroCronJobs = () => {
 
         // Analyse du sol (Exemple: Sol prêt pour semis)
         if (tempSolSurfaceCelsius > 15 && moisture > 0.2) {
-            await prisma.alerteMeteo.create({
+            const alerte = await prisma.alerteMeteo.create({
                 data: {
                   messageCourt: "Le sol a atteint une température et une humidité optimales. C'est le moment idéal pour les semis.",
                   detailsTechniques: soilRes.data,
                   type: "SEMIS_OPTIMAL",
                   gicId: gic.id
                 }
-              });
+            });
+
+            // ENVOI DE L'ALERTE PAR SMS AUX AGRICULTEURS DU GIC
+            const agriculteurs = await prisma.agriculteur.findMany({
+              where: { gicId: gic.id, statut: 'APPROUVE' }
+            });
+
+            console.log(`📲 Envoi de l'alerte '${alerte.type}' à ${agriculteurs.length} agriculteur(s) du GIC ${gic.nom}.`);
+            for (const agriculteur of agriculteurs) {
+              try {
+                await sendSms(agriculteur.contact, alerte.messageCourt);
+              } catch (smsError) {
+                console.error(`Erreur envoi SMS à ${agriculteur.contact}:`, smsError);
+              }
+            }
         }
 
         // Note: Le module NDVI (Satellite) est plus complexe car les images ne sont pas générées tous les jours. 
@@ -93,8 +122,8 @@ export const startAgroCronJobs = () => {
       
       console.log('✅ [CRON] Synchronisation AgroMonitoring terminée avec succès.');
 
-    } catch (error) {
-      console.error('❌ [CRON] Erreur lors de la synchronisation :', error);
+    } catch (error: any) {
+      console.error('❌ [CRON] Erreur lors de la synchronisation :', error.message);
     }
   });
 };

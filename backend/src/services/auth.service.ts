@@ -4,9 +4,16 @@ import { notifyGicLeaderForApproval, sendVerificationSms } from './notification.
 import bcrypt from 'bcrypt';
 
 export const registerAcheteur = async (data: AcheteurRegisterData) => {
+    const { pin, ...restOfData } = data;
+    if (!pin || pin.length < 4) {
+        throw Object.assign(new Error('Un code PIN de 4 chiffres minimum est requis.'), { statusCode: 400 });
+    }
+    const hashedPin = await bcrypt.hash(pin, 10);
+
     const acheteur = await prisma.acheteur.create({
         data: {
-            ...data,
+            ...restOfData,
+            pin: hashedPin,
             isVerified: false, // Le compte n'est pas vérifié à la création
         }
     });
@@ -15,9 +22,16 @@ export const registerAcheteur = async (data: AcheteurRegisterData) => {
 };
 
 export const registerAgriculteur = async (data: AgriculteurRegisterData) => {
+    const { pin, ...restOfData } = data;
+    if (!pin || pin.length < 4) {
+        throw Object.assign(new Error('Un code PIN de 4 chiffres minimum est requis.'), { statusCode: 400 });
+    }
+    const hashedPin = await bcrypt.hash(pin, 10);
+
     const agriculteur = await prisma.agriculteur.create({
         data: {
-            ...data,
+            ...restOfData,
+            pin: hashedPin,
             timestampMaj: new Date(),
             isVerified: false, // Le compte n'est pas vérifié à la création
             statut: 'EN_ATTENTE', // Statut pour l'approbation du leader
@@ -79,20 +93,27 @@ export const verifyAccount = async (contact: string, code: string): Promise<{ me
     return { message, role };
 };
 
-export const login = async (nom: string, contact: string) => {
+export const login = async (contact: string, pin: string) => {
     // 1. Chercher dans la table Acheteur
     const acheteur = await prisma.acheteur.findUnique({
         where: { contact },
     });
 
     if (acheteur) {
-        if (acheteur.nom.toLowerCase() !== nom.toLowerCase()) {
-            throw new Error('Nom ou contact incorrect.');
+        if (!acheteur.pin) {
+            throw Object.assign(new Error('Ce compte n\'a pas de code PIN configuré. Veuillez contacter le support.'), { statusCode: 403 });
         }
+
+        const isPinMatch = await bcrypt.compare(pin, acheteur.pin);
+        if (!isPinMatch) {
+            throw new Error('Contact ou code PIN incorrect.');
+        }
+
         if (!acheteur.isVerified) {
             await sendVerificationSms(contact);
             throw Object.assign(new Error('Votre compte n\'est pas vérifié. Un nouveau code vient de vous être envoyé.'), { statusCode: 403 });
         }
+
         return { user: acheteur, role: 'ACHETEUR' };
     }
 
@@ -102,13 +123,20 @@ export const login = async (nom: string, contact: string) => {
     });
 
     if (agriculteur) {
-        if (agriculteur.nom.toLowerCase() !== nom.toLowerCase()) {
-            throw new Error('Nom ou contact incorrect.');
+        if (!agriculteur.pin) {
+            throw Object.assign(new Error('Ce compte n\'a pas de code PIN configuré. Veuillez contacter le support.'), { statusCode: 403 });
         }
+
+        const isPinMatch = await bcrypt.compare(pin, agriculteur.pin);
+        if (!isPinMatch) {
+            throw new Error('Contact ou code PIN incorrect.');
+        }
+
         if (!agriculteur.isVerified) {
             await sendVerificationSms(contact);
             throw Object.assign(new Error('Votre compte n\'est pas vérifié. Un nouveau code vient de vous être envoyé.'), { statusCode: 403 });
         }
+
         if (agriculteur.statut !== 'APPROUVE') {
             const statusMessage = agriculteur.statut === 'REJETE'
                 ? 'Votre adhésion au GIC a été rejetée.'
@@ -119,7 +147,7 @@ export const login = async (nom: string, contact: string) => {
     }
 
     // 3. Si toujours pas trouvé, les identifiants sont incorrects
-    throw new Error('Nom ou contact incorrect.');
+    throw new Error('Contact ou code PIN incorrect.');
 };
 
 export const adminLogin = async (nom: string, motDePasse: string) => {

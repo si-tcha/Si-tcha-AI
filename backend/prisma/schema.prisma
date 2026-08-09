@@ -21,6 +21,7 @@ model Acheteur {
   nui                  String                 @unique
   secteur_activite     String                 
   contact              String                 @unique
+  pin                  String?                // PIN de sécurité, haché
   isVerified           Boolean                @default(false)
   preferences          Json?          
   transactions         TransactionAcheteur[]
@@ -29,7 +30,7 @@ model Acheteur {
 
 model BassinProduction {
   id                   String                 @id @default(uuid())
-  nom                  String                 
+  nom                  String                 @unique
   region               String                 
   latitude             Decimal                @db.Decimal(15, 2)
   longitude            Decimal                @db.Decimal(15, 2)
@@ -41,8 +42,11 @@ model BassinProduction {
 
 model ProduitAgricole {
   id                   String                 @id @default(uuid())
-  nom                  String                 
-  categorie            String                 
+  nom                  String                 @unique
+  categorie            String 
+  prix                 Decimal?               @db.Decimal(15, 2)   
+  unite                String                 @default("kg")
+  imageUrl             String?                  
   donneesMarche        DonneeMarche[]
   historiquesProduction HistoriqueProduction[]
   recoltesOffres       RecolteOffre[]
@@ -88,8 +92,11 @@ model AlerteMeteo {
 model DonneeMarche {
   id                 String           @id @default(uuid())
   prixMoyen          Decimal          @db.Decimal(15, 2)
+  prixMin            Decimal?         @db.Decimal(15, 2) // <-- Nouveau champ
+  prixMax            Decimal?         @db.Decimal(15, 2) // <-- Nouveau champ
   rentabilite        Decimal          @db.Decimal(15, 2)
   dateReleve         DateTime         @db.Date
+  source             String?    
   produitAgricoleId  String
   bassinProductionId String
   produitAgricole    ProduitAgricole  @relation(fields: [produitAgricoleId], references: [id])
@@ -270,6 +277,7 @@ model Agriculteur {
   id           String            @id @default(uuid())
   nom          String            
   contact      String            @unique
+  pin          String?           // PIN de sécurité, haché
   isVerified   Boolean           @default(false)
   estLeader    Boolean           @default(false)
   statut       StatutAgriculteur @default(EN_ATTENTE)

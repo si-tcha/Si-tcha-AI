@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import * as authService from '../../services/auth.service.js';
 import jwt from 'jsonwebtoken';
-import { AcheteurRegisterData, AgriculteurRegisterData, LoginData, VerifyAccountData } from '../../types/user.types.js';
+import { AcheteurRegisterData, AgriculteurRegisterData, VerifyAccountData } from '../../types/user.types.js';
 
 
 // Contrôleur pour l'authentification et l'enregistrement des utilisateurs
@@ -28,9 +28,9 @@ export const verifyAccount = async (req: Request, res: Response) => {
 
 //connexion d'un utilisateur (acheteur ou agriculteur)
 export const login = async (req: Request, res: Response) => {
-    const { nom, contact }: LoginData = req.body;
+    const { contact, pin } = req.body;
 
-    const { user, role } = await authService.login(nom, contact);
+    const { user, role } = await authService.login(contact, pin);
 
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {

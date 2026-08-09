@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { protect, isAdmin } from '../middlewares/auth.middleware.js';
 import { createGic, listGicsWithStats } from '../controllers/admin.controller.js';
+import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
 
 const router = Router();
 
@@ -47,6 +48,30 @@ const router = Router();
  *           $ref: '#/components/schemas/GicCreation'
  *         leaderData:
  *           $ref: '#/components/schemas/LeaderCreation'
+ *     DonneeMarcheManuelle:
+ *       type: object
+ *       required:
+ *         - prixMin
+ *         - prixMax
+ *         - produitAgricoleId
+ *         - bassinProductionId
+ *       properties:
+ *         prixMin:
+ *           type: number
+ *           format: float
+ *           description: Prix minimum du produit.
+ *         prixMax:
+ *           type: number
+ *           format: float
+ *           description: Prix maximum du produit.
+ *         produitAgricoleId:
+ *           type: string
+ *           format: uuid
+ *           description: ID du produit agricole concerné.
+ *         bassinProductionId:
+ *           type: string
+ *           format: uuid
+ *           description: ID du bassin de production concerné.
  */
 
 // Toutes les routes dans ce fichier sont protégées et nécessitent le rôle ADMIN
@@ -104,5 +129,36 @@ router.post(
  *         description: Accès refusé (l'utilisateur n'est pas un admin).
  */
 router.get('/gics', asyncHandler(listGicsWithStats));
+
+// Route d'administration pour la saisie manuelle
+// @route   POST /api/admin/donnees-marche
+// @desc    Saisir manuellement des données de marché
+// @access  Private (Admin)
+/**
+ * @swagger
+ * /admin/donnees-marche:
+ *   post:
+ *     summary: Saisir manuellement des données de marché
+ *     description: Permet à un administrateur de créer une nouvelle entrée de données de marché (prix). Le prix moyen est calculé automatiquement. Accessible uniquement par les administrateurs.
+ *     tags: [Administration]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/DonneeMarcheManuelle'
+ *     responses:
+ *       201:
+ *         description: Donnée de marché créée avec succès.
+ *       400:
+ *         description: Données d'entrée invalides.
+ *       401:
+ *         description: Non autorisé (token manquant ou invalide).
+ *       403:
+ *         description: Accès refusé (l'utilisateur n'est pas un admin).
+ */
+router.post('/donnees-marche', asyncHandler(createDonneeMarcheManuelle));
 
 export default router;

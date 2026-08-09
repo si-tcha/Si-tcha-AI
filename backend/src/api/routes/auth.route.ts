@@ -25,6 +25,7 @@ const router = Router();
  *         - nui
  *         - secteur_activite
  *         - contact
+ *         - pin
  *       properties:
  *         nom:
  *           type: string
@@ -41,18 +42,24 @@ const router = Router();
  *         contact:
  *           type: string
  *           description: Numéro de téléphone de l'acheteur.
+ *         pin:
+ *           type: string
+ *           description: Code PIN de sécurité à 4 chiffres minimum.
+ *           example: "1234"
  *       example:
  *         nom: "Jean Dupont"
  *         nomEntreprise: "Agro-Business SARL"
  *         nui: "M123456789"
  *         secteur_activite: "Achat de Cacao"
  *         contact: "+237699887766"
+ *         pin: "1234"
  *     AgriculteurRegister:
  *       type: object
  *       required:
  *         - nom
  *         - contact
  *         - gicId
+ *         - pin
  *       properties:
  *         nom:
  *           type: string
@@ -64,9 +71,14 @@ const router = Router();
  *           type: string
  *           format: uuid
  *           description: ID du GIC auquel l'agriculteur souhaite adhérer.
+ *         pin:
+ *           type: string
+ *           description: Code PIN de sécurité à 4 chiffres minimum.
+ *           example: "5678"
  *       example:
  *         nom: "Moussa Bello"
  *         contact: "+237677665544"
+ *         pin: "5678"
  *         gicId: "c2f9e3c8-691a-4f3b-9b8e-5d7c6a4b3f2d"
  *     VerifyAccount:
  *       type: object
@@ -86,18 +98,19 @@ const router = Router();
  *     Login:
  *       type: object
  *       required:
- *         - nom
  *         - contact
+ *         - pin
  *       properties:
- *         nom:
- *           type: string
- *           description: Nom de l'utilisateur (agriculteur ou acheteur).
  *         contact:
  *           type: string
  *           description: Numéro de téléphone de l'utilisateur.
+ *         pin:
+ *           type: string
+ *           description: Code PIN de sécurité de l'utilisateur.
+ *           format: password
  *       example:
- *         nom: "Jean Dupont"
  *         contact: "+237699887766"
+ *         pin: "1234"
  *     AdminLogin:
  *       type: object
  *       required:
@@ -136,7 +149,7 @@ const router = Router();
  */
 router.post(
     '/register/acheteur',
-    validate(['nom', 'nomEntreprise', 'nui', 'secteur_activite', 'contact']),
+    validate(['nom', 'nomEntreprise', 'nui', 'secteur_activite', 'contact', 'pin']),
     asyncHandler(registerAcheteur)
 );
 
@@ -164,7 +177,7 @@ router.post(
  */
 router.post(
     '/register/agriculteur',
-    validate(['nom', 'contact', 'gicId']),
+    validate(['nom', 'contact', 'gicId', 'pin']),
     asyncHandler(registerAgriculteur)
 );
 
@@ -222,7 +235,7 @@ router.post(
  */
 router.post(
     '/login',
-    validate(['nom', 'contact']),
+    validate(['contact', 'pin']),
     asyncHandler(login)
 );
 

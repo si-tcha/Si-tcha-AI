@@ -7,6 +7,7 @@ export type AcheteurRegisterData = {
     nui: string;
     secteur_activite: string;
     contact: string;
+    pin: string;
     preferences?: Prisma.InputJsonValue;
 }
 
@@ -14,11 +15,13 @@ export type AgriculteurRegisterData = {
     nom: string;
     contact: string;
     gicId: string;
+    pin: string;
 }
 
 export type LoginData = {
     nom: string;
     contact: string;
+    pin: string;
 }
 
 export type VerifyAccountData = {
