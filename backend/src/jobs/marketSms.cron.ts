@@ -52,7 +52,7 @@ export const startMarketSmsCronJob = () => {
 
             console.log(`📲 Envoi du bulletin de marché à ${agriculteurs.length} agriculteur(s)...`);
             for (const agriculteur of agriculteurs) {
-                await sendSms(agriculteur.contact, smsMessage);
+                await sendSms({ to: agriculteur.contact, message: smsMessage });
             }
             console.log('✅ [CRON] Envoi du bulletin de marché par SMS terminé.');
         } catch (error: any) {

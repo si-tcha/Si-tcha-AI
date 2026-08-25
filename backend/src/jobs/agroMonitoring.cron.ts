@@ -66,7 +66,7 @@ export const startAgroCronJobs = () => {
           console.log(`📲 Envoi de l'alerte '${alerte.type}' à ${agriculteurs.length} agriculteur(s) du GIC ${gic.nom}.`);
           for (const agriculteur of agriculteurs) {
             try {
-              await sendSms(agriculteur.contact, alerte.messageCourt);
+              await sendSms({ to: agriculteur.contact, message: alerte.messageCourt });
             } catch (smsError) {
               console.error(`Erreur envoi SMS à ${agriculteur.contact}:`, smsError);
             }
@@ -109,7 +109,7 @@ export const startAgroCronJobs = () => {
             console.log(`📲 Envoi de l'alerte '${alerte.type}' à ${agriculteurs.length} agriculteur(s) du GIC ${gic.nom}.`);
             for (const agriculteur of agriculteurs) {
               try {
-                await sendSms(agriculteur.contact, alerte.messageCourt);
+                await sendSms({ to: agriculteur.contact, message: alerte.messageCourt });
               } catch (smsError) {
                 console.error(`Erreur envoi SMS à ${agriculteur.contact}:`, smsError);
               }
