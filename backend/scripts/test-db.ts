@@ -8,12 +8,16 @@ async function main() {
   console.log('\n1. Création d\'un nouvel acheteur...');
   const newAcheteur = await prisma.acheteur.create({
     data: {
-      nomEntreprise: 'Les Vergers du Mungo',
-      contact: '+237699887766',
-      adresse: 'Douala, Bonabéri',
-      // Note: `preferencesAlertes` est une chaîne de caractères dans votre schéma.
-      // Si vous voulez stocker des données structurées, le type `Json` serait plus adapté.
-      preferencesAlertes: '{"type": "sms", "frequency": "daily"}',
+      nom: 'Lengue',
+      nomEntreprise: 'Lengue Agro',
+      nui: `M${Date.now()}`, // NUI unique pour le test
+      secteur_activite: 'Agro-industrie',
+      contact: '+237699007766',
+      // Le champ `preferences` est de type `Json`. On peut lui passer un objet JS.
+      preferences: {
+        produits: ['mangues', 'avocats', 'oranges'],
+        zones: ['Mungo', 'Littoral', 'Mbouda']
+      },
     },
   });
   console.log('✅ Acheteur créé:', newAcheteur);
@@ -28,7 +32,7 @@ async function main() {
   const updatedAcheteur = await prisma.acheteur.update({
     where: { id: newAcheteur.id },
     data: {
-      contact: '+237655443322', // Nouveau numéro de contact
+      contact: '+237655003322', // Nouveau numéro de contact
     },
   });
   console.log('✅ Acheteur mis à jour:', updatedAcheteur);
