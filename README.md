@@ -46,8 +46,23 @@ npm install
 # (Pensez à configurer vos identifiants de base de données)
 cp .env.example .env
 
-# Lancer le serveur en mode développement (avec rechargement automatique)
+# 4. Appliquer les migrations à la base de données
+# Ceci va créer les tables nécessaires au fonctionnement de l'application.
+npx prisma migrate dev
+
+#5. Generer les migrations 
+# ceci va generer le prisma client
+npx prisma generate
+
+# 6. Initialiser la base de données avec l'administrateur par défaut
+# Cette commande crée le compte admin (nom: admin, mot de passe: admin00).
+npm run seed
+
+# 7. Lancer le serveur en mode développement (avec rechargement automatique)
 npm run dev
+
+#8. Acceder a la documentation swagger via cette url :
+http://localhost:4000/api-docs
 ```
 
 ### 3. Lancement de la partie frontend
