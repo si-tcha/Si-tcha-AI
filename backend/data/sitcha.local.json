@@ -1,0 +1,301 @@
+{
+  "users": [
+    {
+      "id": "user-leader-1",
+      "role": "seller",
+      "name": "Jean Fotso",
+      "phone": "+237690000001",
+      "token": "dev-seller-token",
+      "createdAt": "2026-07-22T08:00:00.000Z",
+      "gicId": "gic-1",
+      "gicRole": "leader",
+      "status": "active"
+    },
+    {
+      "id": "user-buyer-1",
+      "role": "buyer",
+      "name": "Distributions Nkomo SARL",
+      "phone": "+237690000010",
+      "token": "dev-buyer-token",
+      "createdAt": "2026-07-22T08:00:00.000Z",
+      "buyerId": "buyer-1",
+      "status": "active"
+    },
+    {
+      "id": "user-1784845102816-o9p6hh",
+      "role": "buyer",
+      "name": "Ferme Du Sud SARL",
+      "phone": "+237699112233",
+      "token": "04ea11fe4bb684a2d0623b2fa1cc3c2cc8b6b60198132c80",
+      "createdAt": "2026-07-23T22:18:22.816Z",
+      "buyerId": "buyer-1784845102815-2am1jm",
+      "status": "active"
+    },
+    {
+      "id": "user-1784847178230-el1xz2",
+      "role": "buyer",
+      "name": "Azerty",
+      "phone": "621676582",
+      "token": "f42892dc8f2b9e57fd03453acbbd806dc2dacd1c42500bd5",
+      "createdAt": "2026-07-23T22:52:58.230Z",
+      "buyerId": "buyer-1784847178230-qcm6fa",
+      "status": "active"
+    }
+  ],
+  "buyers": [
+    {
+      "id": "buyer-1",
+      "companyName": "Distributions Nkomo SARL",
+      "phone": "+237690000010",
+      "regNumber": "RC/YAO/2024/B/00123",
+      "alertPreferences": {
+        "productNames": [],
+        "bassins": []
+      },
+      "createdAt": "2026-07-22T08:00:00.000Z"
+    },
+    {
+      "id": "buyer-1784845102815-2am1jm",
+      "companyName": "Ferme Du Sud SARL",
+      "phone": "+237699112233",
+      "regNumber": "RCCM/DLA/2026/B/99",
+      "alertPreferences": {
+        "productNames": [],
+        "bassins": []
+      },
+      "createdAt": "2026-07-23T22:18:22.815Z"
+    },
+    {
+      "id": "buyer-1784847178230-qcm6fa",
+      "companyName": "Azerty",
+      "phone": "621676582",
+      "regNumber": "Azerty",
+      "alertPreferences": {
+        "productNames": [],
+        "bassins": []
+      },
+      "createdAt": "2026-07-23T22:52:58.230Z"
+    }
+  ],
+  "gics": [
+    {
+      "id": "gic-1",
+      "name": "GIC Agro-Vallée Bafoussam",
+      "identifiantREF": "GIC-OUEST-2024-014",
+      "bassin": "Ouest",
+      "statutLegalisation": "Légalisé",
+      "activitesPrincipales": "Maraîchage, tubercules",
+      "leaderName": "Jean Fotso",
+      "reglementInterieur": "Assemblées mensuelles. Décisions à majorité. Leader tranche les conflits de données.",
+      "surfaceHa": 12,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    },
+    {
+      "id": "gic-2",
+      "name": "GIC Champs Verts",
+      "identifiantREF": "GIC-CEN-011",
+      "bassin": "Centre",
+      "statutLegalisation": "Légalisé",
+      "activitesPrincipales": "Légumes frais",
+      "leaderName": "Aline Mballa",
+      "reglementInterieur": "Validation collective des ventes.",
+      "surfaceHa": 8,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    }
+  ],
+  "members": [
+    {
+      "id": "m1",
+      "gicId": "gic-1",
+      "name": "Jean Fotso",
+      "phone": "+237690000001",
+      "isLeader": true,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    },
+    {
+      "id": "m2",
+      "gicId": "gic-1",
+      "name": "Marie Nguemo",
+      "phone": "+237690000002",
+      "isLeader": false,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    },
+    {
+      "id": "m3",
+      "gicId": "gic-1",
+      "name": "Paul Tchoumi",
+      "phone": "+237690000003",
+      "isLeader": false,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    }
+  ],
+  "needs": [
+    {
+      "id": "n1",
+      "gicId": "gic-1",
+      "category": "Intrants",
+      "description": "NPK 20 sacs manquants pour saison",
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "leader"
+    },
+    {
+      "id": "n2",
+      "gicId": "gic-1",
+      "category": "Financement",
+      "description": "Crédit campagne 2M FCFA",
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "leader"
+    }
+  ],
+  "harvests": [
+    {
+      "id": "h1",
+      "gicId": "gic-1",
+      "product": "Pommes de terre",
+      "volume": 1200,
+      "date": "12 Juillet 2026",
+      "synced": true,
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "leader"
+    },
+    {
+      "id": "h2",
+      "gicId": "gic-1",
+      "product": "Tomates",
+      "volume": 800,
+      "date": "18 Juillet 2026",
+      "synced": true,
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "leader"
+    }
+  ],
+  "expenses": [
+    {
+      "id": "e1",
+      "gicId": "gic-1",
+      "label": "Fertilisants NPK",
+      "amount": 150000,
+      "category": "Intrants",
+      "synced": true,
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "leader"
+    },
+    {
+      "id": "e2",
+      "gicId": "gic-1",
+      "label": "Transport récolte",
+      "amount": 45000,
+      "category": "Transport",
+      "synced": true,
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "member"
+    },
+    {
+      "id": "e3",
+      "gicId": "gic-1",
+      "label": "Main d'œuvre semis",
+      "amount": 80000,
+      "category": "Main d'œuvre",
+      "synced": true,
+      "updatedAt": "2026-07-22T08:00:00.000Z",
+      "authorRole": "leader"
+    }
+  ],
+  "products": [
+    {
+      "id": "p1",
+      "name": "Pommes de terre",
+      "category": "Tubercules",
+      "gicId": "gic-1",
+      "gicName": "GIC Agro-Vallée Bafoussam",
+      "gicRef": "GIC-OUEST-2024-014",
+      "price": "350",
+      "unit": "kg",
+      "emoji": "🥔",
+      "bassin": "Ouest",
+      "maturite": "En maturation",
+      "volumeDisponible": 5000,
+      "dateDispo": "2026-08-10",
+      "quantiteEstimee": 5800,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    },
+    {
+      "id": "p2",
+      "name": "Tomates fraîches",
+      "category": "Légumes",
+      "gicId": "gic-2",
+      "gicName": "GIC Champs Verts",
+      "gicRef": "GIC-CEN-011",
+      "price": "500",
+      "unit": "kg",
+      "emoji": "🍅",
+      "bassin": "Centre",
+      "maturite": "Mature",
+      "volumeDisponible": 2400,
+      "dateDispo": "2026-07-25",
+      "quantiteEstimee": 2600,
+      "updatedAt": "2026-07-22T08:00:00.000Z"
+    }
+  ],
+  "orders": [],
+  "weather": [
+    {
+      "id": "w1",
+      "bassin": "Ouest",
+      "temperature": 24.5,
+      "pluviometrie": 12,
+      "date": "2026-07-21"
+    },
+    {
+      "id": "w2",
+      "bassin": "Centre",
+      "temperature": 26.1,
+      "pluviometrie": 6,
+      "date": "2026-07-21"
+    }
+  ],
+  "market": [
+    {
+      "id": "mk1",
+      "product": "Pommes de terre",
+      "bassin": "Ouest",
+      "prixMoyen": 350,
+      "rentabilite": 22,
+      "date": "2026-07-01"
+    },
+    {
+      "id": "mk2",
+      "product": "Pommes de terre",
+      "bassin": "Ouest",
+      "prixMoyen": 310,
+      "rentabilite": 18,
+      "date": "2025-07-01"
+    },
+    {
+      "id": "mk3",
+      "product": "Tomates",
+      "bassin": "Centre",
+      "prixMoyen": 500,
+      "rentabilite": 20,
+      "date": "2026-07-01"
+    }
+  ],
+  "phytoAlerts": [
+    {
+      "id": "pa1",
+      "bassin": "Ouest",
+      "ravageurMaladie": "Mildiou de la pomme de terre",
+      "protocoleUrgence": "Retirer les feuilles atteintes, réduire l’humidité, appliquer un fongicide cuivre homologué.",
+      "dateEmission": "2026-07-19"
+    }
+  ],
+  "programs": [
+    {
+      "id": "pr1",
+      "nom": "Crédit Campagne MINADER",
+      "description": "Prêt saisonnier à taux bonifié",
+      "criteresEligibilite": "GIC légalisé, deux ans d'activité",
+      "dateLimite": "2026-09-30"
+    }
+  ]
+}
