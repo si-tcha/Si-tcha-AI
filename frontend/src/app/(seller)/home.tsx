@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +22,7 @@ export default function SellerHomeScreen() {
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   const [profile, setProfile] = useState<GicProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
 
   // États des modales de saisie
   const [harvestModalVisible, setHarvestModalVisible] = useState(false);
@@ -56,6 +57,20 @@ export default function SellerHomeScreen() {
     };
 
     loadLocalData();
+
+    // Check online status periodically
+    const checkStatus = async () => {
+      try {
+        const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000/api';
+        const res = await fetch(baseUrl.replace('/api', '/api/health'), { method: 'GET' });
+        setIsOnline(res.ok);
+      } catch {
+        setIsOnline(false);
+      }
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 15000); // Check every 15s
+    return () => clearInterval(interval);
   }, []);
 
   const handleLogout = () => {
@@ -150,8 +165,8 @@ export default function SellerHomeScreen() {
                   <Text style={styles.roleBadgeText}>Leader GIC</Text>
                 </View>
                 <View style={styles.offlineBadge}>
-                  <View style={styles.greenPulse} />
-                  <Text style={styles.offlineBadgeText}>SQLite Hors-ligne</Text>
+                  <View style={[styles.greenPulse, { backgroundColor: isOnline ? '#22c55e' : '#ef4444' }]} />
+                  <Text style={styles.offlineBadgeText}>{isOnline ? 'En Ligne' : 'Hors-ligne'}</Text>
                 </View>
               </View>
             </View>
@@ -164,34 +179,15 @@ export default function SellerHomeScreen() {
 
         <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
 
-          {/* Quick Action Navigation Grid */}
-          <View style={styles.quickNavRow}>
-            <TouchableOpacity style={styles.navChip} onPress={() => router.push('/(seller)/terrain')}>
-              <Feather name="map" size={14} color="#f3ecd8" />
-              <Text style={styles.navChipText}>SIG Terrain</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.navChip} onPress={() => router.push('/(seller)/agronomist')}>
-              <Feather name="cpu" size={14} color="#f3ecd8" />
-              <Text style={styles.navChipText}>Agronome IA</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.navChip} onPress={() => router.push('/(seller)/b2b-trade')}>
-              <Feather name="truck" size={14} color="#f3ecd8" />
-              <Text style={styles.navChipText}>B2B Trade</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.navChip, styles.navChipAccent]} onPress={() => router.push('/(seller)/sync')}>
-              <Feather name="refresh-cw" size={14} color="#ffffff" />
-              <Text style={[styles.navChipText, { color: '#ffffff' }]}>Sync Mesh</Text>
-            </TouchableOpacity>
-          </View>
-          
+
           {/* Widget Calculateur du Coût de Revient (Rigueur Financière) */}
           <View style={styles.calculatorCard}>
             <View style={styles.calcHeaderRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, paddingRight: 8 }}>
                 <Feather name="pie-chart" size={18} color="#101e0f" />
-                <Text style={styles.calcHeader}>Calculateur de Coût de Revient</Text>
+                <Text style={[styles.calcHeader, { flexShrink: 1 }]} numberOfLines={1}>Calculateur de Coût</Text>
               </View>
-              <Text style={styles.calcSubHeader}>Bilan Financier</Text>
+              <Text style={styles.calcSubHeader}>Bilan</Text>
             </View>
             
             <View style={styles.calcMetricsRow}>
@@ -258,6 +254,15 @@ export default function SellerHomeScreen() {
               <Text style={[styles.actionBtnText, { color: '#ffffff' }]}>+ Dépense</Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity 
+            onPress={() => router.push('/(seller)/prefinancing')} 
+            style={[styles.actionBtn, { backgroundColor: '#1a3018', marginTop: 10, alignSelf: 'center', width: '100%', paddingVertical: 12 }]}
+            activeOpacity={0.8}
+          >
+            <Feather name="inbox" size={18} color="#d97834" />
+            <Text style={[styles.actionBtnText, { color: '#f3ecd8' }]}>Voir les Offres de Préfinancement</Text>
+          </TouchableOpacity>
 
           {/* Répartition des Dépenses par Catégorie */}
           <View style={styles.section}>
@@ -358,6 +363,7 @@ export default function SellerHomeScreen() {
 
         {/* MODALE SAISIE RECOLTE */}
         <Modal visible={harvestModalVisible} animationType="slide" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -397,10 +403,12 @@ export default function SellerHomeScreen() {
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* MODALE SAISIE DEPENSE */}
         <Modal visible={expenseModalVisible} animationType="slide" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -458,6 +466,7 @@ export default function SellerHomeScreen() {
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* Bottom Navigation Bar */}

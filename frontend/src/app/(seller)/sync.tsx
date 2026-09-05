@@ -42,7 +42,7 @@ export default function SellerSyncScreen() {
       const syncResult = await dbService.runMockSync();
       setResult(syncResult);
       setLastSync(syncResult.lastSyncAt);
-      showToast({ message: 'Synchronisation P2P réussie !', type: 'success' });
+      showToast({ message: 'Synchronisation avec le cloud réussie !', type: 'success' });
     } catch (err) {
       console.warn(err);
       showToast({ message: 'Échec de la synchronisation.', type: 'error' });
@@ -59,7 +59,7 @@ export default function SellerSyncScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
             <Feather name="arrow-left" size={20} color="#f3ecd8" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Synchronisation Mesh P2P</Text>
+          <Text style={styles.headerTitle}>Synchronisation Cloud</Text>
           <View style={styles.iconBtn} />
         </View>
 
@@ -67,11 +67,11 @@ export default function SellerSyncScreen() {
           {/* Card Status */}
           <View style={styles.card}>
             <View style={styles.cardTitleRow}>
-              <Feather name="wifi" size={18} color="#d97834" />
-              <Text style={styles.cardTitle}>Mode Wi-Fi Direct / Xender</Text>
+              <Feather name="cloud" size={18} color="#d97834" />
+              <Text style={styles.cardTitle}>Synchronisation avec le Serveur</Text>
             </View>
             <Text style={styles.body}>
-              Permet d'échanger les récoltes et dépenses enregistrées au fond du champ sans réseau internet. En cas de conflit sur une même saisie, la décision du <Text style={{ fontWeight: '800' }}>Leader GIC</Text> prévaut.
+              Sauvegarde vos données locales (récoltes, dépenses, offres B2B) vers le cloud et télécharge les dernières mises à jour du marché. En cas d'absence de réseau, les données restent sur votre téléphone (Offline-first).
             </Text>
             <View style={styles.timeTag}>
               <Feather name="clock" size={12} color="#889e87" />
@@ -86,7 +86,7 @@ export default function SellerSyncScreen() {
             <Text style={styles.label}>Rôle configuré sur cet appareil</Text>
             <TouchableOpacity style={styles.roleBtn} onPress={toggleRole} activeOpacity={0.8}>
               <Feather name="shield" size={16} color="#d97834" />
-              <Text style={styles.roleBtnText}>{role === 'leader' ? 'Leader GIC (Priorité Supérieure)' : 'Membre Producteur'}</Text>
+              <Text style={styles.roleBtnText}>{role === 'leader' ? 'Leader GIC (Administrateur)' : 'Membre Producteur'}</Text>
             </TouchableOpacity>
           </View>
 
@@ -98,7 +98,7 @@ export default function SellerSyncScreen() {
             activeOpacity={0.85}
           >
             <Feather name="refresh-cw" size={20} color="#ffffff" />
-            <Text style={styles.syncBtnText}>{busy ? 'Fusion des bases SQLite en cours...' : 'Lancer la Synchronisation Mesh'}</Text>
+            <Text style={styles.syncBtnText}>{busy ? 'Synchronisation en cours...' : 'Lancer la Synchronisation'}</Text>
           </TouchableOpacity>
 
           {/* Result view */}
@@ -115,8 +115,8 @@ export default function SellerSyncScreen() {
                   <Text style={styles.metricSub}>Données Fusionnées</Text>
                 </View>
                 <View style={styles.metricItem}>
-                  <Text style={styles.metricVal}>{result.conflictsResolvedByLeader}</Text>
-                  <Text style={styles.metricSub}>Conflits Tranchés</Text>
+                  <Text style={styles.metricVal}>OK</Text>
+                  <Text style={styles.metricSub}>Statut Base Locale</Text>
                 </View>
               </View>
             </View>

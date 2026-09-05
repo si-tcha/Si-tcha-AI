@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -98,6 +98,7 @@ export default function BuyerCheckoutScreen() {
           </View>
         </View>
 
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Panier list */}
           <View style={styles.sectionHeaderRow}>
@@ -225,6 +226,7 @@ export default function BuyerCheckoutScreen() {
             </>
           )}
         </ScrollView>
+        </KeyboardAvoidingView>
 
         <BottomNavBar role="buyer" cartCount={cart.length} />
       </View>

@@ -1,14 +1,14 @@
 import prisma from '../lib/prisma.js';
 import { GicCreationData, LeaderCreationData } from '../types/admin.types.js';
 
-
-
 export const createGicAndLeader = async (gicData: GicCreationData, leaderData: LeaderCreationData) => {
     return prisma.$transaction(async (tx) => {
         // 1. Create the GIC
+        const { bassinProductionId, ...restGicData } = gicData;
         const newGic = await tx.gIC.create({
             data: {
-                ...gicData,
+                ...restGicData,
+                bassinProductionId: BigInt(bassinProductionId),
                 timestampMaj: new Date(),
             },
         });

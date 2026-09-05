@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Linking } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -69,6 +69,7 @@ export default function B2bTradeScreen() {
   };
 
   const handleContactGic = (offer: B2BOffer) => {
+    Linking.openURL('tel:' + offer.contact).catch(() => {});
     showToast({ message: `Numéro GIC copied: ${offer.contact}`, type: 'info' });
   };
 
@@ -177,6 +178,7 @@ export default function B2bTradeScreen() {
 
         {/* Modale de publication B2B */}
         <Modal visible={modalVisible} animationType="slide" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -202,6 +204,19 @@ export default function B2bTradeScreen() {
                     <Text style={[styles.typeOptionText, formType === 'barter' && styles.typeOptionTextActive]}>🔄 Troc & Échange</Text>
                   </TouchableOpacity>
                 </View>
+
+                <Text style={styles.inputLabel}>Catégorie</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 12 }}>
+                  {['Matériel Irrigation', 'Tracteur', 'Semences', 'Engrais', 'Terrain', 'Autre'].map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[styles.typeOption, { flex: 0, paddingVertical: 8, paddingHorizontal: 14 }, formCategory === cat && styles.typeOptionActive]}
+                      onPress={() => setFormCategory(cat)}
+                    >
+                      <Text style={[styles.typeOptionText, formCategory === cat && styles.typeOptionTextActive]}>{cat}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
 
                 <Text style={styles.inputLabel}>Titre de l'équipement ou de l'offre</Text>
                 <TextInput
@@ -230,6 +245,15 @@ export default function B2bTradeScreen() {
                   onChangeText={setFormGicName}
                 />
 
+                <Text style={styles.inputLabel}>Localisation</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="ex: Bafoussam (Ouest)"
+                  placeholderTextColor="#889e87"
+                  value={formLocation}
+                  onChangeText={setFormLocation}
+                />
+
                 <Text style={styles.inputLabel}>Téléphone de contact</Text>
                 <TextInput
                   style={styles.textInput}
@@ -246,6 +270,7 @@ export default function B2bTradeScreen() {
               </ScrollView>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <BottomNavBar role="seller" />

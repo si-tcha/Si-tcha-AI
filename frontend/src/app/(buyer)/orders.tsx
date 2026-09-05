@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Image } from 'react-native';
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,12 +23,40 @@ export default function BuyerOrdersScreen() {
   const { showToast } = useToast();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  // Rating state
+  const [ratingOrder, setRatingOrder] = useState<OrderRecord | null>(null);
+  const [ratingStars, setRatingStars] = useState(0);
+  const [ratingComment, setRatingComment] = useState('');
+  const [ratedOrders, setRatedOrders] = useState<Set<string>>(new Set());
+
+  const handleSubmitRating = async () => {
+    if (!ratingOrder || ratingStars === 0) return;
+    try {
+      await dbService.addTrustRating(
+        ratingOrder.gicName,
+        'gic',
+        ratingStars,
+        ratingComment.trim(),
+        'Acheteur'
+      );
+      setRatedOrders(prev => new Set([...prev, ratingOrder.id]));
+      setRatingOrder(null);
+      setRatingStars(0);
+      setRatingComment('');
+      showToast({ message: 'Merci pour votre évaluation !', type: 'success' });
+    } catch (err) {
+      showToast({ message: 'Erreur lors de l\'évaluation.', type: 'error' });
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
       const load = async () => {
+        setIsLoading(true);
         await dbService.initDatabase();
         setOrders(await dbService.getOrders());
+        setIsLoading(false);
       };
       load();
     }, [])
@@ -54,7 +82,11 @@ export default function BuyerOrdersScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {orders.length === 0 ? (
+          {isLoading ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>Chargement de vos commandes...</Text>
+            </View>
+          ) : orders.length === 0 ? (
             <View style={styles.empty}>
               <Feather name="shopping-bag" size={40} color="#889e87" />
               <Text style={styles.emptyText}>Aucune commande enregistrée pour l'instant.</Text>
@@ -68,13 +100,13 @@ export default function BuyerOrdersScreen() {
                 <View style={styles.row}>
                   <Text style={styles.title}>{o.productName}</Text>
                   <View style={styles.badge}>
-                    <Text style={styles.badgeText}>✓ {o.status.toUpperCase()}</Text>
+                    <Text style={styles.badgeText}>✓ {o.status === 'en_attente' ? 'EN ATTENTE' : (o.status === 'confirmee' ? 'CONFIRMÉE' : o.status.toUpperCase())}</Text>
                   </View>
                 </View>
 
                 <View style={styles.typeBadgeRow}>
                   <Text style={styles.typeBadgeText}>{TYPE_LABELS[o.type] ?? o.type}</Text>
-                  <Text style={styles.gicTag}>GIC: {o.gicName}</Text>
+                  <Text style={styles.gicTag} numberOfLines={1}>GIC: {o.gicName}</Text>
                 </View>
 
                 <View style={styles.priceRow}>
@@ -91,23 +123,33 @@ export default function BuyerOrdersScreen() {
                   </View>
                   <View style={styles.timelineLineActive} />
                   <View style={styles.timelineStepActive}>
-                    <Feather name="package" size={10} color="#ffffff" />
+                    <Feather name={o.type === 'reservation' ? "loader" : "package"} size={10} color="#ffffff" />
                   </View>
                   <View style={styles.timelineLine} />
                   <View style={styles.timelineStep}>
-                    <Feather name="truck" size={10} color="#889e87" />
+                    <Feather name={o.type === 'reservation' ? "sun" : "truck"} size={10} color="#889e87" />
                   </View>
                 </View>
-                <Text style={styles.timelineLabel}>Préparé en entrepôt GIC · Prêt pour transport</Text>
+                <Text style={styles.timelineLabel}>
+                  {o.type === 'reservation' ? 'Fonds Avancés · Production en cours' : 'Préparé en entrepôt GIC · Prêt pour transport'}
+                </Text>
 
                 <View style={styles.footerRow}>
                   <Text style={styles.dateMeta}>
                     {new Date(o.createdAt).toLocaleString('fr-FR')}
                   </Text>
-                  <TouchableOpacity style={styles.receiptBtn} onPress={() => setSelectedOrder(o)}>
-                    <Feather name="grid" size={13} color="#101e0f" />
-                    <Text style={styles.receiptBtnText}>Reçu QR</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {o.status === 'confirmee' && !ratedOrders.has(o.id) && (
+                      <TouchableOpacity style={styles.rateBtn} onPress={() => { setRatingOrder(o); setRatingStars(0); setRatingComment(''); }}>
+                        <Feather name="star" size={13} color="#d97834" />
+                        <Text style={styles.rateBtnText}>Noter</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={styles.receiptBtn} onPress={() => setSelectedOrder(o)}>
+                      <Feather name="grid" size={13} color="#101e0f" />
+                      <Text style={styles.receiptBtnText}>Reçu QR</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             ))
@@ -128,13 +170,84 @@ export default function BuyerOrdersScreen() {
               {selectedOrder && (
                 <View style={styles.receiptBox}>
                   <View style={styles.qrPlaceholder}>
-                    <Feather name="grid" size={90} color="#101e0f" />
+                    <Image 
+                      source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(selectedOrder.id)}` }}
+                      style={{ width: 120, height: 120 }}
+                    />
                   </View>
                   <Text style={styles.receiptCode}>REF-{selectedOrder.id.substring(0, 8).toUpperCase()}</Text>
                   <Text style={styles.receiptProd}>{selectedOrder.productName}</Text>
                   <Text style={styles.receiptGic}>Fournisseur: {selectedOrder.gicName}</Text>
                   <Text style={styles.receiptTotal}>Total: {(selectedOrder.quantity * parseFloat(selectedOrder.price || '0')).toLocaleString()} FCFA</Text>
                   <Text style={styles.receiptHint}>Paiement Mobile Money Sécurisé · Présentez ce QR Code au magasinier du GIC.</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* Modal Évaluation GIC */}
+        <Modal visible={!!ratingOrder} animationType="slide" transparent>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Évaluer le GIC</Text>
+                <TouchableOpacity onPress={() => setRatingOrder(null)}>
+                  <Feather name="x" size={22} color="#101e0f" />
+                </TouchableOpacity>
+              </View>
+
+              {ratingOrder && (
+                <View style={{ gap: 12 }}>
+                  <Text style={{ fontSize: 13, color: '#5a6258', fontWeight: '600', textAlign: 'center' }}>
+                    Comment s'est passée votre transaction avec {ratingOrder.gicName} ?
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginVertical: 8 }}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <TouchableOpacity key={star} onPress={() => setRatingStars(star)}>
+                        <Feather
+                          name={star <= ratingStars ? 'star' : 'star'}
+                          size={32}
+                          color={star <= ratingStars ? '#d97834' : '#e6dfcc'}
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <TextInput
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: '#e6dfcc',
+                      padding: 12,
+                      fontSize: 13,
+                      color: '#101e0f',
+                      height: 80,
+                      textAlignVertical: 'top',
+                    }}
+                    placeholder="Un commentaire ? (optionnel)"
+                    placeholderTextColor="#889e87"
+                    multiline
+                    value={ratingComment}
+                    onChangeText={setRatingComment}
+                  />
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: ratingStars > 0 ? '#15803d' : '#e6dfcc',
+                      paddingVertical: 12,
+                      borderRadius: 12,
+                      alignItems: 'center',
+                    }}
+                    onPress={handleSubmitRating}
+                    disabled={ratingStars === 0}
+                  >
+                    <Text style={{ color: ratingStars > 0 ? '#ffffff' : '#889e87', fontWeight: '800', fontSize: 14 }}>
+                      Envoyer mon évaluation ({ratingStars}/5)
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </View>
@@ -198,7 +311,7 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 10, fontWeight: '800', color: '#15803d' },
   typeBadgeRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   typeBadgeText: { fontSize: 11, fontWeight: '700', color: '#d97834' },
-  gicTag: { fontSize: 11, color: '#5a6258', fontWeight: '600' },
+  gicTag: { fontSize: 11, color: '#5a6258', fontWeight: '600', flexShrink: 1 },
   priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f9f6ef', padding: 10, borderRadius: 10 },
   value: { fontSize: 12, fontWeight: '700', color: '#101e0f' },
   totalPrice: { fontSize: 15, fontWeight: '900', color: '#d97834' },
@@ -210,6 +323,8 @@ const styles = StyleSheet.create({
   timelineLabel: { fontSize: 10, color: '#15803d', fontWeight: '700', textAlign: 'center', marginTop: 2 },
   footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f3ecd8', paddingTop: 8, marginTop: 4 },
   dateMeta: { fontSize: 11, color: '#889e87', fontWeight: '600' },
+  rateBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fff7ed', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#ffedd5' },
+  rateBtnText: { fontSize: 11, fontWeight: '800', color: '#d97834' },
   receiptBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f3ecd8', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   receiptBtnText: { fontSize: 11, fontWeight: '800', color: '#101e0f' },
   modalOverlay: { flex: 1, backgroundColor: '#101e0f70', justifyContent: 'flex-end' },

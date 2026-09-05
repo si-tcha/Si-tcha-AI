@@ -25,8 +25,8 @@ export async function createDonneeMarcheManuelle(req: Request, res: Response): P
         rentabilite: rentabilite ? parseFloat(rentabilite) : 0, // Assurez-vous que rentabilite est bien un Decimal dans votre schema
         source: 'MANUEL', // Indique que la donnée a été saisie manuellement
         dateReleve: dateReleve ? new Date(dateReleve) : new Date(),
-        produitAgricoleId,
-        bassinProductionId
+        produitAgricoleId: BigInt(produitAgricoleId),
+        bassinProductionId: BigInt(bassinProductionId)
       },
       include: {
         produitAgricole: true,
@@ -54,7 +54,7 @@ export async function getDonneesMarche(req: Request, res: Response): Promise<voi
 
     // Formater la réponse pour inclure Min, Max et Moyen
     const resultatsFormat = donnees.map(d => ({
-      id: d.id,
+      id: d.id.toString(),
       produit: d.produitAgricole.nom,
       bassin: d.bassinProduction.nom,
       region: d.bassinProduction.region,
@@ -137,7 +137,7 @@ export async function getMarketDashboard(req: Request, res: Response): Promise<v
             else if (previous && latest.prixMoyen < previous.prixMoyen) tendance = 'BAISSE';
 
             dashboardData.push({
-                id: latest.id,
+                id: latest.id.toString(),
                 produit: latest.produitAgricole.nom,
                 bassin: latest.bassinProduction.nom,
                 region: latest.bassinProduction.region,

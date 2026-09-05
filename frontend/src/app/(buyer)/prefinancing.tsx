@@ -1,6 +1,6 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
@@ -14,10 +14,18 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function PrefinancingScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { showToast } = useToast();
   const [deals, setDeals] = useState<PrefinancingDeal[]>([]);
   const [ratings, setRatings] = useState<TrustRating[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [ratingModalVisible, setRatingModalVisible] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Rating Form states
+  const [ratingScore, setRatingScore] = useState('5');
+  const [ratingComment, setRatingComment] = useState('Terrain conforme, excellente gestion.');
+
 
   // Form states
   const [gicName, setGicName] = useState('GIC Agro-Vallée Bafoussam');
@@ -29,10 +37,18 @@ export default function PrefinancingScreen() {
 
   useEffect(() => {
     loadData();
-  }, []);
+    if (params.autoOpen === 'true') {
+      if (params.targetGic) setGicName(params.targetGic as string);
+      if (params.needDesc) setInputDescription(params.needDesc as string);
+      else setInputDescription('');
+      
+      setModalVisible(true);
+    }
+  }, [params.autoOpen, params.targetGic, params.needDesc]);
 
   const loadData = async () => {
     try {
+      setIsLoading(true);
       await dbService.initDatabase();
       const [storedDeals, storedRatings] = await Promise.all([
         dbService.getPrefinancingDeals(),
@@ -42,6 +58,8 @@ export default function PrefinancingScreen() {
       setRatings(storedRatings);
     } catch (err) {
       console.warn('Erreur chargement préfinancement:', err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -51,13 +69,16 @@ export default function PrefinancingScreen() {
       return;
     }
     try {
+      const amount = parseFloat(amountFcfa.replace(/\s/g, '')) || 0;
+      const volume = parseFloat(reservedVolumeKg.replace(/\s/g, '')) || 0;
+
       const newDeal = await dbService.addPrefinancingDeal(
         gicName,
         buyerName,
-        parseFloat(amountFcfa),
+        amount,
         inputDescription.trim(),
         reservedProduct,
-        parseFloat(reservedVolumeKg)
+        volume
       );
       setDeals(prev => [newDeal, ...prev]);
       setInputDescription('');
@@ -65,6 +86,29 @@ export default function PrefinancingScreen() {
       showToast({ message: 'Accord de préfinancement transmis au GIC !', type: 'success' });
     } catch (err) {
       showToast({ message: 'Erreur création accord préfinancement.', type: 'error' });
+    }
+  };
+
+  const handleCreateRating = async () => {
+    try {
+      const score = parseInt(ratingScore, 10);
+      if (isNaN(score) || score < 1 || score > 5) {
+        showToast({ message: 'Veuillez entrer une note entre 1 et 5.', type: 'warning' });
+        return;
+      }
+      if (!ratingComment.trim()) {
+        showToast({ message: 'Veuillez laisser un commentaire.', type: 'warning' });
+        return;
+      }
+
+      // Add a trust rating targeted at the specific GIC or a general one if GIC is hardcoded
+      // Using "gic-01" as a placeholder for the target GIC ID in this demo
+      const newRating = await dbService.addTrustRating('gic-01', 'gic', score, ratingComment.trim(), buyerName);
+      setRatings(prev => [newRating, ...prev]);
+      setRatingModalVisible(false);
+      showToast({ message: 'Avis enregistré avec succès !', type: 'success' });
+    } catch (err) {
+      showToast({ message: 'Erreur lors de l\'enregistrement de l\'avis.', type: 'error' });
     }
   };
 
@@ -88,6 +132,12 @@ export default function PrefinancingScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={{ paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.three }}>
+            <Text style={{ fontSize: 14, color: '#8a9488', lineHeight: 20 }}>
+              Investir dans un contrat de culture vous permet d'avancer des fonds ou des intrants à une coopérative agricole. En retour, vous obtenez l'exclusivité d'achat sur une partie de la future récolte à un prix garanti à l'avance.
+            </Text>
+          </View>
+          
           {/* Carte Trust Score */}
           <View style={styles.trustCard}>
             <View style={styles.trustHeader}>
@@ -122,6 +172,15 @@ export default function PrefinancingScreen() {
                 <Text style={styles.reviewComment}>"{r.comment}"</Text>
               </View>
             ))}
+
+            <TouchableOpacity 
+              style={styles.addReviewBtn} 
+              onPress={() => setRatingModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Feather name="edit-3" size={14} color="#15803d" style={{ marginRight: 6 }} />
+              <Text style={styles.addReviewBtnText}>Laisser un avis suite à une visite</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Action proposer accord */}
@@ -133,7 +192,15 @@ export default function PrefinancingScreen() {
           {/* Liste des accords */}
           <Text style={styles.sectionTitle}>Accords en cours ({deals.length})</Text>
 
-          {deals.map((d) => (
+          {isLoading ? (
+            <View style={{ padding: Spacing.five, alignItems: 'center' }}>
+              <Text style={{ color: '#8a9488' }}>Chargement des accords...</Text>
+            </View>
+          ) : deals.length === 0 ? (
+            <View style={{ padding: Spacing.five, alignItems: 'center' }}>
+              <Text style={{ color: '#8a9488' }}>Aucun accord en cours.</Text>
+            </View>
+          ) : deals.map((d) => (
             <View key={d.id} style={styles.dealCard}>
               <View style={styles.dealHeader}>
                 <Text style={styles.dealGic}>{d.gicName}</Text>
@@ -157,10 +224,17 @@ export default function PrefinancingScreen() {
 
         {/* Modale de proposition de préfinancement */}
         <Modal visible={modalVisible} animationType="slide" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
+              <View style={{ paddingHorizontal: Spacing.five, paddingTop: Spacing.three, paddingBottom: Spacing.two }}>
+                <Text style={{ fontSize: 14, color: '#8a9488', lineHeight: 20 }}>
+                  Le préfinancement (ou contrat de culture) permet aux acheteurs d'avancer des fonds ou des intrants agricoles à un GIC en échange de l'exclusivité et d'un prix garanti sur une partie de la future récolte. Cela sécurise l'approvisionnement de l'acheteur et assure un financement initial au GIC.
+                </Text>
+              </View>
+
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Nouveau Préfinancement</Text>
+                <Text style={styles.sectionTitle}>GICs Recommandés (Indice de Confiance)</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
                   <Feather name="x" size={24} color="#101e0f" />
                 </TouchableOpacity>
@@ -219,7 +293,51 @@ export default function PrefinancingScreen() {
               </ScrollView>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
+
+        {/* Modale de Trust Score (Évaluation) */}
+        <Modal visible={ratingModalVisible} animationType="fade" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.sectionTitle}>Évaluer ce GIC</Text>
+                  <TouchableOpacity onPress={() => setRatingModalVisible(false)}>
+                    <Feather name="x" size={24} color="#101e0f" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ paddingHorizontal: Spacing.five, paddingBottom: Spacing.four }}>
+                  <Text style={{ fontSize: 13, color: '#8a9488', marginBottom: Spacing.three }}>
+                    Partagez votre retour suite à la visite terrain ou à la dernière livraison.
+                  </Text>
+
+                  <Text style={styles.inputLabel}>Note (sur 5)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    value={ratingScore}
+                    onChangeText={setRatingScore}
+                  />
+
+                  <Text style={styles.inputLabel}>Commentaire d'audit</Text>
+                  <TextInput
+                    style={[styles.textInput, { height: 80 }]}
+                    multiline
+                    value={ratingComment}
+                    onChangeText={setRatingComment}
+                  />
+
+                  <TouchableOpacity style={styles.modalSubmitButton} onPress={handleCreateRating} activeOpacity={0.85}>
+                    <Text style={styles.modalSubmitText}>Soumettre l'avis</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
 
         <BottomNavBar role="buyer" />
       </View>
@@ -257,15 +375,17 @@ const styles = StyleSheet.create({
   trustTagText: { fontSize: 11, fontWeight: '700', color: '#101e0f' },
   reviewItem: { backgroundColor: '#f9f6ef', padding: 10, borderRadius: 10, marginTop: 6 },
   reviewHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  reviewAuthor: { fontSize: 12, fontWeight: '800', color: '#101e0f' },
+  reviewAuthor: { fontSize: 12, fontWeight: '700', color: '#101e0f' },
   reviewRating: { fontSize: 12, fontWeight: '800', color: '#d97834' },
-  reviewComment: { fontSize: 12, color: '#5a6258', fontStyle: 'italic' },
-  actionButton: { flexDirection: 'row', backgroundColor: '#d97834', padding: Spacing.three, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.four },
+  reviewComment: { fontSize: 13, color: '#5a6258', fontStyle: 'italic', marginTop: 4 },
+  addReviewBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0fdf4', paddingVertical: 12, borderRadius: 10, marginTop: 12, borderWidth: 1, borderColor: '#bbf7d0' },
+  addReviewBtnText: { color: '#15803d', fontSize: 13, fontWeight: '700' },
+  actionButton: { backgroundColor: '#101e0f', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 14, borderRadius: 14, marginHorizontal: Spacing.four, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 },
   actionButtonText: { color: '#ffffff', fontWeight: '800', fontSize: 14 },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: '#101e0f', marginBottom: Spacing.three },
   dealCard: { backgroundColor: '#ffffff', borderRadius: 18, padding: Spacing.three, marginBottom: Spacing.three, borderWidth: 1, borderColor: '#e0d8c3' },
-  dealHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  dealGic: { fontSize: 15, fontWeight: '800', color: '#101e0f' },
+  dealHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 8 },
+  dealGic: { fontSize: 15, fontWeight: '800', color: '#101e0f', flex: 1 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   statusSuccess: { backgroundColor: '#f0fdf4' },
   statusPending: { backgroundColor: '#fffbeb' },

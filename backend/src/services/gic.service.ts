@@ -1,36 +1,37 @@
 import prisma from '../lib/prisma.js';
 import { GicListData } from '../types/gic.types.js';
 
-
 export const findAllGics = async (): Promise<GicListData[]> => {
-    return prisma.gIC.findMany({
+    const gics = await prisma.gIC.findMany({
         select: {
             id: true,
             nom: true,
-        }
+        },
     });
+    return gics.map((g) => ({ id: g.id.toString(), nom: g.nom }));
 };
 
-export const getPendingMembersForGic = async (gicId: string) => {
-    return prisma.agriculteur.findMany({
+export const getPendingMembersForGic = async (gicId: string | bigint) => {
+    const members = await prisma.agriculteur.findMany({
         where: {
-            gicId: gicId,
+            gicId: BigInt(gicId),
             statut: 'EN_ATTENTE',
         },
         select: {
             id: true,
             nom: true,
             contact: true,
-            timestampMaj: true, // The creation date in this case
+            timestampMaj: true,
         },
     });
+    return members.map((m) => ({ ...m, id: m.id.toString() }));
 };
 
-export const updateMemberStatus = async (leaderId: string, memberId: string, newStatus: 'APPROUVE' | 'REJETE') => {
+export const updateMemberStatus = async (leaderId: string | bigint, memberId: string | bigint, newStatus: 'APPROUVE' | 'REJETE') => {
     // 1. Find the leader and the member in a single transaction to ensure data consistency
     const [leader, memberToUpdate] = await prisma.$transaction([
-        prisma.agriculteur.findUniqueOrThrow({ where: { id: leaderId } }),
-        prisma.agriculteur.findUniqueOrThrow({ where: { id: memberId } }),
+        prisma.agriculteur.findUniqueOrThrow({ where: { id: BigInt(leaderId) } }),
+        prisma.agriculteur.findUniqueOrThrow({ where: { id: BigInt(memberId) } }),
     ]);
 
     // 2. Security check: Ensure the leader is actually a leader and they belong to the same GIC
@@ -44,11 +45,13 @@ export const updateMemberStatus = async (leaderId: string, memberId: string, new
     }
 
     // 4. Update the member's status
-    return prisma.agriculteur.update({
-        where: { id: memberId },
+    const updated = await prisma.agriculteur.update({
+        where: { id: BigInt(memberId) },
         data: {
             statut: newStatus,
             timestampMaj: new Date(),
         },
     });
+
+    return { ...updated, id: updated.id.toString(), gicId: updated.gicId.toString() };
 };

@@ -14,15 +14,16 @@ export const registerAcheteur = async (data: AcheteurRegisterData) => {
         data: {
             ...restOfData,
             pin: hashedPin,
-            isVerified: false, // Le compte n'est pas vérifié à la création
+            pinHash: hashedPin,
+            isVerified: false,
         }
     });
     await sendVerificationSms(acheteur.contact);
-    return acheteur;
+    return { ...acheteur, id: acheteur.id.toString() };
 };
 
 export const registerAgriculteur = async (data: AgriculteurRegisterData) => {
-    const { pin, ...restOfData } = data;
+    const { pin, gicId, ...restOfData } = data;
     if (!pin || pin.length < 4) {
         throw Object.assign(new Error('Un code PIN de 4 chiffres minimum est requis.'), { statusCode: 400 });
     }
@@ -31,14 +32,16 @@ export const registerAgriculteur = async (data: AgriculteurRegisterData) => {
     const agriculteur = await prisma.agriculteur.create({
         data: {
             ...restOfData,
+            gicId: BigInt(gicId),
             pin: hashedPin,
+            pinHash: hashedPin,
             timestampMaj: new Date(),
-            isVerified: false, // Le compte n'est pas vérifié à la création
-            statut: 'EN_ATTENTE', // Statut pour l'approbation du leader
+            isVerified: false,
+            statut: 'EN_ATTENTE',
         }
     });
     await sendVerificationSms(agriculteur.contact);
-    return agriculteur;
+    return { ...agriculteur, id: agriculteur.id.toString(), gicId: agriculteur.gicId.toString() };
 };
 
 export const verifyAccount = async (contact: string, code: string): Promise<{ message: string, role?: string }> => {
@@ -51,39 +54,37 @@ export const verifyAccount = async (contact: string, code: string): Promise<{ me
     }
 
     if (new Date() > verificationEntry.expiresAt) {
-        // On peut aussi supprimer le code expiré
         await prisma.verificationCode.delete({ where: { contact } });
         throw Object.assign(new Error('Le code de vérification a expiré.'), { statusCode: 410 });
     }
 
-    // Le code est valide, on cherche l'utilisateur et on le met à jour.
     let role: string | undefined;
+
+    // 1. Chercher dans Acheteur
     const acheteur = await prisma.acheteur.findUnique({ where: { contact } });
     if (acheteur) {
         await prisma.acheteur.update({
-            where: { id: acheteur.id },
-            data: { isVerified: true },
+            where: { contact },
+            data: { isVerified: true, phoneVerified: true },
         });
         role = 'ACHETEUR';
-    } else {
-        const agriculteur = await prisma.agriculteur.findUnique({ where: { contact } });
-        if (agriculteur) {
-            await prisma.agriculteur.update({
-                where: { id: agriculteur.id },
-                data: { isVerified: true },
-            });
-            role = 'AGRICULTEUR';
-            // Maintenant que le compte est vérifié, on notifie le leader du GIC
-            await notifyGicLeaderForApproval(agriculteur.gicId, agriculteur.nom);
-        }
+    }
+
+    // 2. Chercher dans Agriculteur
+    const agriculteur = await prisma.agriculteur.findUnique({ where: { contact } });
+    if (agriculteur) {
+        await prisma.agriculteur.update({
+            where: { contact },
+            data: { isVerified: true, phoneVerified: true },
+        });
+        role = 'AGRICULTEUR';
+        await notifyGicLeaderForApproval(agriculteur.gicId, agriculteur.nom);
     }
 
     if (!role) {
-        // Ne devrait jamais arriver si le code de vérification existe
-        throw new Error('Aucun utilisateur trouvé pour ce contact.');
+        throw Object.assign(new Error('Utilisateur non trouvé pour ce numéro de téléphone.'), { statusCode: 404 });
     }
 
-    // Supprimer le code de vérification après utilisation
     await prisma.verificationCode.delete({ where: { contact } });
 
     const message = role === 'AGRICULTEUR'
@@ -100,21 +101,22 @@ export const login = async (contact: string, pin: string) => {
     });
 
     if (acheteur) {
-        if (!acheteur.pin) {
+        const pinValue = acheteur.pin || acheteur.pinHash;
+        if (!pinValue) {
             throw Object.assign(new Error('Ce compte n\'a pas de code PIN configuré. Veuillez contacter le support.'), { statusCode: 403 });
         }
 
-        const isPinMatch = await bcrypt.compare(pin, acheteur.pin);
+        const isPinMatch = await bcrypt.compare(pin, pinValue);
         if (!isPinMatch) {
             throw new Error('Contact ou code PIN incorrect.');
         }
 
-        if (!acheteur.isVerified) {
+        if (!acheteur.isVerified && !acheteur.phoneVerified) {
             await sendVerificationSms(contact);
             throw Object.assign(new Error('Votre compte n\'est pas vérifié. Un nouveau code vient de vous être envoyé.'), { statusCode: 403 });
         }
 
-        return { user: acheteur, role: 'ACHETEUR' };
+        return { user: { ...acheteur, id: acheteur.id.toString() }, role: 'ACHETEUR' };
     }
 
     // 2. Si non trouvé, chercher dans la table Agriculteur
@@ -123,16 +125,17 @@ export const login = async (contact: string, pin: string) => {
     });
 
     if (agriculteur) {
-        if (!agriculteur.pin) {
+        const pinValue = agriculteur.pin || agriculteur.pinHash;
+        if (!pinValue) {
             throw Object.assign(new Error('Ce compte n\'a pas de code PIN configuré. Veuillez contacter le support.'), { statusCode: 403 });
         }
 
-        const isPinMatch = await bcrypt.compare(pin, agriculteur.pin);
+        const isPinMatch = await bcrypt.compare(pin, pinValue);
         if (!isPinMatch) {
             throw new Error('Contact ou code PIN incorrect.');
         }
 
-        if (!agriculteur.isVerified) {
+        if (!agriculteur.isVerified && !agriculteur.phoneVerified) {
             await sendVerificationSms(contact);
             throw Object.assign(new Error('Votre compte n\'est pas vérifié. Un nouveau code vient de vous être envoyé.'), { statusCode: 403 });
         }
@@ -143,7 +146,7 @@ export const login = async (contact: string, pin: string) => {
                 : 'Votre compte est en attente de validation par le leader de votre GIC.';
             throw Object.assign(new Error(statusMessage), { statusCode: 403 });
         }
-        return { user: agriculteur, role: 'AGRICULTEUR' };
+        return { user: { ...agriculteur, id: agriculteur.id.toString(), gicId: agriculteur.gicId.toString() }, role: 'AGRICULTEUR' };
     }
 
     // 3. Si toujours pas trouvé, les identifiants sont incorrects

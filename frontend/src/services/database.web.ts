@@ -88,6 +88,11 @@ function ensure(key: string, fallback: unknown) {
 
 import { apiClient } from './api';
 
+let syncErrorHandler: ((message?: string) => void) | null = null;
+export function setSyncErrorHandler(handler: (message?: string) => void) {
+  syncErrorHandler = handler;
+}
+
 class DatabaseService {
   async syncRemoteData(): Promise<boolean> {
     try {
@@ -171,7 +176,9 @@ class DatabaseService {
     // Push to backend PostgreSQL DB so it appears in the Buyer Market
     apiClient.addHarvest(product, volume).then(() => {
       this.syncRemoteData().catch(() => {});
-    }).catch(() => {});
+    }).catch(() => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : récolte sauvegardée localement.");
+    });
 
     return newHarvest;
   }
@@ -193,6 +200,14 @@ class DatabaseService {
     };
     const expenses = await this.getExpenses();
     writeJson(STORAGE_KEYS.EXPENSES, [newExpense, ...expenses]);
+
+    // Push to backend PostgreSQL DB so it appears in the Buyer Market
+    apiClient.addExpense(label, amount, category).then(() => {
+      this.syncRemoteData().catch(() => {});
+    }).catch(() => {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : dépense sauvegardée localement.");
+    });
+
     return newExpense;
   }
 
@@ -327,7 +342,16 @@ class DatabaseService {
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
     const cart = await this.getCart();
     if (!cart.length) return [];
-    const products = await this.getProducts();
+    
+    let products: ProductOffer[] = [];
+    try {
+      products = await this.getProducts();
+    } catch (err) {
+      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : commande sauvegardée localement.");
+      // Fallback offline
+      products = DEFAULT_PRODUCTS;
+    }
+    
     const created: OrderRecord[] = cart.map((item, index) => {
       const offer = products.find((p) => p.id === item.productId);
       return {
@@ -479,6 +503,24 @@ class DatabaseService {
     };
     list.unshift(newQ);
     writeJson(STORAGE_KEYS.AGRONOMIST_QUESTIONS, list);
+
+    try {
+      const res = await apiClient.askAgronomist(crop, category, question);
+      if (res && res.answer) {
+        newQ.answer = res.answer;
+        newQ.status = 'repondu';
+        newQ.synced = true;
+        // Mettre à jour dans la liste
+        const index = list.findIndex(q => q.id === newQ.id);
+        if (index !== -1) {
+          list[index] = newQ;
+          writeJson(STORAGE_KEYS.AGRONOMIST_QUESTIONS, list);
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur appel IA Agronome, restera en attente:', e);
+    }
+
     return newQ;
   }
 

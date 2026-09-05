@@ -1,12 +1,10 @@
 generator client {
   provider = "prisma-client-js"
-  
-}
-datasource db {
-  provider = "postgresql"
-  
 }
 
+datasource db {
+  provider = "postgresql"
+}
 
 enum StatutAgriculteur {
   EN_ATTENTE
@@ -15,149 +13,152 @@ enum StatutAgriculteur {
 }
 
 model Acheteur {
-  id                   String                 @id @default(uuid())
-  nom                  String                 
-  nomEntreprise        String 
-  nui                  String                 @unique
-  secteur_activite     String                 
-  contact              String                 @unique
-  pin                  String?                // PIN de sécurité, haché
-  isVerified           Boolean                @default(false)
-  preferences          Json?          
-  transactions         TransactionAcheteur[]
-  prefinancements      Prefinancement[]
+  id                 BigInt                @id @default(autoincrement())
+  nom                String?
+  nomEntreprise      String                @db.VarChar(100)
+  nui                String?               @unique
+  secteur_activite   String?
+  contact            String                @unique @db.VarChar(50)
+  adresse            String?               @db.Text
+  preferencesAlertes String?               @db.Text
+  pin                String?               @db.VarChar(100)
+  pinHash            String?               @db.VarChar(100)
+  phoneVerified      Boolean               @default(false)
+  isVerified         Boolean               @default(false)
+  preferences        Json?
+  transactions       TransactionAcheteur[]
+  prefinancements    Prefinancement[]
 }
 
 model BassinProduction {
-  id                   String                 @id @default(uuid())
-  nom                  String                 @unique
-  region               String                 
-  latitude             Decimal                @db.Decimal(15, 2)
-  longitude            Decimal                @db.Decimal(15, 2)
-  donneesMarche        DonneeMarche[]
-  alertesPhyto         AlertePhyto[]
+  id                    BigInt                 @id @default(autoincrement())
+  nom                   String                 @unique @db.VarChar(50)
+  region                String                 @db.VarChar(50)
+  latitude              Decimal                @db.Decimal(15, 2)
+  longitude             Decimal                @db.Decimal(15, 2)
+  donneesMeteo          DonneesMeteo[]
+  donneesMarche         DonneeMarche[]
+  alertesPhyto          AlertePhyto[]
   historiquesProduction HistoriqueProduction[]
-  gics                 GIC[]
+  gics                  GIC[]
 }
 
 model ProduitAgricole {
-  id                   String                 @id @default(uuid())
-  nom                  String                 @unique
-  categorie            String 
-  prix                 Decimal?               @db.Decimal(15, 2)   
-  unite                String                 @default("kg")
-  imageUrl             String?                  
-  donneesMarche        DonneeMarche[]
+  id                    BigInt                 @id @default(autoincrement())
+  nom                   String                 @unique @db.VarChar(50)
+  categorie             String                 @db.VarChar(50)
+  prix                  Decimal?               @db.Decimal(15, 2)
+  unite                 String                 @default("kg")
+  imageURL              String?                @db.VarChar(250)
+  donneesMarche         DonneeMarche[]
   historiquesProduction HistoriqueProduction[]
-  recoltesOffres       RecolteOffre[]
+  recoltesOffres        RecolteOffre[]
 }
 
 model DonneesMeteo {
-  id                 String   @id @default(uuid())
-  temperature        Decimal  @db.Decimal(5, 2) // En Celsius
-  humidite           Decimal  @db.Decimal(5, 2) // En pourcentage
-  pluviometrie       Decimal  @db.Decimal(5, 2) // mm/h
-  probabilitePluie   Decimal  @db.Decimal(5, 2) // En pourcentage (POP)
-  vitesseVent        Decimal  @db.Decimal(5, 2) // m/s
-  description        String   // Ex: "Ciel clair", "Pluie légère"
-  timestampMesure    DateTime @db.Timestamptz
+  id                 BigInt            @id @default(autoincrement())
+  temperature        Decimal           @db.Decimal(5, 2)
+  humidite           Decimal?          @db.Decimal(5, 2)
+  pluviometrie       Decimal           @db.Decimal(5, 2)
+  probabilitePluie   Decimal?          @db.Decimal(5, 2)
+  vitesseVent        Decimal?          @db.Decimal(5, 2)
+  description        String?
+  timestampMesure    DateTime          @db.Timestamptz
   
-  gicId              String
-  gic                GIC      @relation(fields: [gicId], references: [id])
+  gicId              BigInt?
+  gic                GIC?              @relation(fields: [gicId], references: [id])
+  bassinProductionId BigInt?
+  bassinProduction   BassinProduction? @relation(fields: [bassinProductionId], references: [id])
 }
 
 model DonneesSol {
-  id                 String   @id @default(uuid())
-  temperatureSurface Decimal  @db.Decimal(5, 2) // En Celsius (t0)
-  temperature10cm    Decimal  @db.Decimal(5, 2) // En Celsius (t10)
-  humidite           Decimal  @db.Decimal(5, 2) // Volumetric Soil Water (moisture)
+  id                 BigInt   @id @default(autoincrement())
+  temperatureSurface Decimal  @db.Decimal(5, 2)
+  temperature10cm    Decimal  @db.Decimal(5, 2)
+  humidite           Decimal  @db.Decimal(5, 2)
   timestampMesure    DateTime @db.Timestamptz
   
-  gicId              String
+  gicId              BigInt
   gic                GIC      @relation(fields: [gicId], references: [id])
 }
 
-// Nouvelle entité : AlerteMeteo (Générée par le CRON pour le Front-end)
 model AlerteMeteo {
-  id                 String   @id @default(uuid())
-  messageCourt       String   // "Risque de pluie dans 2h, reportez l'épandage."
-  detailsTechniques  Json     // Les données brutes pour l'agronome
-  type               String   // "PLUIE", "SECHERESSE", "GEL"
+  id                 BigInt   @id @default(autoincrement())
+  messageCourt       String
+  detailsTechniques  Json
+  type               String
   timestampCreation  DateTime @default(now()) @db.Timestamptz
   
-  gicId              String
+  gicId              BigInt
   gic                GIC      @relation(fields: [gicId], references: [id])
 }
 
 model DonneeMarche {
-  id                 String           @id @default(uuid())
+  id                 BigInt           @id @default(autoincrement())
   prixMoyen          Decimal          @db.Decimal(15, 2)
-  prixMin            Decimal?         @db.Decimal(15, 2) // <-- Nouveau champ
-  prixMax            Decimal?         @db.Decimal(15, 2) // <-- Nouveau champ
+  prixMin            Decimal?         @db.Decimal(15, 2)
+  prixMax            Decimal?         @db.Decimal(15, 2)
   rentabilite        Decimal          @db.Decimal(15, 2)
   dateReleve         DateTime         @db.Date
-  source             String?    
-  produitAgricoleId  String
-  bassinProductionId String
+  source             String?
+  produitAgricoleId  BigInt
+  bassinProductionId BigInt
   produitAgricole    ProduitAgricole  @relation(fields: [produitAgricoleId], references: [id])
   bassinProduction   BassinProduction @relation(fields: [bassinProductionId], references: [id])
 }
 
 model AlertePhyto {
-  id                 String           @id @default(uuid())
-  ravageurMaladie    String           
-  protocoleUrgence   String           
+  id                 BigInt           @id @default(autoincrement())
+  ravageurMaladie    String           @db.VarChar(50)
+  protocoleUrgence   String           @db.VarChar(250)
   dateEmission       DateTime         @db.Date
-  bassinProductionId String
+  bassinProductionId BigInt
   bassinProduction   BassinProduction @relation(fields: [bassinProductionId], references: [id])
 }
 
 model AgronomeInterne {
-  id                  String                 @id @default(uuid())
-  specialite          String                 
-  nom                 String                 
+  id                    BigInt                @id @default(autoincrement())
+  specialite            String                @db.VarChar(50)
+  nom                   String                @db.VarChar(50)
   questionsAgronomiques QuestionAgronomique[]
 }
 
 model ProgrammeAgricole {
-  id                  String   @id @default(uuid())
-  nom                 String   
-  description         String   
-  criteresEligibilite String   
+  id                  BigInt   @id @default(autoincrement())
+  nom                 String   @db.VarChar(100)
+  description         String   @db.Text
+  criteresEligibilite String   @db.Text
   dateLimite          DateTime @db.Date
-  urlLien             String   
+  urlLien             String
 }
 
 model HistoriqueProduction {
-  id                 String           @id @default(uuid())
+  id                 BigInt           @id @default(autoincrement())
   anneeCampagne      Int
   quantiteTotale     Decimal          @db.Decimal(15, 2)
-  superficieHa       String           
-  rendementMoyen     String           
+  superficieHa       String
+  rendementMoyen     String
   prixMoyen          Decimal          @db.Decimal(15, 2)
   timestampMaj       DateTime?        @db.Date
-  produitAgricoleId  String
-  bassinProductionId String
+  produitAgricoleId  BigInt
+  bassinProductionId BigInt
   produitAgricole    ProduitAgricole  @relation(fields: [produitAgricoleId], references: [id])
   bassinProduction   BassinProduction @relation(fields: [bassinProductionId], references: [id])
 }
 
 model GIC {
-  id                    String                 @id @default(uuid())
-  nom                   String                 
-  logoURL               String                 
-  reglementInterieur    String?                
-  activitesPrincipales  String                 
-  identifiantREF        String                 @unique
-  statutLegalisation    String                 
-  timestampMaj          DateTime               @db.Date
-  bassinProductionId    String
-  bassinProduction      BassinProduction       @relation(fields: [bassinProductionId], references: [id])
-  polygonId             String?                @unique // ID fourni par AgroMonitoring lors de la création du GIC
-  previsionsMeteo       Json?    // <-- C'est ici que le CRON va stocker le tableau des 8 jours
-
-  // Relations
-
+  id                    BigInt                @id @default(autoincrement())
+  nom                   String                @db.VarChar(100)
+  logoURL               String                @db.VarChar(250)
+  reglementInterieur    String?               @db.Text
+  activitesPrincipales  String                @db.Text
+  identifiantREF        String                @unique @db.VarChar(50)
+  statutLegalisation    String                @db.VarChar(50)
+  timestampMaj          DateTime              @db.Date
+  bassinProductionId    BigInt
+  bassinProduction      BassinProduction      @relation(fields: [bassinProductionId], references: [id])
+  polygonId             String?               @unique
+  previsionsMeteo       Json?
   recoltesOffres        RecolteOffre[]
   besoins               BesoinGIC[]
   chargesFinancieres    ChargeFinanciere[]
@@ -168,122 +169,136 @@ model GIC {
   donneesMeteo          DonneesMeteo[]
   donneesSol            DonneesSol[]
   alertesMeteo          AlerteMeteo[]
+  b2bOfferEntries       B2BOfferEntry[]       @relation("gicB2BEntries")
+  parcelEntries         ParcelEntry[]         @relation("gicParcels")
+  gicNeedEntries        GicNeedEntry[]        @relation("gicNeeds")
 }
 
 model RecolteOffre {
-  id                 String                 @id @default(uuid())
-  quantiteEstimee    Decimal                @db.Decimal(15, 2)
-  quantiteDisponible Decimal                @db.Decimal(15, 2)
-  dateDispoEstimee   DateTime               @db.Date
-  maturite           String                 
+  id                 BigInt                @id @default(autoincrement())
+  quantiteEstimee    Decimal               @db.Decimal(15, 2)
+  quantiteDisponible Decimal               @db.Decimal(15, 2)
+  dateDispoEstimee   DateTime              @db.Date
+  maturite           String                @db.VarChar(50)
+  photoURL           String?               @db.VarChar(250)
   alerteBaisseEmise  Boolean?
-  timestampMaj       DateTime               @db.Date
-  produitAgricoleId  String
-  gicId              String
-  produitAgricole    ProduitAgricole        @relation(fields: [produitAgricoleId], references: [id])
-  gic                GIC                    @relation(fields: [gicId], references: [id])
+  timestampMaj       DateTime              @db.Date
+  produitAgricoleId  BigInt
+  gicId              BigInt
+  produitAgricole    ProduitAgricole       @relation(fields: [produitAgricoleId], references: [id])
+  gic                GIC                   @relation(fields: [gicId], references: [id])
   transactions       TransactionAcheteur[]
   journalCroissance  JournalCroissance?
 }
 
 model TransactionAcheteur {
-  id             String         @id @default(uuid())
-  type           String         
-  quantite       Decimal        @db.Decimal(15, 2)
-  prixConvenu    Decimal        @db.Decimal(15, 2)
-  statut         String         
-  recolteOffreId String
-  acheteurId     String
-  recolteOffre   RecolteOffre   @relation(fields: [recolteOffreId], references: [id])
-  acheteur       Acheteur       @relation(fields: [acheteurId], references: [id])
+  id             BigInt       @id @default(autoincrement())
+  type           String       @db.VarChar(50)
+  quantite       Decimal      @db.Decimal(15, 2)
+  prixConvenu    Decimal      @db.Decimal(15, 2)
+  statut         String       @db.VarChar(50)
+  recolteOffreId BigInt
+  acheteurId     BigInt
+  recolteOffre   RecolteOffre @relation(fields: [recolteOffreId], references: [id])
+  acheteur       Acheteur     @relation(fields: [acheteurId], references: [id])
   evaluations    Evaluation[]
 }
 
 model BesoinGIC {
-  id              String   @id @default(uuid())
-  categorieBesoin String   
-  description     String   
+  id              BigInt   @id @default(autoincrement())
+  categorieBesoin String   @db.VarChar(50)
+  description     String   @db.Text
   timestampMaj    DateTime @db.Date
-  gicId           String
+  gicId           BigInt
   gic             GIC      @relation(fields: [gicId], references: [id])
 }
 
 model ChargeFinanciere {
-  id                 String   @id @default(uuid())
-  typeCharge         String   
+  id                 BigInt   @id @default(autoincrement())
+  typeCharge         String   @db.VarChar(50)
   montant            Decimal  @db.Decimal(15, 2)
   surfaceHaConcernee Decimal  @db.Decimal(15, 2)
   timestampMaj       DateTime @db.Date
-  gicId              String
+  gicId              BigInt
   gic                GIC      @relation(fields: [gicId], references: [id])
 }
 
 model JournalCroissance {
-  id                    String       @id @default(uuid())
-  dateSemis             DateTime     @db.Date
-  etatLevee             String       
-  traitementsAppliques  String       
-  timestampMaj          DateTime     @db.Date
-  recolteOffreId        String       @unique
-  recolteOffre          RecolteOffre @relation(fields: [recolteOffreId], references: [id])
+  id                   BigInt       @id @default(autoincrement())
+  dateSemis            DateTime     @db.Date
+  etatLevee            String       @db.VarChar(50)
+  traitementsAppliques String       @db.Text
+  timestampMaj         DateTime     @db.Date
+  recolteOffreId       BigInt       @unique
+  recolteOffre         RecolteOffre @relation(fields: [recolteOffreId], references: [id])
 }
 
 model QuestionAgronomique {
-  id               String          @id @default(uuid())
-  questionTexte    String          
-  mediaUrl         String          
-  statut           String          
-  reponseAgronome  String?         
-  timestampMaj     DateTime        @db.Date
-  agronomeInterneId String
-  gicId            String
-  agronomeInterne  AgronomeInterne @relation(fields: [agronomeInterneId], references: [id])
-  gic              GIC             @relation(fields: [gicId], references: [id])
+  id                BigInt          @id @default(autoincrement())
+  questionTexte     String          @db.Text
+  mediaUrl          String          @db.VarChar(250)
+  statut            String          @db.VarChar(50)
+  reponseAgronome   String?         @db.Text
+  timestampMaj      DateTime        @db.Date
+  agronomeInterneId BigInt
+  gicId             BigInt
+  agronomeInterne   AgronomeInterne @relation(fields: [agronomeInterneId], references: [id])
+  gic               GIC             @relation(fields: [gicId], references: [id])
 }
 
 model EchangeB2B {
-  id          String    @id @default(uuid())
-  typeEchange String    
-  description String?   
-  statut      String    
-  timestampMaj DateTime  @db.Date
-  gicId       String
-  gic         GIC       @relation(fields: [gicId], references: [id])
+  id           BigInt   @id @default(autoincrement())
+  typeEchange  String   @db.VarChar(50)
+  description  String?  @db.Text
+  statut       String   @db.VarChar(50)
+  timestampMaj DateTime @db.Date
+  gicId        BigInt
+  gic          GIC      @relation(fields: [gicId], references: [id])
 }
 
 model Prefinancement {
-  id           String   @id @default(uuid())
-  type         String   
+  id            BigInt   @id @default(autoincrement())
+  type          String   @db.VarChar(50)
   montantValeur Decimal  @db.Decimal(15, 2)
-  conditions   String   
-  gicId        String
-  acheteurId   String
-  gic          GIC      @relation(fields: [gicId], references: [id])
-  acheteur     Acheteur @relation(fields: [acheteurId], references: [id])
+  conditions    String   @db.Text
+  gicId         BigInt
+  acheteurId    BigInt
+  gic           GIC      @relation(fields: [gicId], references: [id])
+  acheteur      Acheteur @relation(fields: [acheteurId], references: [id])
 }
 
 model Evaluation {
-  id                     String              @id @default(uuid())
-  noteDelai              Int
-  notePaiement           Int
-  noteQualite            Int
-  commentaire            String              
-  roleAuteur             String              
-  transactionAcheteurId  String
-  transactionAcheteur    TransactionAcheteur @relation(fields: [transactionAcheteurId], references: [id])
+  id                    BigInt              @id @default(autoincrement())
+  noteDelai             Int
+  notePaiement          Int
+  noteQualite           Int
+  commentaire           String              @db.Text
+  roleAuteur            String              @db.VarChar(50)
+  transactionAcheteurId BigInt
+  transactionAcheteur   TransactionAcheteur @relation(fields: [transactionAcheteurId], references: [id])
 }
 
 model Agriculteur {
-  id           String            @id @default(uuid())
-  nom          String            
-  contact      String            @unique
-  pin          String?           // PIN de sécurité, haché
-  isVerified   Boolean           @default(false)
-  estLeader    Boolean           @default(false)
-  statut       StatutAgriculteur @default(EN_ATTENTE)
-  timestampMaj DateTime @db.Date
-  gicId        String
-  gic          GIC      @relation(fields: [gicId], references: [id])
+  id            BigInt            @id @default(autoincrement())
+  nom           String            @db.VarChar(100)
+  prenom        String?           @db.VarChar(100)
+  contact       String            @unique @db.VarChar(50)
+  estLeader     Boolean           @default(false)
+  pin           String?           @db.VarChar(100)
+  pinHash       String?           @db.VarChar(100)
+  phoneVerified Boolean           @default(false)
+  isVerified    Boolean           @default(false)
+  statut        StatutAgriculteur @default(EN_ATTENTE)
+  timestampMaj  DateTime          @db.Date
+  gicId         BigInt
+  gic           GIC               @relation(fields: [gicId], references: [id])
+}
+
+model OtpCode {
+  id        BigInt   @id @default(autoincrement())
+  phone     String   @unique @db.VarChar(50)
+  code      String   @db.VarChar(10)
+  expiresAt DateTime
 }
 
 model VerificationCode {
@@ -294,8 +309,70 @@ model VerificationCode {
 }
 
 model Admin {
-  id          String   @id @default(uuid())
-  nom         String   @unique
-  contact     String   @unique
-  password    String   
+  id       String @id @default(uuid())
+  nom      String @unique
+  contact  String @unique
+  password String
+}
+
+model B2BOfferEntry {
+  id              String   @id
+  title           String   @db.VarChar(200)
+  type            String   @db.VarChar(20)
+  category        String   @db.VarChar(100)
+  priceOrExchange String   @db.VarChar(200)
+  gicName         String   @db.VarChar(100)
+  location        String   @db.VarChar(200)
+  contact         String   @db.VarChar(50)
+  createdAt       DateTime @default(now())
+  gicId           BigInt
+  gic             GIC      @relation("gicB2BEntries", fields: [gicId], references: [id])
+}
+
+model ParcelEntry {
+  id                    String   @id
+  parcelName            String   @db.VarChar(200)
+  crop                  String   @db.VarChar(100)
+  sowingDate            String   @db.VarChar(50)
+  stage                 String   @db.VarChar(50)
+  estimatedHarvestDate  String   @db.VarChar(50)
+  estimatedVolumeKg     Float
+  actualHarvestVolumeKg Float?
+  updatedAt             DateTime @default(now())
+  gicId                 BigInt
+  gic                   GIC      @relation("gicParcels", fields: [gicId], references: [id])
+}
+
+model PrefinancingEntry {
+  id               String   @id
+  gicName          String   @db.VarChar(200)
+  buyerName        String   @db.VarChar(200)
+  amountFcfa       Float
+  inputDescription String   @db.Text
+  reservedProduct  String   @db.VarChar(100)
+  reservedVolumeKg Float
+  status           String   @default("propose") @db.VarChar(50)
+  createdAt        DateTime @default(now())
+  acheteurId       BigInt?
+  gicId            BigInt?
+}
+
+model TrustRatingEntry {
+  id         String   @id
+  targetId   String   @db.VarChar(50)
+  targetType String   @db.VarChar(20)
+  rating     Int
+  comment    String   @db.Text
+  authorName String   @db.VarChar(100)
+  createdAt  DateTime @default(now())
+}
+
+model GicNeedEntry {
+  id          String   @id
+  category    String   @db.VarChar(50)
+  description String   @db.Text
+  updatedAt   DateTime @default(now())
+  authorRole  String   @default("member") @db.VarChar(50)
+  gicId       BigInt
+  gic         GIC      @relation("gicNeeds", fields: [gicId], references: [id])
 }

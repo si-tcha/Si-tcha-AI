@@ -25,14 +25,13 @@ const translateWeatherDescription = (desc: string): string => {
 
 export const getWeatherDashboard = async (req: Request, res: Response) => {
     try {
-        // Le middleware 'protect' a déjà injecté 'user' dans la requête
         const user = (req as any).user;
 
         if (user.role !== 'AGRICULTEUR') {
             return res.status(403).json({ message: "Accès réservé aux agriculteurs." });
         }
 
-        const gicId = user.gicId;
+        const gicId = BigInt(user.gicId);
 
         // 1. Récupérer la dernière mesure météo
         const latestWeather = await prisma.donneesMeteo.findFirst({
@@ -63,19 +62,15 @@ export const getWeatherDashboard = async (req: Request, res: Response) => {
         });
 
         // --- TRAITEMENT & TRADUCTION ---
-        
-        // Traduction de la météo actuelle
         const meteoActuelle = latestWeather ? {
             ...latestWeather,
-            description: translateWeatherDescription(latestWeather.description)
+            description: latestWeather.description ? translateWeatherDescription(latestWeather.description) : null
         } : null;
 
-        // Traduction du tableau des prévisions (8 jours)
         let previsions8Jours = [];
         if (gicData?.previsionsMeteo && Array.isArray(gicData.previsionsMeteo)) {
             previsions8Jours = gicData.previsionsMeteo.map((day: any) => {
-                // AgroMonitoring structure souvent la météo dans un sous-tableau 'weather'
-                if (day.weather && day.weather[0]) {
+                if (day.weather && day.weather[0] && day.weather[0].description) {
                     return {
                         ...day,
                         weather: [{
@@ -88,15 +83,14 @@ export const getWeatherDashboard = async (req: Request, res: Response) => {
             });
         }
 
-        // Formatage de la réponse pour l'application mobile
-       res.status(200).json({
-          message: "Données du tableau de bord météo récupérées avec succès.",
-          data: {
-              meteo: meteoActuelle,
-              sol: latestSoil,
-              alertes: recentAlerts,
-              previsions: previsions8Jours // Ton tableau de 8 jours traduits en français !
-          }
+        res.status(200).json({
+            message: "Données du tableau de bord météo récupérées avec succès.",
+            data: {
+                meteo: meteoActuelle,
+                sol: latestSoil,
+                alertes: recentAlerts,
+                previsions: previsions8Jours
+            }
         });
 
     } catch (error: any) {

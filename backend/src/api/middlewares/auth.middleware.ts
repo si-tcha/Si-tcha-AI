@@ -9,7 +9,6 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
 
     // 1. On vérifie la présence du header d'authentification
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        // On récupère uniquement la partie après l'espace
         token = req.headers.authorization.split(' ')[1];
     }
 
@@ -21,17 +20,16 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
 
     // 3. On protège la lecture du token avec un try...catch
     try {
-        // Si le token est invalide ou malformé, cette ligne déclenchera une erreur capturée par le 'catch'
         const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string; role: string; };
 
         // 4. On récupère l'utilisateur en base de données
         let userPayload: AuthenticatedUser | null = null;
         if (decoded.role === 'ACHETEUR') {
-            const user = await prisma.acheteur.findUnique({ where: { id: decoded.id }, select: { id: true } });
-            if (user) userPayload = { id: user.id, role: 'ACHETEUR' };
+            const user = await prisma.acheteur.findUnique({ where: { id: BigInt(decoded.id) }, select: { id: true } });
+            if (user) userPayload = { id: user.id.toString(), role: 'ACHETEUR' };
         } else if (decoded.role === 'AGRICULTEUR') {
-            const user = await prisma.agriculteur.findUnique({ where: { id: decoded.id }, select: { id: true, gicId: true, estLeader: true } });
-            if (user) userPayload = { id: user.id, role: 'AGRICULTEUR', gicId: user.gicId, estLeader: user.estLeader };
+            const user = await prisma.agriculteur.findUnique({ where: { id: BigInt(decoded.id) }, select: { id: true, gicId: true, estLeader: true } });
+            if (user) userPayload = { id: user.id.toString(), role: 'AGRICULTEUR', gicId: user.gicId.toString(), estLeader: user.estLeader };
         } else if (decoded.role === 'ADMIN') {
             const user = await prisma.admin.findUnique({ where: { id: decoded.id }, select: { id: true } });
             if (user) userPayload = { id: user.id, role: 'ADMIN' };
@@ -47,7 +45,6 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
         return next();
 
     } catch (error) {
-        // L'erreur "JsonWebTokenError: jwt malformed" atterrira ici proprement.
         res.status(401);
         throw new Error('Non autorisé, token invalide ou expiré');
     }

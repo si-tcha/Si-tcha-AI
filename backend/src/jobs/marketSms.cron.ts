@@ -32,7 +32,7 @@ export const startMarketSmsCronJob = () => {
 
             const groupedData = new Map<string, any[]>();
             for (const d of allData) {
-                const key = d.produitAgricoleId;
+                const key = d.produitAgricoleId.toString();
                 if (!groupedData.has(key)) groupedData.set(key, []);
                 groupedData.get(key)!.push(d);
             }

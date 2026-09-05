@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Image, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { AgronomistQuestion, dbService } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import * as ImagePicker from 'expo-image-picker';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -32,7 +33,7 @@ export default function AgronomistScreen() {
   const [selectedCrop, setSelectedCrop] = useState(CROPS[0]);
   const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0]);
   const [questionText, setQuestionText] = useState('');
-  const [hasPhoto, setHasPhoto] = useState(false);
+  const [photoUri, setPhotoUri] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     loadQuestions();
@@ -54,11 +55,10 @@ export default function AgronomistScreen() {
       return;
     }
     try {
-      const mockPhoto = hasPhoto ? 'https://images.unsplash.com/photo-1592417817098-8f3d6eb231fc?q=80&w=400' : undefined;
-      await dbService.addAgronomistQuestion(selectedCrop, selectedCategory, questionText.trim(), mockPhoto);
+      await dbService.addAgronomistQuestion(selectedCrop, selectedCategory, questionText.trim(), photoUri);
       await loadQuestions();
       setQuestionText('');
-      setHasPhoto(false);
+      setPhotoUri(undefined);
       setModalVisible(false);
       showToast({ message: 'Question transmise à l\'Agronome IA !', type: 'success' });
     } catch (err) {
@@ -186,6 +186,7 @@ export default function AgronomistScreen() {
 
         {/* Modale de saisie de question */}
         <Modal visible={modalVisible} animationType="slide" transparent>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -232,13 +233,43 @@ export default function AgronomistScreen() {
                   onChangeText={setQuestionText}
                 />
 
+                {photoUri && (
+                  <Image source={{ uri: photoUri }} style={{ width: '100%', height: 160, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />
+                )}
+
                 <TouchableOpacity
-                  style={[styles.photoButton, hasPhoto && styles.photoButtonActive]}
-                  onPress={() => setHasPhoto(!hasPhoto)}
+                  style={[styles.photoButton, !!photoUri && styles.photoButtonActive]}
+                  onPress={async () => {
+                    if (photoUri) {
+                      setPhotoUri(undefined);
+                      return;
+                    }
+                    Alert.alert('Ajouter une photo', 'Choisissez la source', [
+                      {
+                        text: 'Appareil photo',
+                        onPress: async () => {
+                          const perm = await ImagePicker.requestCameraPermissionsAsync();
+                          if (!perm.granted) { showToast({ message: 'Permission caméra refusée', type: 'warning' }); return; }
+                          const result = await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true });
+                          if (!result.canceled && result.assets?.[0]) setPhotoUri(result.assets[0].uri);
+                        },
+                      },
+                      {
+                        text: 'Galerie',
+                        onPress: async () => {
+                          const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                          if (!perm.granted) { showToast({ message: 'Permission galerie refusée', type: 'warning' }); return; }
+                          const result = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, allowsEditing: true });
+                          if (!result.canceled && result.assets?.[0]) setPhotoUri(result.assets[0].uri);
+                        },
+                      },
+                      { text: 'Annuler', style: 'cancel' },
+                    ]);
+                  }}
                 >
-                  <Feather name="camera" size={20} color={hasPhoto ? '#15803d' : '#d97834'} style={{ marginRight: 8 }} />
-                  <Text style={[styles.photoButtonText, hasPhoto && styles.photoButtonTextActive]}>
-                    {hasPhoto ? '✓ Photo du symptôme jointe' : '+ Joindre une photo de la feuille / plante'}
+                  <Feather name="camera" size={20} color={photoUri ? '#15803d' : '#d97834'} style={{ marginRight: 8 }} />
+                  <Text style={[styles.photoButtonText, !!photoUri && styles.photoButtonTextActive]}>
+                    {photoUri ? '✓ Photo jointe · Tap pour retirer' : '+ Joindre une photo de la feuille / plante'}
                   </Text>
                 </TouchableOpacity>
 
@@ -248,6 +279,7 @@ export default function AgronomistScreen() {
               </ScrollView>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <BottomNavBar role="seller" />
