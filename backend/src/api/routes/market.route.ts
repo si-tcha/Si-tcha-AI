@@ -1,7 +1,7 @@
 // src/api/routes/market.route.ts
 import { Router } from 'express';
 import { getMarketDashboard, getDonneesMarche } from '../controllers/donneeMarche.controller.js';
-import { protect, requireActive } from '../middlewares/auth.middleware.js';
+import { protect, requireActive, requireRole } from '../middlewares/auth.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
@@ -35,7 +35,7 @@ const router = Router();
  *       500:
  *         description: Erreur interne du serveur.
  */
-router.get('/dashboard', protect, requireActive, asyncHandler(getMarketDashboard));
+router.get('/dashboard', protect, requireActive, requireRole('seller', 'buyer', 'admin'), asyncHandler(getMarketDashboard));
 
 /**
  * @swagger
@@ -54,6 +54,6 @@ router.get('/dashboard', protect, requireActive, asyncHandler(getMarketDashboard
  *       403:
  *         description: Compte inactif ou non vérifié.
  */
-router.get('/', protect, requireActive, asyncHandler(getDonneesMarche));
+router.get('/', protect, requireActive, requireRole('seller', 'buyer', 'admin'), asyncHandler(getDonneesMarche));
 
 export default router;

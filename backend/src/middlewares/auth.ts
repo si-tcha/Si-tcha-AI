@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
-import { AuthenticatedUser } from '../types/user.types.js';
+import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 export function getJwtSecret(): string {
@@ -127,10 +127,27 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
 export const requireAuth = protect;
 
 /**
+ * Garde de rôle centralisée et typée.
+ * Exige req.user, compare uniquement les rôles canoniques ('seller', 'buyer', 'admin')
+ * et retourne 403 si le rôle n'est pas autorisé.
+ */
+export const requireRole = (...allowedRoles: CanonicalRole[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Non autorisé, utilisateur non authentifié." });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: "Accès refusé. Rôle non autorisé pour cette ressource." });
+    }
+    return next();
+  };
+};
+
+/**
  * Middleware vérifiant que le compte utilisateur est actif sur le plan métier.
- * - Buyer : téléphone vérifié requis.
- * - Seller : téléphone vérifié ET statut 'APPROUVE' requis.
- * - Admin : actif par défaut.
+ * - Buyer : téléphone vérifié ET statut 'active' requis.
+ * - Seller : téléphone vérifié, statut 'APPROUVE' ET statut métier 'active' requis.
+ * - Admin : toujours actif.
  */
 export const requireActive = (req: Request, res: Response, next: NextFunction) => {
   if (!req.user) {
@@ -140,8 +157,8 @@ export const requireActive = (req: Request, res: Response, next: NextFunction) =
   const { role } = req.user;
 
   if (role === 'buyer') {
-    if (!req.user.phoneVerified && req.user.status !== 'active') {
-      return res.status(403).json({ message: "Compte acheteur en attente de vérification téléphonique." });
+    if (!req.user.phoneVerified || req.user.status !== 'active') {
+      return res.status(403).json({ message: "Compte acheteur en attente de vérification téléphonique ou inactif." });
     }
     return next();
   }
@@ -167,12 +184,7 @@ export const requireActive = (req: Request, res: Response, next: NextFunction) =
 /**
  * Contrôle d'accès strict pour administrateur (réservé exclusivement à admin)
  */
-export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
-  if (req.user && req.user.role === 'admin') {
-    return next();
-  }
-  return res.status(403).json({ message: "Accès refusé. Cette action nécessite les droits d'administrateur." });
-};
+export const isAdmin = requireRole('admin');
 
 /**
  * Contrôle d'accès strict pour responsable GIC.

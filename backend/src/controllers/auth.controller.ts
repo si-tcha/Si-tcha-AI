@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import { defaultOtpProvider, generateSecureOtp } from '../services/otpProvider.js';
 import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
-import { getJwtSecret, protect, requireAuth, requireActive, isAdmin, isGicLeader } from '../middlewares/auth.js';
+import { getJwtSecret, protect, requireAuth, requireActive, requireRole, isAdmin, isGicLeader } from '../middlewares/auth.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -147,9 +147,9 @@ export async function registerBuyer(req: Request, res: Response) {
     `Votre code de vérification SI-TCHA AI est : ${otpCode}. Il expire dans 15 minutes.`
   );
 
-  if (process.env.NODE_ENV === 'production' && !smsResult.success) {
+  if (!smsResult.success) {
     return res.status(503).json({
-      message: 'Le service SMS est indisponible ou non configuré en production.',
+      message: 'Le service SMS est indisponible ou a échoué.',
       error: smsResult.error,
     });
   }
@@ -290,9 +290,9 @@ export async function registerSeller(req: Request, res: Response) {
     `Votre code de vérification SI-TCHA AI est : ${otpCode}. Il expire dans 15 minutes.`
   );
 
-  if (process.env.NODE_ENV === 'production' && !smsResult.success) {
+  if (!smsResult.success) {
     return res.status(503).json({
-      message: 'Le service SMS est indisponible ou non configuré en production.',
+      message: 'Le service SMS est indisponible ou a échoué.',
       error: smsResult.error,
     });
   }
@@ -322,6 +322,29 @@ export async function verifyOtp(req: Request, res: Response) {
     return res.status(400).json({ message: 'Numéro invalide.' });
   }
 
+  // 1. Vérification d'ambiguïté des comptes avant validation du code et avant toute mise à jour
+  const [existingBuyer, existingSeller] = await Promise.all([
+    prisma.acheteur.findUnique({ where: { contact: normalizedPhone } }),
+    prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } }),
+  ]);
+
+  // Si les deux comptes existent sous ce numéro, refuser pour collision d'identité (409 Conflict)
+  if (existingBuyer && existingSeller) {
+    return res.status(409).json({
+      message: "Conflit d'identité: ce numéro est associé à la fois à un compte acheteur et producteur. Action bloquée.",
+    });
+  }
+
+  // Si le rôle demandé ne correspond à aucun compte existant pour ce numéro, refuser avec 404
+  if (role === 'buyer' && !existingBuyer) {
+    return res.status(404).json({ message: 'Compte acheteur introuvable.' });
+  }
+
+  if (role === 'seller' && !existingSeller) {
+    return res.status(404).json({ message: 'Compte producteur introuvable.' });
+  }
+
+  // 2. Vérification du code OTP
   const otpRecord = await prisma.otpCode.findUnique({
     where: { phone: normalizedPhone },
   });
@@ -338,46 +361,38 @@ export async function verifyOtp(req: Request, res: Response) {
     return res.status(400).json({ message: 'Le code OTP a expiré.' });
   }
 
-  // Marquer comme vérifié
+  // 3. Marquer comme vérifié le compte unique correspondant
   let user: UserAccount | null = null;
 
   if (role === 'buyer') {
-    const acheteur = await prisma.acheteur.findUnique({ where: { contact: normalizedPhone } });
-    if (!acheteur) {
-      return res.status(404).json({ message: 'Compte acheteur introuvable.' });
-    }
     await prisma.acheteur.update({
       where: { contact: normalizedPhone },
       data: { phoneVerified: true, isVerified: true },
     });
     user = {
-      id: acheteur.id.toString(),
+      id: existingBuyer!.id.toString(),
       role: 'buyer',
-      name: acheteur.nomEntreprise,
-      phone: acheteur.contact,
-      buyerId: acheteur.id.toString(),
+      name: existingBuyer!.nomEntreprise,
+      phone: existingBuyer!.contact,
+      buyerId: existingBuyer!.id.toString(),
       phoneVerified: true,
       status: 'active',
     };
   } else if (role === 'seller') {
-    const agriculteur = await prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } });
-    if (!agriculteur) {
-      return res.status(404).json({ message: 'Compte producteur introuvable.' });
-    }
     await prisma.agriculteur.update({
       where: { contact: normalizedPhone },
       data: { phoneVerified: true, isVerified: true },
     });
-    const status = agriculteur.statut === 'APPROUVE' ? 'active' : (agriculteur.statut === 'REJETE' ? 'rejected' : 'pending');
+    const status = existingSeller!.statut === 'APPROUVE' ? 'active' : (existingSeller!.statut === 'REJETE' ? 'rejected' : 'pending');
     user = {
-      id: agriculteur.id.toString(),
+      id: existingSeller!.id.toString(),
       role: 'seller',
-      name: agriculteur.nom,
-      phone: agriculteur.contact,
-      gicId: agriculteur.gicId.toString(),
-      estLeader: agriculteur.estLeader,
-      gicRole: agriculteur.estLeader ? 'leader' : 'member',
-      statut: agriculteur.statut,
+      name: existingSeller!.nom,
+      phone: existingSeller!.contact,
+      gicId: existingSeller!.gicId.toString(),
+      estLeader: existingSeller!.estLeader,
+      gicRole: existingSeller!.estLeader ? 'leader' : 'member',
+      statut: existingSeller!.statut,
       phoneVerified: true,
       status,
     };
@@ -387,7 +402,7 @@ export async function verifyOtp(req: Request, res: Response) {
     return res.status(404).json({ message: 'Compte introuvable.' });
   }
 
-  // Supprimer l'OTP
+  // 4. Supprimer l'OTP
   await prisma.otpCode.delete({ where: { phone: normalizedPhone } });
 
   const token = signToken(user);
@@ -487,9 +502,9 @@ export async function login(req: Request, res: Response) {
         `Votre code de vérification SI-TCHA AI est : ${otpCode}. Il expire dans 15 minutes.`
       );
 
-      if (process.env.NODE_ENV === 'production' && !smsResult.success) {
+      if (!smsResult.success) {
         return res.status(503).json({
-          message: 'Le service SMS est indisponible ou non configuré en production.',
+          message: 'Le service SMS est indisponible ou a échoué.',
           error: smsResult.error,
         });
       }
@@ -538,9 +553,9 @@ export async function login(req: Request, res: Response) {
         `Votre code de vérification SI-TCHA AI est : ${otpCode}. Il expire dans 15 minutes.`
       );
 
-      if (process.env.NODE_ENV === 'production' && !smsResult.success) {
+      if (!smsResult.success) {
         return res.status(503).json({
-          message: 'Le service SMS est indisponible ou non configuré en production.',
+          message: 'Le service SMS est indisponible ou a échoué.',
           error: smsResult.error,
         });
       }
@@ -644,4 +659,4 @@ export function me(req: Request, res: Response) {
 
 // ─── Re-exported Auth Middlewares ───────────────────────────────────────────
 
-export { protect, requireAuth, requireActive, isAdmin, isGicLeader };
+export { protect, requireAuth, requireActive, requireRole, isAdmin, isGicLeader };

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Request, Response } from 'express';
-import { generateSecureOtp, AppOtpProvider } from '../src/services/otpProvider.js';
+import { generateSecureOtp, AppOtpProvider, defaultOtpProvider } from '../src/services/otpProvider.js';
 import { registerBuyer, registerSeller, verifyOtp } from '../src/controllers/auth.controller.js';
 import prisma from '../src/lib/prisma.js';
 
@@ -418,6 +418,216 @@ describe('OTP Provider and SMS Resilience Tests', () => {
           }),
         })
       );
+    });
+  });
+
+  describe('Ambiguous Accounts and Role Mismatch in verifyOtp', () => {
+    it('should return 409 when a phone number is ambiguous (exists in both Buyer and Seller tables)', async () => {
+      req = {
+        body: { phone: '699112233', code: '123456', role: 'buyer' },
+      };
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(10),
+        contact: '+237699112233',
+        nomEntreprise: 'Acheteur Dual',
+        phoneVerified: false,
+      } as any);
+
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(20),
+        contact: '+237699112233',
+        nom: 'Producteur Dual',
+        phoneVerified: false,
+      } as any);
+
+      vi.mocked(prisma.otpCode.findUnique).mockResolvedValue({
+        phone: '+237699112233',
+        code: '123456',
+        expiresAt: new Date(Date.now() + 60000),
+      } as any);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(409);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Conflit d'identité/i),
+        })
+      );
+      expect(prisma.acheteur.update).not.toHaveBeenCalled();
+      expect(prisma.agriculteur.update).not.toHaveBeenCalled();
+      expect(prisma.otpCode.delete).not.toHaveBeenCalled();
+      expect(jsonMock).not.toHaveBeenCalledWith(expect.objectContaining({ token: expect.anything() }));
+    });
+
+    it('should return 404 when requested role is buyer but only seller account exists', async () => {
+      req = {
+        body: { phone: '677223344', code: '123456', role: 'buyer' },
+      };
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(20),
+        contact: '+237677223344',
+        nom: 'Fermier Seul',
+      } as any);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(404);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Compte acheteur introuvable/i),
+        })
+      );
+      expect(prisma.acheteur.update).not.toHaveBeenCalled();
+      expect(prisma.otpCode.delete).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 when requested role is seller but only buyer account exists', async () => {
+      req = {
+        body: { phone: '699112233', code: '123456', role: 'seller' },
+      };
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(10),
+        contact: '+237699112233',
+        nomEntreprise: 'Acheteur Seul',
+      } as any);
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue(null);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(404);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Compte producteur introuvable/i),
+        })
+      );
+      expect(prisma.agriculteur.update).not.toHaveBeenCalled();
+      expect(prisma.otpCode.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SMS Provider Failure Resilience (503 and Retryability in all envs)', () => {
+    it('should return 503 on SMS failure during registerBuyer and allow retry', async () => {
+      const sendSpy = vi.spyOn(defaultOtpProvider, 'sendSms').mockResolvedValueOnce({
+        success: false,
+        message: 'Provider down',
+        provider: 'test',
+        error: 'Network timeout',
+      });
+
+      req = {
+        body: { companyName: 'Entreprise Retryable', phone: '699554433', pin: '1234' },
+      };
+
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.acheteur.create).mockResolvedValue({ id: BigInt(99) } as any);
+      vi.mocked(prisma.otpCode.upsert).mockResolvedValue({} as any);
+
+      // 1. Premier essai échoue à cause du fournisseur SMS
+      await registerBuyer(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/service SMS est indisponible/i),
+          error: 'Network timeout',
+        })
+      );
+
+      // 2. Le compte reste non vérifié en base, le rejeu est possible
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(99),
+        contact: '+237699554433',
+        phoneVerified: false,
+        isVerified: false,
+      } as any);
+      vi.mocked(prisma.acheteur.update).mockResolvedValue({ id: BigInt(99) } as any);
+
+      statusMock.mockClear();
+      jsonMock.mockClear();
+
+      sendSpy.mockResolvedValueOnce({
+        success: true,
+        message: 'SMS envoyé',
+        provider: 'test',
+      });
+
+      await registerBuyer(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(201);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requireOtp: true,
+          phone: '+237699554433',
+        })
+      );
+
+      sendSpy.mockRestore();
+    });
+
+    it('should return 503 on SMS failure during registerSeller and allow retry', async () => {
+      const sendSpy = vi.spyOn(defaultOtpProvider, 'sendSms').mockResolvedValueOnce({
+        success: false,
+        message: 'Provider down',
+        provider: 'test',
+        error: 'Network timeout',
+      });
+
+      req = {
+        body: { fullName: 'Fermier Retryable', phone: '677665544', pin: '1234', gicName: 'GIC Test' },
+      };
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.gIC.findFirst).mockResolvedValue({ id: BigInt(1) } as any);
+      vi.mocked(prisma.agriculteur.count).mockResolvedValue(1);
+      vi.mocked(prisma.agriculteur.create).mockResolvedValue({ id: BigInt(88) } as any);
+      vi.mocked(prisma.otpCode.upsert).mockResolvedValue({} as any);
+
+      // 1. Premier essai échoue
+      await registerSeller(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/service SMS est indisponible/i),
+        })
+      );
+
+      // 2. Le compte reste non vérifié en base, le rejeu est possible
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(88),
+        contact: '+237677665544',
+        phoneVerified: false,
+        isVerified: false,
+      } as any);
+      vi.mocked(prisma.agriculteur.update).mockResolvedValue({ id: BigInt(88) } as any);
+
+      statusMock.mockClear();
+      jsonMock.mockClear();
+
+      sendSpy.mockResolvedValueOnce({
+        success: true,
+        message: 'SMS envoyé',
+        provider: 'test',
+      });
+
+      await registerSeller(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(201);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requireOtp: true,
+          phone: '+237677665544',
+        })
+      );
+
+      sendSpy.mockRestore();
     });
   });
 });

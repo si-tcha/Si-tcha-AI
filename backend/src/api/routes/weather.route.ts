@@ -1,7 +1,7 @@
 // src/api/routes/weather.route.ts
 import { Router } from 'express';
 import { getWeatherDashboard } from '../controllers/weather.controller.js';
-import { protect, requireActive } from '../middlewares/auth.middleware.js';
+import { protect, requireActive, requireRole } from '../middlewares/auth.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
@@ -58,6 +58,6 @@ const router = Router();
  */
 // Route : GET /api/weather/dashboard
 // Accès : Protégé (Nécessite un token Producteur valide et actif)
-router.get('/dashboard', protect, requireActive, asyncHandler(getWeatherDashboard));
+router.get('/dashboard', protect, requireActive, requireRole('seller'), asyncHandler(getWeatherDashboard));
 
 export default router;

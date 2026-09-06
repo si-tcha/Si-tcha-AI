@@ -49,6 +49,14 @@ vi.mock('../src/lib/prisma', () => {
         findMany: vi.fn(),
         create: vi.fn(),
       },
+      transactionAcheteur: {
+        findMany: vi.fn(),
+        count: vi.fn(),
+      },
+      prefinancingEntry: {
+        findMany: vi.fn(),
+        create: vi.fn(),
+      },
     },
   };
 });
@@ -133,7 +141,7 @@ describe('Authorization and RBAC Integration Tests', () => {
         .set('Authorization', `Bearer ${buyerToken}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/Seuls les leaders de GIC/i);
+      expect(res.body.message).toMatch(/Accès refusé|Seuls les leaders de GIC/i);
     });
 
     it('should return 403 when a seller who is NOT a leader tries to access GIC leader endpoint', async () => {
@@ -445,7 +453,7 @@ describe('Authorization and RBAC Integration Tests', () => {
         .set('Authorization', `Bearer ${buyerToken}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/Accès réservé aux producteurs/i);
+      expect(res.body.message).toMatch(/Accès refusé|Accès réservé aux producteurs/i);
     });
 
     it('should return 403 when admin tries to access weather dashboard', async () => {
@@ -460,7 +468,7 @@ describe('Authorization and RBAC Integration Tests', () => {
         .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/Accès réservé aux producteurs/i);
+      expect(res.body.message).toMatch(/Accès refusé|Accès réservé aux producteurs/i);
     });
   });
 
@@ -560,7 +568,7 @@ describe('Authorization and RBAC Integration Tests', () => {
         .set('Authorization', `Bearer ${buyerToken}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/droits d'administrateur/i);
+      expect(res.body.message).toMatch(/Accès refusé|droits d'administrateur/i);
     });
 
     it('should return 200 when a valid admin accesses admin route', async () => {
@@ -586,6 +594,154 @@ describe('Authorization and RBAC Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
+    });
+  });
+
+  describe('Centralized Role Guard (requireRole) and Route Matrix', () => {
+    it('should reject buyer with 403 on seller-only routes (/api/gic/profile)', async () => {
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(100),
+        nomEntreprise: 'Entreprise Achat',
+        contact: '+237699111111',
+        phoneVerified: true,
+        isVerified: true,
+      } as any);
+
+      const res = await request(app)
+        .get('/api/gic/profile')
+        .set('Authorization', `Bearer ${buyerToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.message).toMatch(/Accès refusé/i);
+    });
+
+    it('should reject seller with 403 on buyer-only routes (/api/buyer/orders)', async () => {
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(300),
+        nom: 'Leader Coop',
+        contact: '+237688333333',
+        gicId: BigInt(1),
+        estLeader: true,
+        statut: 'APPROUVE',
+        phoneVerified: true,
+        isVerified: true,
+      } as any);
+
+      const res = await request(app)
+        .get('/api/buyer/orders')
+        .set('Authorization', `Bearer ${sellerLeaderToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.message).toMatch(/Accès refusé/i);
+    });
+
+    it('should reject admin with 403 on strictly seller routes and strictly buyer routes', async () => {
+      vi.mocked(prisma.admin.findUnique).mockResolvedValue({
+        id: 'admin-1',
+        nom: 'SuperAdmin',
+        contact: '+237699000000',
+      } as any);
+
+      const resSellerRoute = await request(app)
+        .get('/api/gic/profile')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(resSellerRoute.status).toBe(403);
+      expect(resSellerRoute.body.message).toMatch(/Accès refusé/i);
+
+      const resBuyerRoute = await request(app)
+        .get('/api/buyer/orders')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(resBuyerRoute.status).toBe(403);
+      expect(resBuyerRoute.body.message).toMatch(/Accès refusé/i);
+    });
+
+    it('should allow both seller and buyer on shared prefinancing route (200)', async () => {
+      // 1. Seller access
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(300),
+        nom: 'Leader Coop',
+        contact: '+237688333333',
+        gicId: BigInt(1),
+        estLeader: true,
+        statut: 'APPROUVE',
+        phoneVerified: true,
+        isVerified: true,
+      } as any);
+      vi.mocked(prisma.prefinancingEntry.findMany).mockResolvedValue([]);
+
+      const resSeller = await request(app)
+        .get('/api/prefinancing/deals')
+        .set('Authorization', `Bearer ${sellerLeaderToken}`);
+      expect(resSeller.status).toBe(200);
+      expect(resSeller.body).toHaveProperty('deals');
+
+      // 2. Buyer access
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(100),
+        nomEntreprise: 'Entreprise Achat',
+        contact: '+237699111111',
+        phoneVerified: true,
+        isVerified: true,
+      } as any);
+
+      const resBuyer = await request(app)
+        .get('/api/prefinancing/deals')
+        .set('Authorization', `Bearer ${buyerToken}`);
+      expect(resBuyer.status).toBe(200);
+      expect(resBuyer.body).toHaveProperty('deals');
+    });
+
+    it('should allow approved verified seller to access seller routes (/api/gic/profile)', async () => {
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(300),
+        nom: 'Leader Coop',
+        contact: '+237688333333',
+        gicId: BigInt(1),
+        estLeader: true,
+        statut: 'APPROUVE',
+        phoneVerified: true,
+        isVerified: true,
+      } as any);
+
+      vi.mocked(prisma.gIC.findUnique).mockResolvedValue({
+        id: BigInt(1),
+        nom: 'GIC des Planteurs',
+        identifiantREF: 'GIC-PLANT',
+        bassinProduction: { nom: 'Ouest' },
+        statutLegalisation: 'APPROUVE',
+        activitesPrincipales: 'Cacao',
+        agriculteurs: [{ id: BigInt(300), nom: 'Leader Coop', contact: '+237688333333', estLeader: true, timestampMaj: new Date() }],
+        timestampMaj: new Date(),
+        reglementInterieur: '',
+        gicNeedEntries: [],
+      } as any);
+
+      const res = await request(app)
+        .get('/api/gic/profile')
+        .set('Authorization', `Bearer ${sellerLeaderToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.profile.name).toBe('GIC des Planteurs');
+    });
+
+    it('should allow verified buyer to access buyer routes (/api/buyer/orders)', async () => {
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(100),
+        nomEntreprise: 'Entreprise Achat',
+        contact: '+237699111111',
+        phoneVerified: true,
+        isVerified: true,
+      } as any);
+
+      vi.mocked(prisma.transactionAcheteur.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.transactionAcheteur.count).mockResolvedValue(0);
+
+      const res = await request(app)
+        .get('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('orders');
     });
   });
 });

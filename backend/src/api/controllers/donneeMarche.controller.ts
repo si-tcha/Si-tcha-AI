@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../lib/prisma.js';
+import { CanonicalRole } from '../../types/user.types.js';
 
 // 1. Création (Saisie manuelle Admin)
 export async function createDonneeMarcheManuelle(req: Request, res: Response): Promise<void> {
@@ -87,22 +88,21 @@ interface MarketDataWithTrend {
   conseil: string;
 }
 
-function getConseil(tendance: Tendance, role: string, produit: string): string {
+function getConseil(tendance: Tendance, role: CanonicalRole, produit: string): string {
     const produitNormalise = produit.charAt(0).toUpperCase() + produit.slice(1).toLowerCase();
-    const roleLower = (role || '').toLowerCase();
-    if (roleLower === 'seller' || roleLower === 'agriculteur') {
+    if (role === 'seller') {
         switch (tendance) {
             case 'HAUSSE': return `Le prix du ${produitNormalise} est en hausse. C'est peut-être un bon moment pour vendre.`;
             case 'BAISSE': return `Le prix du ${produitNormalise} chute. Envisagez de stocker si possible en attendant une meilleure offre.`;
             case 'STABLE': return `Le prix du ${produitNormalise} est stable. Évaluez vos besoins avant de vendre.`;
         }
-    } else if (roleLower === 'buyer' || roleLower === 'acheteur') {
+    } else if (role === 'buyer') {
         switch (tendance) {
             case 'HAUSSE': return `Le prix du ${produitNormalise} augmente. Pensez à acheter maintenant si vous en avez besoin.`;
             case 'BAISSE': return `Le prix du ${produitNormalise} est en baisse. C'est une excellente opportunité d'achat.`;
             case 'STABLE': return `Le prix du ${produitNormalise} est stable. Planifiez vos achats en conséquence.`;
         }
-    } else if (roleLower === 'admin') {
+    } else if (role === 'admin') {
         switch (tendance) {
             case 'HAUSSE': return `Tendance haussière observée sur le ${produitNormalise}. Surveiller l'impact sur l'offre globale.`;
             case 'BAISSE': return `Tendance baissière observée sur le ${produitNormalise}. Surveiller l'équilibre du marché.`;
@@ -154,7 +154,7 @@ export async function getMarketDashboard(req: Request, res: Response): Promise<v
                 prixMoyen: Number(latest.prixMoyen),
                 dateReleve: latest.dateReleve,
                 tendance,
-                conseil: getConseil(tendance, user.role, latest.produitAgricole.nom),
+                conseil: getConseil(tendance, user.role as CanonicalRole, latest.produitAgricole.nom),
             });
         }
 
