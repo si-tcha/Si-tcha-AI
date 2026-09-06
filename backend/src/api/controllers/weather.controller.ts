@@ -25,10 +25,13 @@ const translateWeatherDescription = (desc: string): string => {
 
 export const getWeatherDashboard = async (req: Request, res: Response) => {
     try {
-        const user = (req as any).user;
+        const user = req.user;
+        if (!user || user.role !== 'seller') {
+            return res.status(403).json({ message: "Accès réservé aux producteurs." });
+        }
 
-        if (user.role !== 'AGRICULTEUR') {
-            return res.status(403).json({ message: "Accès réservé aux agriculteurs." });
+        if (!user.gicId) {
+            return res.status(400).json({ message: "Impossible de déterminer le GIC de l'utilisateur." });
         }
 
         const gicId = BigInt(user.gicId);

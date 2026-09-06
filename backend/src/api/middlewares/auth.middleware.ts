@@ -1,1 +1,1 @@
-export { protect, requireAuth, isAdmin, isGicLeader, getJwtSecret } from '../../middlewares/auth.js';
+export { protect, requireAuth, requireActive, isAdmin, isGicLeader, getJwtSecret } from '../../middlewares/auth.js';

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Request, Response } from 'express';
 import { generateSecureOtp, AppOtpProvider } from '../src/services/otpProvider.js';
-import { registerBuyer, registerSeller } from '../src/controllers/auth.controller.js';
+import { registerBuyer, registerSeller, verifyOtp } from '../src/controllers/auth.controller.js';
 import prisma from '../src/lib/prisma.js';
 
 vi.mock('../src/lib/prisma', () => {
@@ -42,6 +42,8 @@ describe('OTP Provider and SMS Resilience Tests', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.acheteur.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue(null);
     jsonMock = vi.fn();
     statusMock = vi.fn().mockReturnValue({ json: jsonMock });
     res = {
@@ -181,6 +183,239 @@ describe('OTP Provider and SMS Resilience Tests', () => {
       expect(jsonMock).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.stringMatching(/déjà associé à un compte producteur vérifié/i),
+        })
+      );
+    });
+  });
+
+  describe('Disabled OTP Provider Mode (503 Before DB Write)', () => {
+    it('should return 503 immediately for buyer without creating records in DB', async () => {
+      const originalOtpProvider = process.env.OTP_PROVIDER;
+      process.env.OTP_PROVIDER = 'disabled';
+
+      req = {
+        body: { companyName: 'Entreprise Disabled', phone: '699112233', pin: '1234' },
+      };
+
+      await registerBuyer(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/SMS est désactivé ou non configuré/i),
+        })
+      );
+      expect(prisma.acheteur.create).not.toHaveBeenCalled();
+      expect(prisma.otpCode.upsert).not.toHaveBeenCalled();
+
+      process.env.OTP_PROVIDER = originalOtpProvider;
+    });
+
+    it('should return 503 immediately for seller without creating records in DB', async () => {
+      const originalOtpProvider = process.env.OTP_PROVIDER;
+      process.env.OTP_PROVIDER = 'disabled';
+
+      req = {
+        body: { fullName: 'Producteur Disabled', phone: '677223344', pin: '5678', gicName: 'GIC Disabled' },
+      };
+
+      await registerSeller(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/SMS est désactivé ou non configuré/i),
+        })
+      );
+      expect(prisma.agriculteur.create).not.toHaveBeenCalled();
+      expect(prisma.gIC.create).not.toHaveBeenCalled();
+      expect(prisma.otpCode.upsert).not.toHaveBeenCalled();
+
+      process.env.OTP_PROVIDER = originalOtpProvider;
+    });
+  });
+
+  describe('Cross-Role Registration Rejection (409)', () => {
+    it('should reject buyer registration if phone is already registered as seller', async () => {
+      req = {
+        body: { companyName: 'Entreprise X', phone: '699112233', pin: '1234' },
+      };
+
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(5),
+        contact: '+237699112233',
+      } as any);
+
+      await registerBuyer(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(409);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/déjà associé à un compte producteur/i),
+        })
+      );
+      expect(prisma.acheteur.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject seller registration if phone is already registered as buyer', async () => {
+      req = {
+        body: { fullName: 'Fermier Y', phone: '677223344', pin: '1234', gicName: 'Mon GIC' },
+      };
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(8),
+        contact: '+237677223344',
+      } as any);
+
+      await registerSeller(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(409);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/déjà associé à un compte acheteur/i),
+        })
+      );
+      expect(prisma.agriculteur.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('verifyOtp Role Validation and Status Handling', () => {
+    it('should return 400 if role is missing in verifyOtp', async () => {
+      req = {
+        body: { phone: '699112233', code: '123456' },
+      };
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(400);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Rôle requis/i),
+        })
+      );
+    });
+
+    it('should return 400 if role is invalid in verifyOtp', async () => {
+      req = {
+        body: { phone: '699112233', code: '123456', role: 'invalid_role' },
+      };
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(400);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Rôle requis/i),
+        })
+      );
+    });
+
+    it('should verify buyer and return status active', async () => {
+      req = {
+        body: { phone: '699112233', code: '123456', role: 'buyer' },
+      };
+
+      vi.mocked(prisma.otpCode.findUnique).mockResolvedValue({
+        phone: '+237699112233',
+        code: '123456',
+        expiresAt: new Date(Date.now() + 60000),
+      } as any);
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(10),
+        contact: '+237699112233',
+        nomEntreprise: 'Acheteur Pro',
+        phoneVerified: false,
+      } as any);
+
+      vi.mocked(prisma.acheteur.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.otpCode.delete).mockResolvedValue({} as any);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: expect.any(String),
+          user: expect.objectContaining({
+            role: 'buyer',
+            status: 'active',
+          }),
+        })
+      );
+    });
+
+    it('should verify pending seller and return status pending (not active)', async () => {
+      req = {
+        body: { phone: '677223344', code: '654321', role: 'seller' },
+      };
+
+      vi.mocked(prisma.otpCode.findUnique).mockResolvedValue({
+        phone: '+237677223344',
+        code: '654321',
+        expiresAt: new Date(Date.now() + 60000),
+      } as any);
+
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(20),
+        contact: '+237677223344',
+        nom: 'Fermier En Attente',
+        gicId: BigInt(1),
+        estLeader: false,
+        statut: 'EN_ATTENTE',
+        phoneVerified: false,
+      } as any);
+
+      vi.mocked(prisma.agriculteur.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.otpCode.delete).mockResolvedValue({} as any);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: expect.any(String),
+          user: expect.objectContaining({
+            role: 'seller',
+            status: 'pending',
+            statut: 'EN_ATTENTE',
+          }),
+        })
+      );
+    });
+
+    it('should verify approved seller and return status active', async () => {
+      req = {
+        body: { phone: '677223344', code: '654321', role: 'seller' },
+      };
+
+      vi.mocked(prisma.otpCode.findUnique).mockResolvedValue({
+        phone: '+237677223344',
+        code: '654321',
+        expiresAt: new Date(Date.now() + 60000),
+      } as any);
+
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(21),
+        contact: '+237677223344',
+        nom: 'Fermier Approuve',
+        gicId: BigInt(1),
+        estLeader: true,
+        statut: 'APPROUVE',
+        phoneVerified: false,
+      } as any);
+
+      vi.mocked(prisma.agriculteur.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.otpCode.delete).mockResolvedValue({} as any);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: expect.any(String),
+          user: expect.objectContaining({
+            role: 'seller',
+            status: 'active',
+            statut: 'APPROUVE',
+          }),
         })
       );
     });

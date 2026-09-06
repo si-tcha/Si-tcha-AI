@@ -87,21 +87,29 @@ interface MarketDataWithTrend {
   conseil: string;
 }
 
-function getConseil(tendance: Tendance, role: 'AGRICULTEUR' | 'ACHETEUR' | 'ADMIN', produit: string): string {
+function getConseil(tendance: Tendance, role: string, produit: string): string {
     const produitNormalise = produit.charAt(0).toUpperCase() + produit.slice(1).toLowerCase();
-    if (role === 'AGRICULTEUR') {
+    const roleLower = (role || '').toLowerCase();
+    if (roleLower === 'seller' || roleLower === 'agriculteur') {
         switch (tendance) {
             case 'HAUSSE': return `Le prix du ${produitNormalise} est en hausse. C'est peut-être un bon moment pour vendre.`;
             case 'BAISSE': return `Le prix du ${produitNormalise} chute. Envisagez de stocker si possible en attendant une meilleure offre.`;
             case 'STABLE': return `Le prix du ${produitNormalise} est stable. Évaluez vos besoins avant de vendre.`;
         }
-    } else { // ACHETEUR or ADMIN
+    } else if (roleLower === 'buyer' || roleLower === 'acheteur') {
         switch (tendance) {
             case 'HAUSSE': return `Le prix du ${produitNormalise} augmente. Pensez à acheter maintenant si vous en avez besoin.`;
             case 'BAISSE': return `Le prix du ${produitNormalise} est en baisse. C'est une excellente opportunité d'achat.`;
             case 'STABLE': return `Le prix du ${produitNormalise} est stable. Planifiez vos achats en conséquence.`;
         }
+    } else if (roleLower === 'admin') {
+        switch (tendance) {
+            case 'HAUSSE': return `Tendance haussière observée sur le ${produitNormalise}. Surveiller l'impact sur l'offre globale.`;
+            case 'BAISSE': return `Tendance baissière observée sur le ${produitNormalise}. Surveiller l'équilibre du marché.`;
+            case 'STABLE': return `Marché stable pour le ${produitNormalise}. Équilibre offre/demande maintenu.`;
+        }
     }
+    return `Données du marché pour le ${produitNormalise}.`;
 }
 
 export async function getMarketDashboard(req: Request, res: Response): Promise<void> {

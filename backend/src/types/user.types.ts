@@ -17,7 +17,9 @@ export interface AuthenticatedUser {
   gicId?: string;
   estLeader?: boolean;
   gicRole?: 'leader' | 'member';
-  status?: 'active' | 'pending';
+  statut?: string;
+  phoneVerified?: boolean;
+  status?: 'active' | 'pending' | 'rejected';
 }
 
 export type AcheteurRegisterData = {

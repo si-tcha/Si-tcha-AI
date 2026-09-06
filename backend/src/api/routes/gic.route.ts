@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { listGics, listPendingMembers, manageMemberStatus } from '../controllers/gic.controller.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { isGicLeader, protect } from '../middlewares/auth.middleware.js';
+import { isGicLeader, protect, requireActive } from '../middlewares/auth.middleware.js';
 import { validate } from '../middlewares/validation.middleware.js';
 
 const router = Router();
@@ -67,6 +67,7 @@ router.get('/', asyncHandler(listGics));
 router.get(
     '/members/pending',
     protect,
+    requireActive,
     isGicLeader,
     asyncHandler(listPendingMembers)
 );
@@ -110,6 +111,7 @@ router.get(
 router.patch(
     '/members/:memberId/status',
     protect,
+    requireActive,
     isGicLeader,
     validate(['status']), // Make sure 'status' field is present in the body
     asyncHandler(manageMemberStatus)

@@ -29,36 +29,36 @@ function formatPhoneNumber(phone: string): string {
 }
 
 export class AppOtpProvider implements OtpProvider {
-  private mode: OtpProviderMode;
+  private explicitMode?: OtpProviderMode;
 
   constructor(explicitMode?: OtpProviderMode) {
-    if (explicitMode) {
-      this.mode = explicitMode;
-      return;
-    }
-    const envProvider = (process.env.OTP_PROVIDER || '').toLowerCase();
-    if (envProvider === 'disabled') {
-      this.mode = 'disabled';
-    } else if (envProvider === 'development' || envProvider === 'dev') {
-      this.mode = 'development';
-    } else if (envProvider === 'nexah') {
-      this.mode = 'nexah';
-    } else if (envProvider === 'test' || process.env.NODE_ENV === 'test') {
-      this.mode = 'test';
-    } else {
-      // Désactivé par défaut (Nexah est inopérant tant qu'il n'est pas configuré et activé explicitement)
-      this.mode = 'disabled';
-    }
+    this.explicitMode = explicitMode;
   }
 
   getMode(): OtpProviderMode {
-    return this.mode;
+    if (this.explicitMode) {
+      return this.explicitMode;
+    }
+    const envProvider = (process.env.OTP_PROVIDER || '').toLowerCase();
+    if (envProvider === 'disabled') {
+      return 'disabled';
+    } else if (envProvider === 'development' || envProvider === 'dev') {
+      return 'development';
+    } else if (envProvider === 'nexah') {
+      return 'nexah';
+    } else if (envProvider === 'test' || process.env.NODE_ENV === 'test') {
+      return 'test';
+    } else {
+      // Désactivé par défaut (Nexah est inopérant tant qu'il n'est pas configuré et activé explicitement)
+      return 'disabled';
+    }
   }
 
   async sendSms(to: string | string[], message: string): Promise<SendSmsResult> {
     const isProduction = process.env.NODE_ENV === 'production';
+    const mode = this.getMode();
 
-    switch (this.mode) {
+    switch (mode) {
       case 'disabled': {
         const warning = isProduction
           ? 'Le service SMS n\'est pas opérationnel ou non configuré en production.'

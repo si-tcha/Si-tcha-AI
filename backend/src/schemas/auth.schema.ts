@@ -39,6 +39,8 @@ export const verifyOtpSchema = z.object({
   body: z.object({
     phone: phoneSchema,
     code: z.string().regex(/^\d{6}$/, 'Le code OTP doit contenir 6 chiffres'),
-    role: z.enum(['buyer', 'seller']).optional(),
+    role: z.enum(['buyer', 'seller'], {
+      message: "Rôle requis ('buyer' ou 'seller').",
+    }),
   }),
 });

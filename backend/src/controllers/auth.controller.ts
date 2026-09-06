@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import { defaultOtpProvider, generateSecureOtp } from '../services/otpProvider.js';
 import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
-import { getJwtSecret, protect, requireAuth, isAdmin, isGicLeader } from '../middlewares/auth.js';
+import { getJwtSecret, protect, requireAuth, requireActive, isAdmin, isGicLeader } from '../middlewares/auth.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -78,7 +78,24 @@ export async function registerBuyer(req: Request, res: Response) {
     });
   }
 
-  // Vérifier si le numéro est déjà pris et vérifié
+  // 0. Vérification immédiate du service SMS avant toute interaction en base
+  if (defaultOtpProvider.getMode() === 'disabled') {
+    return res.status(503).json({
+      message: 'Le service SMS est désactivé ou non configuré.',
+    });
+  }
+
+  // 1. Interdiction stricte de l'enrôlement croisé (vérifier si le contact existe chez les producteurs)
+  const existingAgri = await prisma.agriculteur.findUnique({
+    where: { contact: normalizedPhone },
+  });
+  if (existingAgri) {
+    return res.status(409).json({
+      message: 'Ce numéro de téléphone est déjà associé à un compte producteur.',
+    });
+  }
+
+  // 2. Vérifier si le numéro est déjà pris et vérifié comme acheteur
   const existing = await prisma.acheteur.findUnique({
     where: { contact: normalizedPhone },
   });
@@ -174,7 +191,24 @@ export async function registerSeller(req: Request, res: Response) {
     });
   }
 
-  // Vérifier si le numéro est déjà pris et vérifié
+  // 0. Vérification immédiate du service SMS avant toute interaction en base
+  if (defaultOtpProvider.getMode() === 'disabled') {
+    return res.status(503).json({
+      message: 'Le service SMS est désactivé ou non configuré.',
+    });
+  }
+
+  // 1. Interdiction stricte de l'enrôlement croisé (vérifier si le contact existe chez les acheteurs)
+  const existingBuyer = await prisma.acheteur.findUnique({
+    where: { contact: normalizedPhone },
+  });
+  if (existingBuyer) {
+    return res.status(409).json({
+      message: 'Ce numéro de téléphone est déjà associé à un compte acheteur.',
+    });
+  }
+
+  // 2. Vérifier si le numéro est déjà pris et vérifié comme producteur
   const existingAgri = await prisma.agriculteur.findUnique({
     where: { contact: normalizedPhone },
   });
@@ -275,6 +309,10 @@ export async function registerSeller(req: Request, res: Response) {
 export async function verifyOtp(req: Request, res: Response) {
   const { phone, code, role } = req.body;
 
+  if (!role || (role !== 'buyer' && role !== 'seller')) {
+    return res.status(400).json({ message: "Rôle requis ('buyer' ou 'seller')." });
+  }
+
   if (!phone || !code) {
     return res.status(400).json({ message: 'Téléphone et code OTP requis.' });
   }
@@ -303,40 +341,46 @@ export async function verifyOtp(req: Request, res: Response) {
   // Marquer comme vérifié
   let user: UserAccount | null = null;
 
-  const acheteur = await prisma.acheteur.findUnique({ where: { contact: normalizedPhone } });
-  const agriculteur = await prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } });
-
-  if (role === 'buyer' || (!role && acheteur && !agriculteur)) {
-    if (acheteur) {
-      await prisma.acheteur.update({
-        where: { contact: normalizedPhone },
-        data: { phoneVerified: true },
-      });
-      user = {
-        id: acheteur.id.toString(),
-        role: 'buyer',
-        name: acheteur.nomEntreprise,
-        phone: acheteur.contact,
-        buyerId: acheteur.id.toString(),
-        status: 'active',
-      };
+  if (role === 'buyer') {
+    const acheteur = await prisma.acheteur.findUnique({ where: { contact: normalizedPhone } });
+    if (!acheteur) {
+      return res.status(404).json({ message: 'Compte acheteur introuvable.' });
     }
-  } else {
-    if (agriculteur) {
-      await prisma.agriculteur.update({
-        where: { contact: normalizedPhone },
-        data: { phoneVerified: true },
-      });
-      user = {
-        id: agriculteur.id.toString(),
-        role: 'seller',
-        name: agriculteur.nom,
-        phone: agriculteur.contact,
-        gicId: agriculteur.gicId.toString(),
-        gicRole: agriculteur.estLeader ? 'leader' : 'member',
-        status: 'active',
-      };
+    await prisma.acheteur.update({
+      where: { contact: normalizedPhone },
+      data: { phoneVerified: true, isVerified: true },
+    });
+    user = {
+      id: acheteur.id.toString(),
+      role: 'buyer',
+      name: acheteur.nomEntreprise,
+      phone: acheteur.contact,
+      buyerId: acheteur.id.toString(),
+      phoneVerified: true,
+      status: 'active',
+    };
+  } else if (role === 'seller') {
+    const agriculteur = await prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } });
+    if (!agriculteur) {
+      return res.status(404).json({ message: 'Compte producteur introuvable.' });
     }
+    await prisma.agriculteur.update({
+      where: { contact: normalizedPhone },
+      data: { phoneVerified: true, isVerified: true },
+    });
+    const status = agriculteur.statut === 'APPROUVE' ? 'active' : (agriculteur.statut === 'REJETE' ? 'rejected' : 'pending');
+    user = {
+      id: agriculteur.id.toString(),
+      role: 'seller',
+      name: agriculteur.nom,
+      phone: agriculteur.contact,
+      gicId: agriculteur.gicId.toString(),
+      estLeader: agriculteur.estLeader,
+      gicRole: agriculteur.estLeader ? 'leader' : 'member',
+      statut: agriculteur.statut,
+      phoneVerified: true,
+      status,
+    };
   }
 
   if (!user) {
@@ -423,7 +467,14 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ message: 'Numéro ou code PIN incorrect.' });
     }
 
-    if (!acheteur.phoneVerified) {
+    const isPhoneVerified = Boolean(acheteur.phoneVerified || acheteur.isVerified);
+    if (!isPhoneVerified) {
+      if (defaultOtpProvider.getMode() === 'disabled') {
+        return res.status(503).json({
+          message: 'Le service SMS est désactivé ou non configuré.',
+        });
+      }
+
       const otpCode = generateSecureOtp(6);
       await prisma.otpCode.upsert({
         where: { phone: normalizedPhone },
@@ -452,14 +503,13 @@ export async function login(req: Request, res: Response) {
       name: acheteur.nomEntreprise,
       phone: acheteur.contact,
       buyerId: acheteur.id.toString(),
+      phoneVerified: true,
       status: 'active',
     };
 
     const token = signToken(user);
     return res.json({ token, user });
   }
-
-
 
   const isSellerLogin = role === 'seller' || (!role && agriculteur && !acheteur);
   if (agriculteur && agriculteur.pinHash && isSellerLogin) {
@@ -468,7 +518,14 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ message: 'Numéro ou code PIN incorrect.' });
     }
 
-    if (!agriculteur.phoneVerified) {
+    const isPhoneVerified = Boolean(agriculteur.phoneVerified || agriculteur.isVerified);
+    if (!isPhoneVerified) {
+      if (defaultOtpProvider.getMode() === 'disabled') {
+        return res.status(503).json({
+          message: 'Le service SMS est désactivé ou non configuré.',
+        });
+      }
+
       const otpCode = generateSecureOtp(6);
       await prisma.otpCode.upsert({
         where: { phone: normalizedPhone },
@@ -491,14 +548,18 @@ export async function login(req: Request, res: Response) {
       return res.status(403).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
     }
 
+    const status = agriculteur.statut === 'APPROUVE' ? 'active' : (agriculteur.statut === 'REJETE' ? 'rejected' : 'pending');
     const user: UserAccount = {
       id: agriculteur.id.toString(),
       role: 'seller',
       name: agriculteur.nom,
       phone: agriculteur.contact,
       gicId: agriculteur.gicId.toString(),
+      estLeader: agriculteur.estLeader,
       gicRole: agriculteur.estLeader ? 'leader' : 'member',
-      status: 'active',
+      statut: agriculteur.statut,
+      phoneVerified: true,
+      status,
     };
 
     const token = signToken(user);
@@ -557,6 +618,7 @@ export async function adminLogin(req: Request, res: Response) {
     role: 'admin',
     name: admin.nom,
     phone: admin.contact,
+    phoneVerified: true,
     status: 'active',
   };
 
@@ -582,4 +644,4 @@ export function me(req: Request, res: Response) {
 
 // ─── Re-exported Auth Middlewares ───────────────────────────────────────────
 
-export { protect, requireAuth, isAdmin, isGicLeader };
+export { protect, requireAuth, requireActive, isAdmin, isGicLeader };

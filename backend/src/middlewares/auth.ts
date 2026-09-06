@@ -50,38 +50,41 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
   let userPayload: AuthenticatedUser | null = null;
 
   if (role === 'buyer') {
-    const acheteur = await prisma.acheteur.findFirst({
-      where: {
-        OR: [
-          ...(isNaN(Number(decoded.id)) ? [] : [{ id: BigInt(decoded.id) }]),
-          ...(decoded.phone ? [{ contact: decoded.phone }] : [])
-        ]
-      },
+    if (isNaN(Number(decoded.id))) {
+      throw Object.assign(new Error('Non autorisé, identifiant invalide'), { statusCode: 401 });
+    }
+    const acheteur = await prisma.acheteur.findUnique({
+      where: { id: BigInt(decoded.id) },
       select: { id: true, nomEntreprise: true, contact: true, phoneVerified: true, isVerified: true }
     });
 
     if (acheteur) {
+      const isPhoneVerified = Boolean(acheteur.phoneVerified || acheteur.isVerified);
       userPayload = {
         id: acheteur.id.toString(),
         role: 'buyer',
         name: acheteur.nomEntreprise,
         phone: acheteur.contact,
         buyerId: acheteur.id.toString(),
-        status: (acheteur.phoneVerified || acheteur.isVerified) ? 'active' : 'pending'
+        phoneVerified: isPhoneVerified,
+        status: isPhoneVerified ? 'active' : 'pending'
       };
     }
   } else if (role === 'seller') {
-    const agriculteur = await prisma.agriculteur.findFirst({
-      where: {
-        OR: [
-          ...(isNaN(Number(decoded.id)) ? [] : [{ id: BigInt(decoded.id) }]),
-          ...(decoded.phone ? [{ contact: decoded.phone }] : [])
-        ]
-      },
+    if (isNaN(Number(decoded.id))) {
+      throw Object.assign(new Error('Non autorisé, identifiant invalide'), { statusCode: 401 });
+    }
+    const agriculteur = await prisma.agriculteur.findUnique({
+      where: { id: BigInt(decoded.id) },
       select: { id: true, nom: true, contact: true, gicId: true, estLeader: true, statut: true, phoneVerified: true, isVerified: true }
     });
 
     if (agriculteur) {
+      const isPhoneVerified = Boolean(agriculteur.phoneVerified || agriculteur.isVerified);
+      const status = (!isPhoneVerified || agriculteur.statut === 'EN_ATTENTE')
+        ? 'pending'
+        : (agriculteur.statut === 'REJETE' ? 'rejected' : 'active');
+
       userPayload = {
         id: agriculteur.id.toString(),
         role: 'seller',
@@ -90,17 +93,14 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
         gicId: agriculteur.gicId ? agriculteur.gicId.toString() : undefined,
         estLeader: agriculteur.estLeader,
         gicRole: agriculteur.estLeader ? 'leader' : 'member',
-        status: agriculteur.statut === 'APPROUVE' ? 'active' : 'pending'
+        statut: agriculteur.statut,
+        phoneVerified: isPhoneVerified,
+        status
       };
     }
   } else if (role === 'admin') {
-    const admin = await prisma.admin.findFirst({
-      where: {
-        OR: [
-          { id: decoded.id },
-          ...(decoded.nom ? [{ nom: decoded.nom }] : [])
-        ]
-      },
+    const admin = await prisma.admin.findUnique({
+      where: { id: decoded.id },
       select: { id: true, nom: true, contact: true }
     });
 
@@ -110,6 +110,7 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
         role: 'admin',
         name: admin.nom,
         phone: admin.contact,
+        phoneVerified: true,
         status: 'active'
       };
     }
@@ -126,6 +127,44 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
 export const requireAuth = protect;
 
 /**
+ * Middleware vérifiant que le compte utilisateur est actif sur le plan métier.
+ * - Buyer : téléphone vérifié requis.
+ * - Seller : téléphone vérifié ET statut 'APPROUVE' requis.
+ * - Admin : actif par défaut.
+ */
+export const requireActive = (req: Request, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Non autorisé, utilisateur non authentifié." });
+  }
+
+  const { role } = req.user;
+
+  if (role === 'buyer') {
+    if (!req.user.phoneVerified && req.user.status !== 'active') {
+      return res.status(403).json({ message: "Compte acheteur en attente de vérification téléphonique." });
+    }
+    return next();
+  }
+
+  if (role === 'seller') {
+    if (!req.user.phoneVerified) {
+      return res.status(403).json({ message: "Compte producteur en attente de vérification téléphonique." });
+    }
+    if (req.user.statut !== 'APPROUVE' || req.user.status !== 'active') {
+      const currentStatut = req.user.statut || 'EN_ATTENTE';
+      return res.status(403).json({ message: `Accès réservé aux producteurs approuvés. Statut actuel: ${currentStatut}.` });
+    }
+    return next();
+  }
+
+  if (role === 'admin') {
+    return next();
+  }
+
+  return res.status(403).json({ message: "Accès refusé." });
+};
+
+/**
  * Contrôle d'accès strict pour administrateur (réservé exclusivement à admin)
  */
 export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
@@ -139,6 +178,8 @@ export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
  * Contrôle d'accès strict pour responsable GIC.
  * Vérifie côté serveur directement en base :
  * - rôle 'seller'
+ * - téléphone vérifié
+ * - statut === 'APPROUVE'
  * - estLeader === true
  * - gicId renseigné
  */
@@ -150,11 +191,12 @@ export const isGicLeader = async (req: Request, res: Response, next: NextFunctio
   try {
     const seller = await prisma.agriculteur.findUnique({
       where: { id: BigInt(req.user.id) },
-      select: { id: true, gicId: true, estLeader: true, statut: true }
+      select: { id: true, gicId: true, estLeader: true, statut: true, phoneVerified: true, isVerified: true }
     });
 
-    if (!seller || !seller.estLeader || !seller.gicId) {
-      return res.status(403).json({ message: "Accès refusé. Seuls les leaders de GIC peuvent effectuer cette action." });
+    const isPhoneVerified = Boolean(seller?.phoneVerified || seller?.isVerified);
+    if (!seller || !seller.estLeader || !seller.gicId || !isPhoneVerified || seller.statut !== 'APPROUVE') {
+      return res.status(403).json({ message: "Accès refusé. Seuls les leaders de GIC approuvés peuvent effectuer cette action." });
     }
 
     req.user.gicId = seller.gicId.toString();

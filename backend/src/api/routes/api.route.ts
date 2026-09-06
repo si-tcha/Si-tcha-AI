@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, me, registerBuyer, registerSeller, verifyOtp, requireAuth, adminLogin, logout } from '../../controllers/auth.controller.js';
+import { login, me, registerBuyer, registerSeller, verifyOtp, requireAuth, requireActive, adminLogin, logout } from '../../controllers/auth.controller.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { getProducts, getGicsPublic, getTerrain } from '../../controllers/catalog.controller.js';
 import { getGicProfile, updateGicProfile, getGicHarvests, createGicHarvest, getGicExpenses, createGicExpense, getGicOrders, createGicNeed } from '../../controllers/gic.controller.js';
@@ -49,46 +49,46 @@ router.get('/terrain', getTerrain);
 // ==========================================
 // VENDEURS (GIC)
 // ==========================================
-router.get('/gic/profile', requireAuth, getGicProfile);
-router.put('/gic/profile', requireAuth, validate(updateGicProfileSchema), updateGicProfile);
-router.get('/gic/harvests', requireAuth, getGicHarvests);
-router.post('/gic/harvests', requireAuth, validate(createHarvestSchema), createGicHarvest);
-router.get('/gic/expenses', requireAuth, getGicExpenses);
-router.post('/gic/expenses', requireAuth, validate(createExpenseSchema), createGicExpense);
-router.post('/gic/needs', requireAuth, validate(createGicNeedSchema), createGicNeed);
-router.get('/gic/orders', requireAuth, getGicOrders);
-router.post('/gic/agronomist', requireAuth, validate(askAgronomistSchema), askAgronomist);
+router.get('/gic/profile', requireAuth, requireActive, getGicProfile);
+router.put('/gic/profile', requireAuth, requireActive, validate(updateGicProfileSchema), updateGicProfile);
+router.get('/gic/harvests', requireAuth, requireActive, getGicHarvests);
+router.post('/gic/harvests', requireAuth, requireActive, validate(createHarvestSchema), createGicHarvest);
+router.get('/gic/expenses', requireAuth, requireActive, getGicExpenses);
+router.post('/gic/expenses', requireAuth, requireActive, validate(createExpenseSchema), createGicExpense);
+router.post('/gic/needs', requireAuth, requireActive, validate(createGicNeedSchema), createGicNeed);
+router.get('/gic/orders', requireAuth, requireActive, getGicOrders);
+router.post('/gic/agronomist', requireAuth, requireActive, validate(askAgronomistSchema), askAgronomist);
 
 // ==========================================
 // ACHETEURS
 // ==========================================
-router.get('/buyer/orders', requireAuth, getBuyerOrders);
-router.post('/buyer/orders', requireAuth, validate(createOrderSchema), createBuyerOrders);
-router.get('/buyer/alert-preferences', requireAuth, getBuyerAlertPreferences);
-router.put('/buyer/alert-preferences', requireAuth, validate(updateAlertPreferencesSchema), updateBuyerAlertPreferences);
+router.get('/buyer/orders', requireAuth, requireActive, getBuyerOrders);
+router.post('/buyer/orders', requireAuth, requireActive, validate(createOrderSchema), createBuyerOrders);
+router.get('/buyer/alert-preferences', requireAuth, requireActive, getBuyerAlertPreferences);
+router.put('/buyer/alert-preferences', requireAuth, requireActive, validate(updateAlertPreferencesSchema), updateBuyerAlertPreferences);
 
 // ==========================================
 // B2B MARKETPLACE
 // ==========================================
 router.get('/b2b/offers', getB2BOffers);
-router.post('/b2b/offers', requireAuth, validate(createB2BOfferSchema), createB2BOffer);
+router.post('/b2b/offers', requireAuth, requireActive, validate(createB2BOfferSchema), createB2BOffer);
 
 // ==========================================
 // JOURNAL DE CROISSANCE (PARCELLES)
 // ==========================================
-router.get('/gic/parcels', requireAuth, getParcels);
-router.post('/gic/parcels', requireAuth, validate(createParcelSchema), createParcel);
+router.get('/gic/parcels', requireAuth, requireActive, getParcels);
+router.post('/gic/parcels', requireAuth, requireActive, validate(createParcelSchema), createParcel);
 
 // ==========================================
 // PRÉFINANCEMENT
 // ==========================================
-router.get('/prefinancing/deals', requireAuth, getPrefinancingDeals);
-router.post('/prefinancing/deals', requireAuth, validate(createPrefinancingDealSchema), createPrefinancingDeal);
+router.get('/prefinancing/deals', requireAuth, requireActive, getPrefinancingDeals);
+router.post('/prefinancing/deals', requireAuth, requireActive, validate(createPrefinancingDealSchema), createPrefinancingDeal);
 
 // ==========================================
 // ÉVALUATIONS DE CONFIANCE
 // ==========================================
 router.get('/trust/ratings', getTrustRatings);
-router.post('/trust/ratings', requireAuth, validate(createTrustRatingSchema), createTrustRating);
+router.post('/trust/ratings', requireAuth, requireActive, validate(createTrustRatingSchema), createTrustRating);
 
 export default router;

@@ -9,7 +9,12 @@ Ce document détaille l'état du schéma de base de données suite à la réconc
 La branche `elsonkjimmy` a apporté des enrichissements majeurs côté mobile et backend (système d'OTP sécurisé, gestion des parcelles, offres B2B, préfinancements, évaluations de confiance et besoins GIC).
 La réconciliation a fusionné ces ajouts avec le socle existant d'`origin/main` sans altérer les tables socles ni casser les relations existantes.
 
-Toute l'analyse a été menée hors-ligne (`npx prisma migrate diff`), sans connexion ni altération de bases de données distantes.
+### Validation et limites de l'outillage Prisma hors infrastructure :
+- **Validation syntaxique et sémantique** : La commande `npx prisma validate` s'exécute avec succès et valide l'intégrité formelle de `prisma/schema.prisma`.
+- **Nécessité d'une base Shadow PostgreSQL** : La commande de dérive automatisée `npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma` nécessite impérativement une base de données miroir PostgreSQL (`shadowDatabaseUrl` ou base shadow active) pour rejouer l'historique complet des migrations antérieures.
+- **Statut de l'inventaire** : En l'absence d'infrastructure de base shadow PostgreSQL locale ou distante dédiée dans ce bloc de travail, un diff automatisé direct contre l'historique de migrations n'a pas pu être exécuté de façon 100% automatisée sans base. La liste des tables et champs manquants présentée à la section 2 constitue un **inventaire statique et exhaustif** établi par comparaison rigoureuse entre le dossier `prisma/migrations` et `prisma/schema.prisma`.
+- **Prérequis de déploiement** : Une vraie migration PostgreSQL (via `npx prisma migrate dev` ou `npx prisma migrate deploy` avec une base shadow dédiée ou conteneur éphémère) reste formellement requise avant toute mise en production.
+- **AUCUNE MIGRATION DE PRODUCTION APPLIQUÉE** : Strictement aucune migration n'a été exécutée ni appliquée sur une base distante ou de production dans ce bloc. L'ensemble des modifications reste confiné au code et au schéma déclaratif.
 
 ---
 

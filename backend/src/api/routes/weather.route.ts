@@ -1,7 +1,7 @@
 // src/api/routes/weather.route.ts
 import { Router } from 'express';
 import { getWeatherDashboard } from '../controllers/weather.controller.js';
-import { protect } from '../middlewares/auth.middleware.js';
+import { protect, requireActive } from '../middlewares/auth.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
@@ -10,17 +10,17 @@ const router = Router();
  * @swagger
  * tags:
  *   name: Météo & Sol
- *   description: APIs pour la récupération des données météorologiques, du sol et des alertes associées pour les agriculteurs.
+ *   description: APIs pour la récupération des données météorologiques, du sol et des alertes associées pour les producteurs.
  */
 
 /**
  * @swagger
  * /weather/dashboard:
  *   get:
- *     summary: Récupérer le tableau de bord météo pour l'agriculteur
+ *     summary: Récupérer le tableau de bord météo pour le producteur
  *     description: >
  *       Retourne les dernières données météorologiques, les données du sol, et les alertes récentes
- *       pour le GIC de l'agriculteur connecté. Accessible uniquement par les utilisateurs avec le rôle 'AGRICULTEUR'.
+ *       pour le GIC du producteur connecté. Accessible uniquement par les utilisateurs avec le rôle 'seller'.
  *     tags: [Météo & Sol]
  *     security:
  *       - bearerAuth: []
@@ -52,12 +52,12 @@ const router = Router();
  *       401:
  *         description: Non autorisé (token manquant ou invalide).
  *       403:
- *         description: Accès refusé (l'utilisateur n'est pas un agriculteur).
+ *         description: Accès refusé (l'utilisateur n'est pas un producteur approuvé).
  *       500:
  *         description: Erreur interne du serveur.
  */
 // Route : GET /api/weather/dashboard
-// Accès : Protégé (Nécessite un token Agriculteur valide)
-router.get('/dashboard', protect, asyncHandler(getWeatherDashboard));
+// Accès : Protégé (Nécessite un token Producteur valide et actif)
+router.get('/dashboard', protect, requireActive, asyncHandler(getWeatherDashboard));
 
 export default router;
