@@ -32,7 +32,7 @@ export default function OtpVerificationScreen() {
       showToast({ message: 'Le code OTP doit contenir 6 chiffres.', type: 'warning' });
       return;
     }
-    
+
     setIsLoading(true);
     try {
       const res = await apiClient.verifyOtp(phone || '', code, role);
@@ -40,7 +40,7 @@ export default function OtpVerificationScreen() {
         showToast({ message: 'Numéro vérifié avec succès !', type: 'success' });
         // Synchroniser la BDD locale (pour remplir le store local avec le profil)
         await dbService.syncRemoteData();
-        
+
         if (res.user.role === 'seller') {
           router.replace('/(seller)/home');
         } else {
@@ -48,9 +48,9 @@ export default function OtpVerificationScreen() {
         }
       }
     } catch (error: any) {
-      showToast({ 
-        message: error.response?.data?.message || 'Erreur lors de la vérification du code.', 
-        type: 'error' 
+      showToast({
+        message: error.response?.data?.message || 'Erreur lors de la vérification du code.',
+        type: 'error'
       });
     } finally {
       setIsLoading(false);
@@ -61,8 +61,8 @@ export default function OtpVerificationScreen() {
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f3ecd8" />
       <View style={styles.container}>
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
         >
           <View style={styles.content}>
@@ -103,9 +103,9 @@ export default function OtpVerificationScreen() {
 
             {/* Bouton */}
             <View style={styles.footer}>
-              <TouchableOpacity 
-                onPress={handleVerify} 
-                style={[styles.primaryButton, isLoading && { opacity: 0.7 }]} 
+              <TouchableOpacity
+                onPress={handleVerify}
+                style={[styles.primaryButton, isLoading && { opacity: 0.7 }]}
                 activeOpacity={0.85}
                 disabled={isLoading}
               >

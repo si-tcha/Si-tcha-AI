@@ -101,7 +101,7 @@ export async function getGicHarvests(req: AuthRequest, res: Response) {
   try {
     const gicId = BigInt(req.user.gicId);
     const { page, limit, skip } = getPagination(req);
-    
+
     const [offers, total] = await Promise.all([
       prisma.recolteOffre.findMany({
         where: { gicId },
@@ -122,7 +122,7 @@ export async function getGicHarvests(req: AuthRequest, res: Response) {
       authorRole: 'leader' as const,
     }));
 
-    res.json({ 
+    res.json({
       harvests,
       meta: buildPaginationMeta(total, page, limit)
     });
@@ -208,7 +208,7 @@ export async function getGicExpenses(req: AuthRequest, res: Response) {
       authorRole: 'leader' as const,
     }));
 
-    res.json({ 
+    res.json({
       expenses,
       meta: buildPaginationMeta(total, page, limit)
     });
@@ -298,7 +298,7 @@ export async function getGicOrders(req: AuthRequest, res: Response) {
       createdAt: new Date().toISOString(),
     }));
 
-    res.json({ 
+    res.json({
       orders,
       meta: buildPaginationMeta(total, page, limit)
     });

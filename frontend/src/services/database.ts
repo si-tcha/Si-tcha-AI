@@ -257,7 +257,7 @@ class DatabaseService {
         }
         updated = true;
       }
-      
+
       return updated;
     } catch {
       return false;
@@ -353,7 +353,7 @@ class DatabaseService {
     const date = 'Aujourd\'hui';
     const updatedAt = nowIso();
     const db = this.getDb();
-    
+
     db.runSync(
       'INSERT INTO harvests (id, product, volume, date, synced, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [id, product, volume, date, 0, updatedAt, role]
@@ -379,19 +379,19 @@ class DatabaseService {
     const id = Date.now().toString();
     const updatedAt = nowIso();
     const db = this.getDb();
-    
+
     db.runSync(
       'INSERT INTO expenses (id, label, amount, category, synced, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [id, label, amount, category, 0, updatedAt, role]
     );
-    
+
     apiClient.addExpense(label, amount, category).then(() => {
       db.runSync('UPDATE expenses SET synced = 1 WHERE id = ?', [id]);
       this.syncRemoteData().catch(() => {});
     }).catch(() => {
       if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : dépense sauvegardée localement.");
     });
-    
+
     return { id, label, amount, category, synced: false, updatedAt, authorRole: role };
   }
 
@@ -412,7 +412,7 @@ class DatabaseService {
   async addToCart(product: { productId: string; name: string; price: string; unit: string; }): Promise<CartItemRecord> {
     const targetId = String(product.productId);
     const db = this.getDb();
-    
+
     const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
 
     if (existing) {
@@ -458,11 +458,11 @@ class DatabaseService {
       'INSERT INTO gic_needs (id, category, description, updatedAt, authorRole) VALUES (?, ?, ?, ?, ?)',
       [id, category, description, updatedAt, role]
     );
-    
+
     // Tentative de push direct au backend
     const needPayload = { id, category, description, updatedAt, authorRole: role };
     apiClient.addGicNeed(needPayload).catch(() => console.log('Offline: besoin sauvegardé localement.'));
-    
+
     return needPayload;
   }
 
@@ -496,7 +496,7 @@ class DatabaseService {
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
     const cart = await this.getCart();
     if (!cart.length) return [];
-    
+
     try {
       const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
       await apiClient.createOrder(type, items);
@@ -507,7 +507,7 @@ class DatabaseService {
       if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : commande sauvegardée localement.");
       const products = await this.getProducts();
       const db = this.getDb();
-      
+
       const created: OrderRecord[] = [];
       for (let i = 0; i < cart.length; i++) {
         const item = cart[i];
@@ -516,14 +516,14 @@ class DatabaseService {
         const status = type === 'reservation' ? 'en_attente' : 'confirmee';
         const gicName = offer?.gicName ?? 'GIC partenaire';
         const createdAt = nowIso();
-        
+
         db.runSync(
           'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           [id, type, status, item.productId, item.name, item.quantity, item.unit, item.price, gicName, createdAt, 0]
         );
         created.push({ id, type, status, productId: item.productId, productName: item.name, quantity: item.quantity, unit: item.unit, price: item.price, gicName, createdAt });
       }
-      
+
       await this.clearCart();
       return await this.getOrders();
     }
@@ -581,7 +581,7 @@ class DatabaseService {
   async addAgronomistQuestion(crop: string, category: string, question: string, photoUrl?: string): Promise<AgronomistQuestion> {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const createdAt = nowIso();
-    
+
     // 1. Sauvegarde locale "en attente"
     this.getDb().runSync(
       'INSERT INTO agronomist_questions (id, crop, category, question, photoUrl, status, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -597,7 +597,7 @@ class DatabaseService {
       if (res && res.answer) {
         answer = res.answer;
         finalStatus = 'repondu';
-        
+
         // Mise à jour de la question locale
         this.getDb().runSync(
           'UPDATE agronomist_questions SET status = ?, answer = ?, synced = ? WHERE id = ?',
@@ -712,7 +712,7 @@ class DatabaseService {
   async updatePrefinancingDealStatus(id: string, status: string): Promise<void> {
     const db = this.getDb();
     db.runSync('UPDATE prefinancing SET status = ?, synced = 0 WHERE id = ?', [status, id]);
-    
+
     // Auto-generate order if accepted
     if (status === 'accepte') {
       try {
@@ -721,7 +721,7 @@ class DatabaseService {
           const deal = deals[0];
           const orderId = `pref-${deal.id}`;
           const createdAt = nowIso();
-          
+
           // Check if order already exists
           const existing = db.getAllSync('SELECT id FROM orders WHERE id = ?', [orderId]);
           if (existing.length === 0) {
@@ -749,7 +749,7 @@ class DatabaseService {
     const id = Date.now().toString();
     const createdAt = nowIso();
     const db = this.getDb();
-    
+
     try {
       db.runSync('ALTER TABLE trust_ratings ADD COLUMN synced INTEGER');
     } catch (e) {

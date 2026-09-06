@@ -230,11 +230,11 @@ export default function SellerProfileScreen() {
                       <Text style={styles.itemTitle}>{rating.authorName}</Text>
                       <View style={styles.stars}>
                         {[1, 2, 3, 4, 5].map((star) => (
-                          <Feather 
-                            key={star} 
-                            name="star" 
-                            size={12} 
-                            color={star <= rating.rating ? '#d97834' : '#e6dfcc'} 
+                          <Feather
+                            key={star}
+                            name="star"
+                            size={12}
+                            color={star <= rating.rating ? '#d97834' : '#e6dfcc'}
                           />
                         ))}
                       </View>

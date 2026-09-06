@@ -3,19 +3,12 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import { defaultOtpProvider, generateSecureOtp } from '../services/otpProvider.js';
+import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
+import { getJwtSecret, protect, requireAuth, isAdmin, isGicLeader } from '../middlewares/auth.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export interface UserAccount {
-  id: string;
-  role: 'seller' | 'buyer';
-  name: string;
-  phone: string;
-  buyerId?: string;
-  gicId?: string;
-  gicRole?: 'leader' | 'member';
-  status: 'active' | 'pending';
-}
+export type UserAccount = AuthenticatedUser;
 
 export interface AuthRequest extends Request {
   user?: UserAccount;
@@ -23,17 +16,6 @@ export interface AuthRequest extends Request {
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'test') {
-      return 'test-jwt-secret-key-32-chars-long-12345';
-    }
-    throw new Error('FATAL: La variable d\'environnement JWT_SECRET n\'est pas définie. Le serveur ne peut pas démarrer en toute sécurité.');
-  }
-  return secret;
-}
-const JWT_SECRET = getJwtSecret();
 const JWT_EXPIRES_IN = '30d'; // 30 jours — les fermiers ne se connectent pas tous les jours
 const SALT_ROUNDS = 10;
 
@@ -60,8 +42,8 @@ function isValidPin(pin: string): boolean {
 /** Génère un JWT pour un utilisateur */
 function signToken(user: UserAccount): string {
   return jwt.sign(
-    { id: user.id, role: user.role, phone: user.phone },
-    JWT_SECRET,
+    { id: user.id, role: user.role, phone: user.phone, nom: user.name },
+    getJwtSecret(),
     { expiresIn: JWT_EXPIRES_IN }
   );
 }
@@ -96,28 +78,44 @@ export async function registerBuyer(req: Request, res: Response) {
     });
   }
 
-  // Vérifier si le numéro est déjà pris
+  // Vérifier si le numéro est déjà pris et vérifié
   const existing = await prisma.acheteur.findUnique({
     where: { contact: normalizedPhone },
   });
-  if (existing) {
+  if (existing && (existing.phoneVerified || existing.isVerified)) {
     return res.status(409).json({
-      message: 'Ce numéro de téléphone est déjà associé à un compte acheteur.',
+      message: 'Ce numéro de téléphone est déjà associé à un compte acheteur vérifié.',
     });
   }
 
-  // Hash du PIN et création du compte
+  // Hash du PIN et création ou mise à jour du compte
   const pinHash = await bcrypt.hash(pin, SALT_ROUNDS);
-  const acheteur = await prisma.acheteur.create({
-    data: {
-      nomEntreprise: companyName.trim(),
-      contact: normalizedPhone,
-      adresse: address?.trim() || '',
-      preferencesAlertes: JSON.stringify({ productNames: [], bassins: [] }),
-      pinHash,
-      phoneVerified: false,
-    },
-  });
+  if (existing) {
+    await prisma.acheteur.update({
+      where: { id: existing.id },
+      data: {
+        nomEntreprise: companyName.trim(),
+        adresse: address?.trim() || '',
+        pinHash,
+        pin: pinHash,
+        phoneVerified: false,
+        isVerified: false,
+      },
+    });
+  } else {
+    await prisma.acheteur.create({
+      data: {
+        nomEntreprise: companyName.trim(),
+        contact: normalizedPhone,
+        adresse: address?.trim() || '',
+        preferencesAlertes: JSON.stringify({ productNames: [], bassins: [] }),
+        pinHash,
+        pin: pinHash,
+        phoneVerified: false,
+        isVerified: false,
+      },
+    });
+  }
 
   // Génération OTP cryptographiquement sécurisée
   const otpCode = generateSecureOtp(6);
@@ -139,7 +137,7 @@ export async function registerBuyer(req: Request, res: Response) {
     });
   }
 
-  return res.status(201).json({ 
+  return res.status(201).json({
     message: 'Compte créé avec succès. Veuillez vérifier votre numéro.',
     requireOtp: true,
     phone: normalizedPhone
@@ -176,13 +174,13 @@ export async function registerSeller(req: Request, res: Response) {
     });
   }
 
-  // Vérifier si le numéro est déjà pris
+  // Vérifier si le numéro est déjà pris et vérifié
   const existingAgri = await prisma.agriculteur.findUnique({
     where: { contact: normalizedPhone },
   });
-  if (existingAgri) {
+  if (existingAgri && (existingAgri.phoneVerified || existingAgri.isVerified)) {
     return res.status(409).json({
-      message: 'Ce numéro de téléphone est déjà associé à un compte producteur.',
+      message: 'Ce numéro de téléphone est déjà associé à un compte producteur vérifié.',
     });
   }
 
@@ -212,22 +210,38 @@ export async function registerSeller(req: Request, res: Response) {
     });
   }
 
-  // Hash du PIN et création du compte
+  // Hash du PIN et création ou mise à jour du compte
   const pinHash = await bcrypt.hash(pin, SALT_ROUNDS);
-  const isFirstMember = (await prisma.agriculteur.count({ where: { gicId: gic.id } })) === 0;
-
-  const agriculteur = await prisma.agriculteur.create({
-    data: {
-      nom: fullName.trim(),
-      prenom: '',
-      contact: normalizedPhone,
-      estLeader: isFirstMember,
-      pinHash,
-      phoneVerified: false,
-      timestampMaj: new Date(),
-      gicId: gic.id,
-    },
-  });
+  if (existingAgri) {
+    await prisma.agriculteur.update({
+      where: { id: existingAgri.id },
+      data: {
+        nom: fullName.trim(),
+        pinHash,
+        pin: pinHash,
+        phoneVerified: false,
+        isVerified: false,
+        gicId: gic.id,
+        timestampMaj: new Date(),
+      },
+    });
+  } else {
+    const isFirstMember = (await prisma.agriculteur.count({ where: { gicId: gic.id } })) === 0;
+    await prisma.agriculteur.create({
+      data: {
+        nom: fullName.trim(),
+        prenom: '',
+        contact: normalizedPhone,
+        estLeader: isFirstMember,
+        pinHash,
+        pin: pinHash,
+        phoneVerified: false,
+        isVerified: false,
+        timestampMaj: new Date(),
+        gicId: gic.id,
+      },
+    });
+  }
 
   // Génération OTP cryptographiquement sécurisée
   const otpCode = generateSecureOtp(6);
@@ -249,7 +263,7 @@ export async function registerSeller(req: Request, res: Response) {
     });
   }
 
-  return res.status(201).json({ 
+  return res.status(201).json({
     message: 'Compte créé avec succès. Veuillez vérifier votre numéro.',
     requireOtp: true,
     phone: normalizedPhone
@@ -428,7 +442,7 @@ export async function login(req: Request, res: Response) {
           error: smsResult.error,
         });
       }
-    
+
       return res.status(403).json({ message: 'Veuillez vérifier votre numéro de téléphone.', requireOtp: true });
     }
 
@@ -497,62 +511,67 @@ export async function login(req: Request, res: Response) {
   });
 }
 
-// ─── Middleware Auth (JWT) ──────────────────────────────────────────────────
+// ─── Admin Login ────────────────────────────────────────────────────────────
 
-export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const header = req.header('authorization');
-  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
+export async function adminLogin(req: Request, res: Response) {
+  const { nom, motDePasse, username, password } = req.body as {
+    nom?: string;
+    motDePasse?: string;
+    username?: string;
+    password?: string;
+  };
 
-  if (!token) {
-    return res.status(401).json({ message: 'Token manquant.' });
+  const adminName = (nom || username)?.trim();
+  const adminPassword = motDePasse || password;
+
+  if (!adminName || !adminPassword) {
+    return res.status(400).json({
+      message: "Nom d'administrateur et mot de passe requis.",
+    });
   }
 
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as unknown as {
-      id: string;
-      role: 'seller' | 'buyer';
-      phone: string;
-    };
+  const admin = await prisma.admin.findFirst({
+    where: {
+      OR: [
+        { nom: adminName },
+        { contact: adminName },
+      ],
+    },
+  });
 
-    // Reconstruire le user depuis la base pour avoir les données à jour
-    if (payload.role === 'buyer') {
-      const acheteur = await prisma.acheteur.findUnique({
-        where: { contact: payload.phone },
-      });
-      if (!acheteur) {
-        return res.status(401).json({ message: 'Compte introuvable.' });
-      }
-      req.user = {
-        id: acheteur.id.toString(),
-        role: 'buyer',
-        name: acheteur.nomEntreprise,
-        phone: acheteur.contact,
-        buyerId: acheteur.id.toString(),
-        status: 'active',
-      };
-    } else {
-      const agriculteur = await prisma.agriculteur.findUnique({
-        where: { contact: payload.phone },
-        include: { gic: true },
-      });
-      if (!agriculteur) {
-        return res.status(401).json({ message: 'Compte introuvable.' });
-      }
-      req.user = {
-        id: agriculteur.id.toString(),
-        role: 'seller',
-        name: agriculteur.nom,
-        phone: agriculteur.contact,
-        gicId: agriculteur.gicId.toString(),
-        gicRole: agriculteur.estLeader ? 'leader' : 'member',
-        status: 'active',
-      };
-    }
-
-    next();
-  } catch {
-    return res.status(401).json({ message: 'Token invalide ou expiré.' });
+  if (!admin) {
+    return res.status(401).json({
+      message: 'Identifiants administrateur incorrects.',
+    });
   }
+
+  const isMatch = await bcrypt.compare(adminPassword, admin.password);
+  if (!isMatch) {
+    return res.status(401).json({
+      message: 'Identifiants administrateur incorrects.',
+    });
+  }
+
+  const user: UserAccount = {
+    id: admin.id,
+    role: 'admin',
+    name: admin.nom,
+    phone: admin.contact,
+    status: 'active',
+  };
+
+  const token = signToken(user);
+  return res.json({
+    message: 'Connexion administrateur réussie.',
+    token,
+    user,
+  });
+}
+
+// ─── Logout ─────────────────────────────────────────────────────────────────
+
+export function logout(req: Request, res: Response) {
+  return res.status(200).json({ message: 'Déconnexion réussie.' });
 }
 
 // ─── Me ─────────────────────────────────────────────────────────────────────
@@ -560,3 +579,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 export function me(req: Request, res: Response) {
   return res.json({ user: req.user ?? null });
 }
+
+// ─── Re-exported Auth Middlewares ───────────────────────────────────────────
+
+export { protect, requireAuth, isAdmin, isGicLeader };

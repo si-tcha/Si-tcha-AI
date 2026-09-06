@@ -36,17 +36,17 @@ export default function RegisterSellerScreen() {
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [showPin, setShowPin] = useState(false);
-  
+
   // Step 2
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGIC, setSelectedGIC] = useState('');
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'name' | 'phone' | 'pin' | 'confirm' | 'search' | null>(null);
-  
+
   const router = useRouter();
   const { showToast } = useToast();
-  
+
   const effectiveGIC = selectedGIC || searchQuery.trim();
 
   const handleBack = () => {
@@ -95,7 +95,7 @@ export default function RegisterSellerScreen() {
         gicName: effectiveGIC,
         pin: pin.trim(),
       });
-      
+
       if (res.requireOtp) {
         showToast({ message: res.message || 'Code envoyé par SMS', type: 'info' });
         router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim(), role: 'seller' } });
@@ -110,23 +110,23 @@ export default function RegisterSellerScreen() {
     }
   };
 
-  const filteredGICs = searchQuery.trim() === '' 
-    ? GIC_LIST 
+  const filteredGICs = searchQuery.trim() === ''
+    ? GIC_LIST
     : GIC_LIST.filter(gic => gic.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-      
+
       {/* Decorative Background Elements */}
       <View style={styles.bgCircle1} />
-      
+
       <View style={styles.container}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              
+
               <View style={styles.topSection}>
                 <View style={styles.header}>
                   <TouchableOpacity onPress={handleBack} style={styles.backButton}>
@@ -139,7 +139,7 @@ export default function RegisterSellerScreen() {
                   </View>
                   <View style={{ width: 44 }} />
                 </View>
-                
+
                 <View style={styles.heroSection}>
                   <Text style={styles.heroTitle}>Compte Agriculteur</Text>
                   <Text style={styles.heroSubtitle}>
@@ -150,7 +150,7 @@ export default function RegisterSellerScreen() {
 
               <View style={styles.bottomSection}>
                 <View style={styles.formCard}>
-                  
+
                   {step === 1 && (
                     <>
                       <View style={styles.fieldWrapper}>
@@ -285,9 +285,9 @@ export default function RegisterSellerScreen() {
                         </ScrollView>
                       </View>
 
-                      <TouchableOpacity 
-                        onPress={handleConfirm} 
-                        style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled, { marginTop: 16 }]} 
+                      <TouchableOpacity
+                        onPress={handleConfirm}
+                        style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled, { marginTop: 16 }]}
                         activeOpacity={0.9}
                         disabled={isLoading}
                       >
@@ -298,7 +298,7 @@ export default function RegisterSellerScreen() {
                       </TouchableOpacity>
                     </View>
                   )}
-                  
+
                 </View>
               </View>
             </ScrollView>

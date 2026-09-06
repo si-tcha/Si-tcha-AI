@@ -94,9 +94,9 @@ export const getWeatherDashboard = async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        res.status(500).json({ 
-            message: "Erreur lors de la récupération des données météo.", 
-            error: error.message 
+        res.status(500).json({
+            message: "Erreur lors de la récupération des données météo.",
+            error: error.message
         });
     }
 };

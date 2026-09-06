@@ -89,7 +89,7 @@ export default function SellerTerrainScreen() {
     <SafeAreaView style={styles.outer}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         {/* ─── Header ─── */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>

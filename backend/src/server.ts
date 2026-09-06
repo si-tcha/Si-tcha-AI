@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import * as http from 'http';
 import app from './app.js';
 import { startAgroCronJobs } from './jobs/agroMonitoring.cron.js';

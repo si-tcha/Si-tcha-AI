@@ -14,20 +14,20 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function RegisterBuyerScreen() {
   const [step, setStep] = useState(1);
-  
+
   // Step 1
   const [companyName, setCompanyName] = useState('');
   const [regNumber, setRegNumber] = useState('');
-  
+
   // Step 2
   const [phone, setPhone] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
-  
+
   const [showPin, setShowPin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'company' | 'phone' | 'reg' | 'pin' | 'confirm' | null>(null);
-  
+
   const router = useRouter();
   const { showToast } = useToast();
 
@@ -68,7 +68,7 @@ export default function RegisterBuyerScreen() {
       showToast({ message: 'Les codes PIN ne correspondent pas.', type: 'error' });
       return;
     }
-    
+
     setIsLoading(true);
     try {
       const res = await apiClient.registerBuyer({
@@ -77,7 +77,7 @@ export default function RegisterBuyerScreen() {
         address: regNumber.trim(),
         pin: pin.trim(),
       });
-      
+
       if (res.requireOtp) {
         showToast({ message: res.message || 'Code envoyé par SMS', type: 'info' });
         router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim(), role: 'buyer' } });
@@ -95,15 +95,15 @@ export default function RegisterBuyerScreen() {
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-      
+
       {/* Decorative Background Elements */}
       <View style={styles.bgCircle1} />
-      
+
       <View style={styles.container}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              
+
               <View style={styles.topSection}>
                 <View style={styles.header}>
                   <TouchableOpacity onPress={handleBack} style={styles.backButton}>
@@ -116,7 +116,7 @@ export default function RegisterBuyerScreen() {
                   </View>
                   <View style={{ width: 44 }} />
                 </View>
-                
+
                 <View style={styles.heroSection}>
                   <Text style={styles.heroTitle}>Créer un compte</Text>
                   <Text style={styles.heroSubtitle}>
@@ -127,7 +127,7 @@ export default function RegisterBuyerScreen() {
 
               <View style={styles.bottomSection}>
                 <View style={styles.formCard}>
-                  
+
                   {step === 1 && (
                     <>
                       <View style={styles.fieldWrapper}>
@@ -230,9 +230,9 @@ export default function RegisterBuyerScreen() {
                         </View>
                       </View>
 
-                      <TouchableOpacity 
-                        onPress={handleCreateAccount} 
-                        style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled]} 
+                      <TouchableOpacity
+                        onPress={handleCreateAccount}
+                        style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled]}
                         activeOpacity={0.9}
                         disabled={isLoading}
                       >
@@ -243,7 +243,7 @@ export default function RegisterBuyerScreen() {
                       </TouchableOpacity>
                     </>
                   )}
-                  
+
                 </View>
               </View>
             </ScrollView>

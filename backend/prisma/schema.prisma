@@ -21,10 +21,10 @@ model Acheteur {
   contact            String                @unique @db.VarChar(50)
   adresse            String?               @db.Text
   preferencesAlertes String?               @db.Text
-  pin                String?               @db.VarChar(100)
+  pin                String?               @db.VarChar(100) /// @deprecated Utiliser pinHash
   pinHash            String?               @db.VarChar(100)
   phoneVerified      Boolean               @default(false)
-  isVerified         Boolean               @default(false)
+  isVerified         Boolean               @default(false) /// @deprecated Utiliser phoneVerified
   preferences        Json?
   transactions       TransactionAcheteur[]
   prefinancements    Prefinancement[]
@@ -64,7 +64,7 @@ model DonneesMeteo {
   vitesseVent        Decimal?          @db.Decimal(5, 2)
   description        String?
   timestampMesure    DateTime          @db.Timestamptz
-  
+
   gicId              BigInt?
   gic                GIC?              @relation(fields: [gicId], references: [id])
   bassinProductionId BigInt?
@@ -77,7 +77,7 @@ model DonneesSol {
   temperature10cm    Decimal  @db.Decimal(5, 2)
   humidite           Decimal  @db.Decimal(5, 2)
   timestampMesure    DateTime @db.Timestamptz
-  
+
   gicId              BigInt
   gic                GIC      @relation(fields: [gicId], references: [id])
 }
@@ -88,7 +88,7 @@ model AlerteMeteo {
   detailsTechniques  Json
   type               String
   timestampCreation  DateTime @default(now()) @db.Timestamptz
-  
+
   gicId              BigInt
   gic                GIC      @relation(fields: [gicId], references: [id])
 }
@@ -284,10 +284,10 @@ model Agriculteur {
   prenom        String?           @db.VarChar(100)
   contact       String            @unique @db.VarChar(50)
   estLeader     Boolean           @default(false)
-  pin           String?           @db.VarChar(100)
+  pin           String?           @db.VarChar(100) /// @deprecated Utiliser pinHash
   pinHash       String?           @db.VarChar(100)
   phoneVerified Boolean           @default(false)
-  isVerified    Boolean           @default(false)
+  isVerified    Boolean           @default(false) /// @deprecated Utiliser phoneVerified
   statut        StatutAgriculteur @default(EN_ATTENTE)
   timestampMaj  DateTime          @db.Date
   gicId         BigInt
@@ -301,6 +301,7 @@ model OtpCode {
   expiresAt DateTime
 }
 
+/// @deprecated Remplacé par la table OtpCode
 model VerificationCode {
   id        String   @id @default(uuid())
   code      String

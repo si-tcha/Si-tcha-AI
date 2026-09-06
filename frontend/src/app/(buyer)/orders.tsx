@@ -66,7 +66,7 @@ export default function BuyerOrdersScreen() {
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
           <View style={styles.headerTitleGroup}>
@@ -170,7 +170,7 @@ export default function BuyerOrdersScreen() {
               {selectedOrder && (
                 <View style={styles.receiptBox}>
                   <View style={styles.qrPlaceholder}>
-                    <Image 
+                    <Image
                       source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(selectedOrder.id)}` }}
                       style={{ width: 120, height: 120 }}
                     />

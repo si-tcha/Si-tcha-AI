@@ -29,7 +29,7 @@ export function errorHandler(
   }
 
   // General error handling
-  const statusCode = err.statusCode || 500;
+  const statusCode = err.statusCode || (res.statusCode >= 400 ? res.statusCode : 500);
   const message = err.message || 'Erreur interne du serveur';
 
   if (statusCode >= 500) {
@@ -39,7 +39,7 @@ export function errorHandler(
   }
 
   res.status(statusCode).json({
-    message: process.env.NODE_ENV === 'production' && statusCode >= 500 
+    message: process.env.NODE_ENV === 'production' && statusCode >= 500
       ? 'Une erreur interne est survenue.'
       : message,
   });

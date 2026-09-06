@@ -31,14 +31,20 @@ function formatPhoneNumber(phone: string): string {
 export class AppOtpProvider implements OtpProvider {
   private mode: OtpProviderMode;
 
-  constructor() {
+  constructor(explicitMode?: OtpProviderMode) {
+    if (explicitMode) {
+      this.mode = explicitMode;
+      return;
+    }
     const envProvider = (process.env.OTP_PROVIDER || '').toLowerCase();
-    if (envProvider === 'development' || envProvider === 'dev') {
+    if (envProvider === 'disabled') {
+      this.mode = 'disabled';
+    } else if (envProvider === 'development' || envProvider === 'dev') {
       this.mode = 'development';
-    } else if (envProvider === 'test' || process.env.NODE_ENV === 'test') {
-      this.mode = 'test';
     } else if (envProvider === 'nexah') {
       this.mode = 'nexah';
+    } else if (envProvider === 'test' || process.env.NODE_ENV === 'test') {
+      this.mode = 'test';
     } else {
       // Désactivé par défaut (Nexah est inopérant tant qu'il n'est pas configuré et activé explicitement)
       this.mode = 'disabled';

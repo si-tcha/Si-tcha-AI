@@ -40,7 +40,7 @@ describe('GIC Controller Unit Tests', () => {
 
     it('should return gic profile if user is valid seller', async () => {
       req = { user: { id: '1', role: 'seller', phone: '123', gicId: '1', gicRole: 'leader', status: 'active', name: 'Seller' } };
-      
+
       const mockGic = {
         id: BigInt(1),
         nom: 'GIC Test',
@@ -52,7 +52,7 @@ describe('GIC Controller Unit Tests', () => {
         agriculteurs: [{ id: BigInt(1), nom: 'Seller', contact: '123', estLeader: true, timestampMaj: new Date() }],
         besoins: []
       };
-      
+
       vi.mocked(prisma.gIC.findUnique).mockResolvedValue(mockGic as any);
 
       await getGicProfile(req as AuthRequest, res as Response);
@@ -67,7 +67,7 @@ describe('GIC Controller Unit Tests', () => {
 
   describe('createGicHarvest', () => {
     it('should create harvest and return 201', async () => {
-      req = { 
+      req = {
         user: { id: '1', role: 'seller', phone: '123', gicId: '1', gicRole: 'leader', status: 'active', name: 'Seller' },
         body: { product: 'Tomate', volume: 100 }
       };
@@ -92,7 +92,7 @@ describe('GIC Controller Unit Tests', () => {
 
   describe('createGicExpense', () => {
     it('should create expense and return 201', async () => {
-      req = { 
+      req = {
         user: { id: '1', role: 'seller', phone: '123', gicId: '1', gicRole: 'leader', status: 'active', name: 'Seller' },
         body: { label: 'Semences', amount: 50000, category: 'Intrants' }
       };

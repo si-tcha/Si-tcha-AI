@@ -157,7 +157,7 @@ export default function B2bTradeScreen() {
               </View>
 
               <Text style={styles.offerTitle}>{offer.title}</Text>
-              
+
               <View style={styles.priceContainer}>
                 <Feather name="tag" size={16} color="#d97834" style={{ marginRight: 6 }} />
                 <Text style={styles.priceText}>{offer.priceOrExchange}</Text>

@@ -48,13 +48,13 @@ export default function BuyerGicsScreen() {
       const load = async () => {
         await dbService.initDatabase();
         await loadLocal(); // Afficher local immédiatement
-        
+
         // Sync en arrière-plan et recharger si besoin
         dbService.syncRemoteData().then(async (updated) => {
           if (updated && isMounted) await loadLocal();
         }).catch(() => {});
       };
-      
+
       load();
       return () => {
         isMounted = false;
@@ -105,7 +105,7 @@ export default function BuyerGicsScreen() {
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
           <View style={styles.headerTitleGroup}>
@@ -165,7 +165,7 @@ export default function BuyerGicsScreen() {
           {gics.map((gic) => {
             const isSelected = selectedId === gic.id;
             const gicRatings = trustRatings.filter(r => r.targetId === gic.id);
-            const avgRating = gicRatings.length > 0 
+            const avgRating = gicRatings.length > 0
               ? (gicRatings.reduce((sum, r) => sum + r.rating, 0) / gicRatings.length).toFixed(1)
               : '--';
 
@@ -201,12 +201,12 @@ export default function BuyerGicsScreen() {
 
                 {/* Direct pre-finance action */}
                 <View style={styles.gicFooterRow}>
-                  <TouchableOpacity 
-                    style={styles.prefinanceBtn} 
+                  <TouchableOpacity
+                    style={styles.prefinanceBtn}
                     onPress={() => router.replace({
                       pathname: '/(buyer)/prefinancing',
-                      params: { 
-                        autoOpen: 'true', 
+                      params: {
+                        autoOpen: 'true',
                         targetGic: gic.name,
                         needDesc: gic.needs && gic.needs.length > 0 ? gic.needs[0].description : ''
                       }
@@ -238,8 +238,8 @@ export default function BuyerGicsScreen() {
 
                     <View style={styles.offerBlockHeader}>
                       <Text style={styles.offerTitle}>Récoltes publiées par ce GIC ({offers.length})</Text>
-                      <TouchableOpacity 
-                        style={styles.rateBtn} 
+                      <TouchableOpacity
+                        style={styles.rateBtn}
                         onPress={() => {
                           setRatingTarget(gic);
                           setRatingValue(5);
@@ -251,7 +251,7 @@ export default function BuyerGicsScreen() {
                         <Text style={styles.rateBtnText}>Évaluer le GIC</Text>
                       </TouchableOpacity>
                     </View>
-                    
+
                     {offers.length === 0 ? (
                       <Text style={styles.emptyMeta}>Aucune récolte disponible actuellement.</Text>
                     ) : (
@@ -299,10 +299,10 @@ export default function BuyerGicsScreen() {
               <View style={styles.starsRow}>
                 {[1, 2, 3, 4, 5].map((star) => (
                   <TouchableOpacity key={star} onPress={() => setRatingValue(star)}>
-                    <Feather 
-                      name="star" 
-                      size={32} 
-                      color={star <= ratingValue ? '#d97834' : '#e6dfcc'} 
+                    <Feather
+                      name="star"
+                      size={32}
+                      color={star <= ratingValue ? '#d97834' : '#e6dfcc'}
                     />
                   </TouchableOpacity>
                 ))}
@@ -310,8 +310,8 @@ export default function BuyerGicsScreen() {
 
               <Text style={styles.label}>Commentaire (optionnel)</Text>
               <View style={styles.textInputWrapper}>
-                <TextInput 
-                  style={styles.textArea} 
+                <TextInput
+                  style={styles.textArea}
                   placeholder="Ex: Récoltes excellentes, livraison à l'heure..."
                   placeholderTextColor="#9ca49a"
                   multiline

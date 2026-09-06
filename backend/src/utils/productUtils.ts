@@ -44,6 +44,6 @@ export function getImageUrlForProduct(name: string): string {
   if (lower.includes('café') || lower.includes('cafe')) return 'https://images.unsplash.com/photo-1559525839-b184a4d698c7?w=600&auto=format&fit=crop';
   if (lower.includes('oignon')) return 'https://images.unsplash.com/photo-1518977676601-b53f82aba655?w=600&auto=format&fit=crop';
   if (lower.includes('gombo')) return 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?w=600&auto=format&fit=crop';
-  
+
   return 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?w=600&auto=format&fit=crop';
 }

@@ -47,7 +47,7 @@ export default function BuyerB2BScreen() {
     <SafeAreaView style={styles.outerContainer}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Feather name="arrow-left" size={20} color="#f3ecd8" />
@@ -114,9 +114,9 @@ export default function BuyerB2BScreen() {
                   </View>
                   <Text style={styles.offerCategory}>{offer.category}</Text>
                 </View>
-                
+
                 <Text style={styles.offerTitle}>{offer.title}</Text>
-                
+
                 <View style={styles.offerDetails}>
                   <View style={styles.offerRow}>
                     <Feather name="map-pin" size={14} color="#5a6258" />
@@ -127,9 +127,9 @@ export default function BuyerB2BScreen() {
                     <Text style={styles.offerText}>{offer.gicName}</Text>
                   </View>
                 </View>
-                
+
                 <View style={styles.offerDivider} />
-                
+
                 <View style={styles.offerFooter}>
                   <View style={styles.priceContainer}>
                     <Text style={styles.priceLabel}>{offer.type === 'rent' ? 'Prix demandé :' : 'Contrepartie :'}</Text>

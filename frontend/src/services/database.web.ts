@@ -342,7 +342,7 @@ class DatabaseService {
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
     const cart = await this.getCart();
     if (!cart.length) return [];
-    
+
     let products: ProductOffer[] = [];
     try {
       products = await this.getProducts();
@@ -351,7 +351,7 @@ class DatabaseService {
       // Fallback offline
       products = DEFAULT_PRODUCTS;
     }
-    
+
     const created: OrderRecord[] = cart.map((item, index) => {
       const offer = products.find((p) => p.id === item.productId);
       return {

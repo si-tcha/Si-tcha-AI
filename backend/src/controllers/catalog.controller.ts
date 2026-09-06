@@ -6,7 +6,7 @@ import { getEmojiForCategory, getImageUrlForProduct } from '../utils/productUtil
 export async function getProducts(req: Request, res: Response) {
   try {
     const { page, limit, skip } = getPagination(req);
-    
+
     const [offers, total] = await Promise.all([
       prisma.recolteOffre.findMany({
         skip,
@@ -38,7 +38,7 @@ export async function getProducts(req: Request, res: Response) {
       dateDispo: offer.dateDispoEstimee.toISOString().slice(0, 10),
     }));
 
-    res.json({ 
+    res.json({
       products,
       meta: buildPaginationMeta(total, page, limit)
     });
@@ -50,7 +50,7 @@ export async function getProducts(req: Request, res: Response) {
 export async function getGicsPublic(req: Request, res: Response) {
   try {
     const { page, limit, skip } = getPagination(req);
-    
+
     const [gicsDb, total] = await Promise.all([
       prisma.gIC.findMany({
         skip,
@@ -75,7 +75,7 @@ export async function getGicsPublic(req: Request, res: Response) {
       })),
     }));
 
-    res.json({ 
+    res.json({
       gics,
       meta: buildPaginationMeta(total, page, limit)
     });
@@ -133,7 +133,7 @@ export async function getTerrain(req: Request, res: Response) {
             icon: data.weather[0]?.icon
           };
         }));
-        
+
         const validOwmWeather = owmWeather.filter(w => w !== null);
         if (validOwmWeather.length > 0) {
           weather = validOwmWeather as any;

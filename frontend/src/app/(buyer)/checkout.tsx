@@ -81,7 +81,7 @@ export default function BuyerCheckoutScreen() {
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         {/* Header Unifié Hauteur Fixe 56px */}
         <View style={styles.header}>
           <View style={styles.headerTitleGroup}>
@@ -168,7 +168,7 @@ export default function BuyerCheckoutScreen() {
               {/* Payment Method selector */}
               <Text style={styles.sectionTitle}>Mode de paiement Mobile Money</Text>
               <View style={styles.paymentMethodRow}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.paymentBtn, paymentMethod === 'momo' && styles.paymentBtnActive]}
                   onPress={() => setPaymentMethod('momo')}
                   activeOpacity={0.8}
@@ -177,7 +177,7 @@ export default function BuyerCheckoutScreen() {
                   <Text style={[styles.paymentText, paymentMethod === 'momo' && styles.paymentTextActive]}>MTN MoMo</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.paymentBtn, paymentMethod === 'om' && styles.paymentBtnActive]}
                   onPress={() => setPaymentMethod('om')}
                   activeOpacity={0.8}
@@ -186,7 +186,7 @@ export default function BuyerCheckoutScreen() {
                   <Text style={[styles.paymentText, paymentMethod === 'om' && styles.paymentTextActive]}>Orange Money</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.paymentBtn, paymentMethod === 'cash' && styles.paymentBtnActive]}
                   onPress={() => setPaymentMethod('cash')}
                   activeOpacity={0.8}
@@ -201,7 +201,7 @@ export default function BuyerCheckoutScreen() {
                 <Text style={styles.inputLabel}>Numéro de téléphone pour la transaction</Text>
                 <View style={styles.phoneInputRow}>
                   <Text style={styles.countryCode}>+237</Text>
-                  <TextInput 
+                  <TextInput
                     style={styles.phoneInput}
                     keyboardType="phone-pad"
                     value={phoneNumber}

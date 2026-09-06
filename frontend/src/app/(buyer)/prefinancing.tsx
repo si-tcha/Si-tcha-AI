@@ -41,7 +41,7 @@ export default function PrefinancingScreen() {
       if (params.targetGic) setGicName(params.targetGic as string);
       if (params.needDesc) setInputDescription(params.needDesc as string);
       else setInputDescription('');
-      
+
       setModalVisible(true);
     }
   }, [params.autoOpen, params.targetGic, params.needDesc]);
@@ -137,7 +137,7 @@ export default function PrefinancingScreen() {
               Investir dans un contrat de culture vous permet d'avancer des fonds ou des intrants à une coopérative agricole. En retour, vous obtenez l'exclusivité d'achat sur une partie de la future récolte à un prix garanti à l'avance.
             </Text>
           </View>
-          
+
           {/* Carte Trust Score */}
           <View style={styles.trustCard}>
             <View style={styles.trustHeader}>
@@ -173,8 +173,8 @@ export default function PrefinancingScreen() {
               </View>
             ))}
 
-            <TouchableOpacity 
-              style={styles.addReviewBtn} 
+            <TouchableOpacity
+              style={styles.addReviewBtn}
               onPress={() => setRatingModalVisible(true)}
               activeOpacity={0.8}
             >
@@ -210,7 +210,7 @@ export default function PrefinancingScreen() {
               </View>
 
               <Text style={styles.buyerName}>Acheteur / Investisseur : {d.buyerName}</Text>
-              
+
               <View style={styles.amountBox}>
                 <Text style={styles.amountLabel}>Avance Intrants / Fonds :</Text>
                 <Text style={styles.amountVal}>{d.amountFcfa.toLocaleString()} FCFA</Text>

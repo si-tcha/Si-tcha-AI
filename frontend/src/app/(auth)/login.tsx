@@ -52,13 +52,13 @@ export default function LoginScreen() {
     setIsLoading(true);
     try {
       const session = await apiClient.login(phone, pin, role);
-      
+
       if (session.requireOtp) {
         showToast({ message: session.message || 'Vérification requise', type: 'info' });
         router.push({ pathname: '/(auth)/otp-verification', params: { phone, role } });
         return;
       }
-      
+
       if (session.user) {
         showToast({ message: `Bienvenue ${session.user.name} !`, type: 'success' });
         if (session.user.role === 'seller') {
@@ -82,23 +82,23 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-      
+
       {/* Decorative Background Elements */}
       <View style={styles.bgCircle1} />
       <View style={styles.bgCircle2} />
-      
+
       <View style={styles.container}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-              
+
               <View style={styles.topSection}>
                 <View style={styles.header}>
                   <TouchableOpacity onPress={handleBack} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color="#f3ecd8" />
                   </TouchableOpacity>
                 </View>
-                
+
                 <View style={styles.heroSection}>
                   <Text style={styles.heroTitle}>Content de vous revoir.</Text>
                   <Text style={styles.heroSubtitle}>
@@ -109,18 +109,18 @@ export default function LoginScreen() {
 
               <View style={styles.bottomSection}>
                 <View style={styles.formCard}>
-                  
+
                   {/* Sélecteur de rôle */}
                   <View style={styles.roleToggle}>
-                    <TouchableOpacity 
-                      style={[styles.roleBtn, role === 'buyer' && styles.roleBtnActive]} 
+                    <TouchableOpacity
+                      style={[styles.roleBtn, role === 'buyer' && styles.roleBtnActive]}
                       onPress={() => setRole('buyer')}
                       activeOpacity={0.8}
                     >
                       <Text style={[styles.roleBtnText, role === 'buyer' && styles.roleBtnTextActive]}>Acheteur</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={[styles.roleBtn, role === 'seller' && styles.roleBtnActive]} 
+                    <TouchableOpacity
+                      style={[styles.roleBtn, role === 'seller' && styles.roleBtnActive]}
                       onPress={() => setRole('seller')}
                       activeOpacity={0.8}
                     >
@@ -167,9 +167,9 @@ export default function LoginScreen() {
                     </View>
                   </View>
 
-                  <TouchableOpacity 
-                    onPress={handleContinue} 
-                    style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled]} 
+                  <TouchableOpacity
+                    onPress={handleContinue}
+                    style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled]}
                     activeOpacity={0.9}
                     disabled={isLoading}
                   >
@@ -178,7 +178,7 @@ export default function LoginScreen() {
                     </Text>
                     {!isLoading && <Feather name="arrow-right" size={20} color="#f3ecd8" style={styles.btnIcon} />}
                   </TouchableOpacity>
-                  
+
                 </View>
               </View>
             </ScrollView>

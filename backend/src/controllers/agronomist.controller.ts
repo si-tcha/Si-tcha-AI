@@ -6,7 +6,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 export async function askAgronomist(req: Request, res: Response) {
   try {
     const { crop, category, question } = req.body;
-    
+
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({ answer: "Clé API Gemini non configurée sur le serveur." });
     }
@@ -38,9 +38,9 @@ Rédige ton ordonnance :`;
 
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
-    
+
     const answer = result.response.text() || "Désolé, je n'ai pas pu formuler de réponse.";
-    
+
     res.json({ answer });
   } catch (error: any) {
     console.error('Erreur IA Agronome (Gemini):', error);

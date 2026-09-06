@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { login, me, registerBuyer, registerSeller, verifyOtp, requireAuth } from '../../controllers/auth.controller.js';
-import { adminLogin } from '../controllers/auth.controller.js';
+import { login, me, registerBuyer, registerSeller, verifyOtp, requireAuth, adminLogin, logout } from '../../controllers/auth.controller.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { getProducts, getGicsPublic, getTerrain } from '../../controllers/catalog.controller.js';
 import { getGicProfile, updateGicProfile, getGicHarvests, createGicHarvest, getGicExpenses, createGicExpense, getGicOrders, createGicNeed } from '../../controllers/gic.controller.js';
@@ -37,6 +36,7 @@ router.post('/auth/register/seller', authLimiter, validate(registerSellerSchema)
 router.post('/auth/verify-otp', authLimiter, validate(verifyOtpSchema), verifyOtp);
 router.post('/auth/login', authLimiter, validate(loginSchema), login);
 router.post('/auth/admin/login', authLimiter, asyncHandler(adminLogin));
+router.post('/auth/logout', logout);
 router.get('/auth/me', requireAuth, me);
 
 // ==========================================

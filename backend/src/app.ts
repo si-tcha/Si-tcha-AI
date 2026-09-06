@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import healthRouter from './api/routes/health.route.js';
 import apiRouter from './api/routes/api.route.js';
 import adminRouter from './api/routes/admin.route.js';
@@ -11,8 +11,6 @@ import { setupSwagger } from './swagger.js';
 import { httpLogger } from './middlewares/logger.js';
 import { apiLimiter } from './middlewares/rateLimiter.js';
 import { errorHandler } from './middlewares/errorHandler.js';
-
-dotenv.config();
 
 // Support de sérialisation BigInt dans les réponses JSON
 (BigInt.prototype as any).toJSON = function () {

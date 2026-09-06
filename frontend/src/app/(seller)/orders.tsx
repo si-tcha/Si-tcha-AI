@@ -45,7 +45,7 @@ export default function SellerOrdersScreen() {
     <SafeAreaView style={styles.outerContainer}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -73,7 +73,7 @@ export default function SellerOrdersScreen() {
           </View>
 
           <Text style={styles.sectionTitle}>Historique des commandes</Text>
-          
+
           {isLoading ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateText}>Chargement des commandes...</Text>
@@ -97,7 +97,7 @@ export default function SellerOrdersScreen() {
                     </Text>
                   </View>
                 </View>
-                
+
                 <View style={styles.orderDetailsRow}>
                   <View style={styles.detailCol}>
                     <Text style={styles.detailLabel}>Acheteur</Text>

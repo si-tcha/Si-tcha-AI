@@ -56,7 +56,7 @@ describe('Auth Controller Unit Tests', () => {
         body: { companyName: 'Test Corp', phone: '699112233', pin: '1234' }
       };
 
-      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({ id: 1 } as any);
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({ id: 1, phoneVerified: true } as any);
 
       await registerBuyer(req as Request, res as Response);
 
@@ -69,14 +69,14 @@ describe('Auth Controller Unit Tests', () => {
       req = {
         body: { phone: '699112233', pin: '1234' }
       };
-      
+
       const pinHash = await bcrypt.hash('1234', 10);
-      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({ 
-        id: 1, 
-        pinHash, 
-        phoneVerified: true, 
-        contact: '+237699112233', 
-        nomEntreprise: 'Test Corp' 
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: 1,
+        pinHash,
+        phoneVerified: true,
+        contact: '+237699112233',
+        nomEntreprise: 'Test Corp'
       } as any);
 
       await login(req as Request, res as Response);
@@ -91,13 +91,13 @@ describe('Auth Controller Unit Tests', () => {
       req = {
         body: { phone: '699112233', pin: '1234' }
       };
-      
+
       const pinHash = await bcrypt.hash('1234', 10);
-      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({ 
-        id: 1, 
-        pinHash, 
-        phoneVerified: false, 
-        contact: '+237699112233' 
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: 1,
+        pinHash,
+        phoneVerified: false,
+        contact: '+237699112233'
       } as any);
 
       await login(req as Request, res as Response);

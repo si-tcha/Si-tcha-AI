@@ -56,7 +56,7 @@ export async function createTrustRating(req: AuthRequest, res: Response) {
         targetType,
         rating,
         comment: comment.trim(),
-        authorName: authorName?.trim() ?? req.user.name,
+        authorName: authorName?.trim() ?? req.user.name ?? 'Utilisateur',
       },
     });
 

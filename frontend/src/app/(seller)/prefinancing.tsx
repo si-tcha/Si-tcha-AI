@@ -38,7 +38,7 @@ export default function SellerPrefinancingScreen() {
     <SafeAreaView style={styles.outerContainer}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
-        
+
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -80,7 +80,7 @@ export default function SellerPrefinancingScreen() {
                     <Text style={styles.dealBuyerName}>{deal.buyerName || 'Acheteur Anonyme'}</Text>
                   </View>
                   <View style={[
-                    styles.statusBadge, 
+                    styles.statusBadge,
                     deal.status === 'accepte' ? styles.statusBadgeSuccess : ((deal.status as string) === 'refuse' ? styles.statusBadgeDanger : {})
                   ]}>
                     <Text style={[
@@ -91,14 +91,14 @@ export default function SellerPrefinancingScreen() {
                     </Text>
                   </View>
                 </View>
-                
+
                 <View style={styles.dealAmountRow}>
                   <Text style={styles.dealAmountLabel}>Financement proposé</Text>
                   <Text style={styles.dealAmountVal}>{deal.amountFcfa.toLocaleString()} FCFA</Text>
                 </View>
-                
+
                 <View style={styles.dealDivider} />
-                
+
                 <View style={styles.dealConditions}>
                   <Text style={styles.conditionTitle}>Contrepartie attendue :</Text>
                   <View style={styles.conditionRow}>
@@ -113,8 +113,8 @@ export default function SellerPrefinancingScreen() {
 
                 {deal.status === 'propose' && (
                   <View style={styles.dealActions}>
-                    <TouchableOpacity 
-                      style={[styles.actionBtn, { backgroundColor: '#ef4444' }]} 
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
                       onPress={async () => {
                         await dbService.updatePrefinancingDealStatus(deal.id, 'refuse');
                         loadDeals();
@@ -122,8 +122,8 @@ export default function SellerPrefinancingScreen() {
                     >
                       <Text style={styles.actionBtnText}>Refuser</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={[styles.actionBtn, { backgroundColor: '#15803d' }]} 
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: '#15803d' }]}
                       onPress={async () => {
                         await dbService.updatePrefinancingDealStatus(deal.id, 'accepte');
                         loadDeals();

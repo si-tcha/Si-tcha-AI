@@ -7,8 +7,8 @@ export async function createDonneeMarcheManuelle(req: Request, res: Response): P
     const { prixMin, prixMax, rentabilite, dateReleve, produitAgricoleId, bassinProductionId } = req.body;
 
     if (!prixMin || !prixMax || !produitAgricoleId || !bassinProductionId) {
-      res.status(400).json({ 
-        message: 'Prix min, prix max, produitAgricoleId et bassinProductionId sont requis.' 
+      res.status(400).json({
+        message: 'Prix min, prix max, produitAgricoleId et bassinProductionId sont requis.'
       });
       return;
     }
@@ -131,7 +131,7 @@ export async function getMarketDashboard(req: Request, res: Response): Promise<v
         for (const group of groupedData.values()) {
             const latest = group[0];
             const previous = group[1];
-            
+
             let tendance: Tendance = 'STABLE';
             if (previous && latest.prixMoyen > previous.prixMoyen) tendance = 'HAUSSE';
             else if (previous && latest.prixMoyen < previous.prixMoyen) tendance = 'BAISSE';

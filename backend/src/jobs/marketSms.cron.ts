@@ -7,14 +7,14 @@ function formatMarketSms(data: any[]): string {
     if (data.length === 0) {
         return "Aucune donnée de marché récente disponible aujourd'hui.";
     }
-    
+
     const summary = data.slice(0, 3) // Limite à 3 produits pour un SMS concis
         .map(d => {
             const tendanceSymbol = d.tendance === 'HAUSSE' ? '📈' : d.tendance === 'BAISSE' ? '📉' : '📊';
             return `${d.produit}: ${Math.round(d.prixMoyen)}FCFA ${tendanceSymbol}`;
         })
         .join(' | ');
-    
+
     return `Bulletin marché Si-tcha: ${summary}`;
 }
 

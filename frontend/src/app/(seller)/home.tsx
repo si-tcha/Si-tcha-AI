@@ -16,7 +16,7 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export default function SellerHomeScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  
+
   // États pour les récoltes et dépenses (persistés via dbService)
   const [harvests, setHarvests] = useState<HarvestRecord[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
@@ -80,7 +80,7 @@ export default function SellerHomeScreen() {
   // Calculs financiers dynamiques
   const totalVolume = harvests.reduce((acc, curr) => acc + curr.volume, 0);
   const totalExpenses = expenses.reduce((acc, curr) => acc + curr.amount, 0);
-  
+
   // Coût de revient moyen par kg = Dépenses totales / Volume total
   const costPricePerKg = totalVolume > 0 ? Math.round(totalExpenses / totalVolume) : 0;
   const surfaceHa = profile?.surfaceHa ?? 2.5;
@@ -94,7 +94,7 @@ export default function SellerHomeScreen() {
 
   // Répartition par catégorie de dépenses
   const expenseCategories = ['Intrants', 'Transport', "Main d'œuvre", 'Matériel'];
-  const getCategoryTotal = (cat: string) => 
+  const getCategoryTotal = (cat: string) =>
     expenses.filter(e => e.category === cat).reduce((sum, e) => sum + e.amount, 0);
 
   const handleAddHarvest = async () => {
@@ -189,7 +189,7 @@ export default function SellerHomeScreen() {
               </View>
               <Text style={styles.calcSubHeader}>Bilan</Text>
             </View>
-            
+
             <View style={styles.calcMetricsRow}>
               <View style={styles.calcMetricCol}>
                 <Text style={styles.calcMetricLabel}>Total Dépenses</Text>
@@ -236,8 +236,8 @@ export default function SellerHomeScreen() {
 
           {/* Boutons d'actions rapides de saisie */}
           <View style={styles.actionButtonsRow}>
-            <TouchableOpacity 
-              onPress={() => setHarvestModalVisible(true)} 
+            <TouchableOpacity
+              onPress={() => setHarvestModalVisible(true)}
               style={[styles.actionBtn, { backgroundColor: '#101e0f' }]}
               activeOpacity={0.8}
             >
@@ -245,8 +245,8 @@ export default function SellerHomeScreen() {
               <Text style={styles.actionBtnText}>+ Récolte</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              onPress={() => setExpenseModalVisible(true)} 
+            <TouchableOpacity
+              onPress={() => setExpenseModalVisible(true)}
               style={[styles.actionBtn, { backgroundColor: '#d97834' }]}
               activeOpacity={0.8}
             >
@@ -255,8 +255,8 @@ export default function SellerHomeScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity 
-            onPress={() => router.push('/(seller)/prefinancing')} 
+          <TouchableOpacity
+            onPress={() => router.push('/(seller)/prefinancing')}
             style={[styles.actionBtn, { backgroundColor: '#1a3018', marginTop: 10, alignSelf: 'center', width: '100%', paddingVertical: 12 }]}
             activeOpacity={0.8}
           >
@@ -358,7 +358,7 @@ export default function SellerHomeScreen() {
               )}
             </View>
           </View>
-          
+
         </ScrollView>
 
         {/* MODALE SAISIE RECOLTE */}
@@ -376,8 +376,8 @@ export default function SellerHomeScreen() {
               <View style={styles.modalForm}>
                 <View style={styles.fieldWrapper}>
                   <Text style={styles.label}>Nom du produit</Text>
-                  <TextInput 
-                    style={styles.textInput} 
+                  <TextInput
+                    style={styles.textInput}
                     placeholder="Ex: Pommes de terre, Maïs..."
                     placeholderTextColor="#9ca49a"
                     value={formProduct}
@@ -387,9 +387,9 @@ export default function SellerHomeScreen() {
 
                 <View style={styles.fieldWrapper}>
                   <Text style={styles.label}>Quantité (kg)</Text>
-                  <TextInput 
-                    style={styles.textInput} 
-                    placeholder="Ex: 500" 
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Ex: 500"
                     placeholderTextColor="#9ca49a"
                     keyboardType="numeric"
                     value={formVolume}
@@ -421,8 +421,8 @@ export default function SellerHomeScreen() {
               <View style={styles.modalForm}>
                 <View style={styles.fieldWrapper}>
                   <Text style={styles.label}>Libellé de la dépense</Text>
-                  <TextInput 
-                    style={styles.textInput} 
+                  <TextInput
+                    style={styles.textInput}
                     placeholder="Ex: Engrais NPK, Achat sacs..."
                     placeholderTextColor="#9ca49a"
                     value={formExpenseLabel}
@@ -432,9 +432,9 @@ export default function SellerHomeScreen() {
 
                 <View style={styles.fieldWrapper}>
                   <Text style={styles.label}>Montant (FCFA)</Text>
-                  <TextInput 
-                    style={styles.textInput} 
-                    placeholder="Ex: 15000" 
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Ex: 15000"
                     placeholderTextColor="#9ca49a"
                     keyboardType="numeric"
                     value={formExpenseAmount}
@@ -448,8 +448,8 @@ export default function SellerHomeScreen() {
                     {['Intrants', 'Transport', "Main d'œuvre", 'Matériel'].map(cat => {
                       const isSelected = formExpenseCategory === cat;
                       return (
-                        <TouchableOpacity 
-                          key={cat} 
+                        <TouchableOpacity
+                          key={cat}
                           onPress={() => setFormExpenseCategory(cat)}
                           style={[styles.catPill, isSelected ? styles.catPillSelected : null]}
                         >

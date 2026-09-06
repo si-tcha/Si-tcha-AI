@@ -39,7 +39,7 @@ export async function getBuyerOrders(req: AuthRequest, res: Response) {
       createdAt: new Date().toISOString(),
     }));
 
-    res.json({ 
+    res.json({
       orders,
       meta: buildPaginationMeta(total, page, limit)
     });

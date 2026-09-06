@@ -69,7 +69,7 @@ export default function RegisterRoleScreen() {
         <View style={styles.bottomSection}>
           <View style={styles.optionsContainer}>
             {/* Option 1: Acheteur */}
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setSelectedRole('buyer')}
               style={[styles.roleCard, selectedRole === 'buyer' && styles.roleCardActive]}
               activeOpacity={0.9}
@@ -89,7 +89,7 @@ export default function RegisterRoleScreen() {
             </TouchableOpacity>
 
             {/* Option 2: Vendeur (GIC) */}
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setSelectedRole('seller')}
               style={[styles.roleCard, selectedRole === 'seller' && styles.roleCardActive]}
               activeOpacity={0.9}
@@ -111,8 +111,8 @@ export default function RegisterRoleScreen() {
 
           {/* Pied de page et Bouton Continuer */}
           <View style={styles.footer}>
-            <TouchableOpacity 
-              onPress={handleContinue} 
+            <TouchableOpacity
+              onPress={handleContinue}
               style={[styles.primaryButton, !selectedRole && styles.primaryButtonDisabled]}
               disabled={!selectedRole}
               activeOpacity={0.9}

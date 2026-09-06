@@ -28,11 +28,25 @@ export const getPendingMembersForGic = async (gicId: string | bigint) => {
 };
 
 export const updateMemberStatus = async (leaderId: string | bigint, memberId: string | bigint, newStatus: 'APPROUVE' | 'REJETE') => {
-    // 1. Find the leader and the member in a single transaction to ensure data consistency
-    const [leader, memberToUpdate] = await prisma.$transaction([
-        prisma.agriculteur.findUniqueOrThrow({ where: { id: BigInt(leaderId) } }),
-        prisma.agriculteur.findUniqueOrThrow({ where: { id: BigInt(memberId) } }),
-    ]);
+    let leaderBigInt: bigint;
+    let memberBigInt: bigint;
+    try {
+        leaderBigInt = BigInt(leaderId);
+        memberBigInt = BigInt(memberId);
+    } catch {
+        throw Object.assign(new Error("Identifiant invalide."), { statusCode: 404 });
+    }
+
+    // 1. Check leader and member exist
+    const leader = await prisma.agriculteur.findUnique({ where: { id: leaderBigInt } });
+    if (!leader) {
+        throw Object.assign(new Error("Leader introuvable."), { statusCode: 404 });
+    }
+
+    const memberToUpdate = await prisma.agriculteur.findUnique({ where: { id: memberBigInt } });
+    if (!memberToUpdate) {
+        throw Object.assign(new Error("Membre introuvable."), { statusCode: 404 });
+    }
 
     // 2. Security check: Ensure the leader is actually a leader and they belong to the same GIC
     if (!leader.estLeader || leader.gicId !== memberToUpdate.gicId) {
@@ -46,7 +60,7 @@ export const updateMemberStatus = async (leaderId: string | bigint, memberId: st
 
     // 4. Update the member's status
     const updated = await prisma.agriculteur.update({
-        where: { id: BigInt(memberId) },
+        where: { id: memberBigInt },
         data: {
             statut: newStatus,
             timestampMaj: new Date(),

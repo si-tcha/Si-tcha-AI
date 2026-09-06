@@ -30,11 +30,11 @@ export default function BuyerHomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductOffer | null>(null);
-  
+
   const { cartCount, addToCart: addProductToCart } = useCart();
   const [alertCount, setAlertCount] = useState(cachedAlertCount);
   const [products, setProducts] = useState<ProductOffer[]>(cachedProducts);
-  
+
   const router = useRouter();
   const { showToast } = useToast();
 
@@ -121,7 +121,7 @@ export default function BuyerHomeScreen() {
     : [];
 
   const renderProductItem = ({ item }: { item: ProductOffer }) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.productCard}
       onPress={() => setSelectedProduct(item)}
       activeOpacity={0.85}
@@ -205,8 +205,8 @@ export default function BuyerHomeScreen() {
             ) : null}
           </View>
 
-          <TouchableOpacity 
-            style={[styles.filterTriggerBtn, activeFiltersCount > 0 && styles.filterTriggerBtnActive]} 
+          <TouchableOpacity
+            style={[styles.filterTriggerBtn, activeFiltersCount > 0 && styles.filterTriggerBtnActive]}
             onPress={() => setShowFilterModal(true)}
             activeOpacity={0.8}
           >
@@ -301,8 +301,8 @@ export default function BuyerHomeScreen() {
 
         {/* Floating Cart bar */}
         {cartCount > 0 && (
-          <TouchableOpacity 
-            style={styles.floatingCartBar} 
+          <TouchableOpacity
+            style={styles.floatingCartBar}
             onPress={() => router.replace('/(buyer)/checkout')}
             activeOpacity={0.9}
           >
@@ -408,22 +408,22 @@ export default function BuyerHomeScreen() {
 
                   {/* Actions d'achat au bas de la modale */}
                   <View style={styles.modalFooter}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={async () => {
                         await handleAddToCart(selectedProduct);
-                      }} 
+                      }}
                       style={styles.modalAddCartBtn}
                     >
                       <Feather name="shopping-cart" size={18} color="#f3ecd8" />
                       <Text style={styles.modalAddCartText}>Ajouter au panier</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={async () => {
                         await handleAddToCart(selectedProduct);
                         setSelectedProduct(null);
                         router.replace('/(buyer)/checkout');
-                      }} 
+                      }}
                       style={styles.modalBuyNowBtn}
                     >
                       <Text style={styles.modalBuyNowText}>Acheter / MoMo</Text>
@@ -763,7 +763,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalApplyText: { fontSize: 13, fontWeight: '900', color: '#ffffff' },
-  
+
   /* STYLES FICHE PRODUIT DÉTAILLÉE */
   detailHeroBox: {
     height: 140,
