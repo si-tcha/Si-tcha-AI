@@ -1,6 +1,6 @@
-import { NextFunction, Request, Response } from 'express';
+/* import { NextFunction, Request, Response } from 'express';
 import { randomBytes } from 'node:crypto';
-import prisma from '../lib/prisma';
+import prisma from '../lib/prisma.js';
 
 export interface UserAccount {
   id: string;
@@ -46,9 +46,12 @@ export async function registerBuyer(req: Request, res: Response) {
     acheteur = await prisma.acheteur.create({
       data: {
         nomEntreprise: companyName.trim(),
+        nom: companyName.trim(),
+        nui: regNumber?.trim() || `NUI-${Date.now()}`,
+        secteur_activite: 'Acheteur',
         contact: cleanPhone,
         adresse: address?.trim() || 'Douala, Cameroun',
-        preferencesAlertes: JSON.stringify({ productNames: [], bassins: [] }),
+        preferences: JSON.stringify({ productNames: [], bassins: [] }),
       },
     });
   }
@@ -230,3 +233,4 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
 export function me(req: AuthRequest, res: Response) {
   return res.json({ user: req.user ?? null });
 }
+ */

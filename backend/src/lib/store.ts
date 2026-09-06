@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { AppData } from '../domain/types';
-import { seedData } from '../data/seed';
+import { AppData } from '../domain/types.js';
+import { seedData } from '../data/seed.js';
 
 const dataFile = resolve(process.cwd(), process.env.DATA_FILE ?? 'data/sitcha.local.json');
 

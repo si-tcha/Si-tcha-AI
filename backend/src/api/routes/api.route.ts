@@ -1,8 +1,8 @@
-import { Router } from 'express';
-import { login, me, registerBuyer, registerSeller, requireAuth, AuthRequest } from '../auth';
-import { createId, readStore, updateStore } from '../../lib/store';
-import { OrderRecord, OrderStatus, OrderType } from '../../domain/types';
-import prisma from '../../lib/prisma';
+/* import { Router } from 'express';
+import { login, me, registerBuyer, registerSeller, requireAuth, AuthRequest } from '../auth.js';
+import { createId, readStore, updateStore } from '../../lib/store.js';
+import { OrderRecord, OrderStatus, OrderType } from '../../domain/types.js';
+import prisma from '../../lib/prisma.js';
 
 const router = Router();
 
@@ -76,7 +76,7 @@ router.get('/catalog/products', async (_req, res) => {
       price: '500',
       unit: offer.produitAgricole.categorie === 'Fruits' ? 'régime' : 'kg',
       emoji: getEmojiForCategory(offer.produitAgricole.categorie, offer.produitAgricole.nom),
-      imageUrl: offer.photoURL ?? offer.produitAgricole.imageURL ?? getImageUrlForProduct(offer.produitAgricole.nom),
+      imageUrl: offer.imageUrl ?? offer.produitAgricole.imageUrl ?? getImageUrlForProduct(offer.produitAgricole.nom),
       bassin: offer.gic?.bassinProduction?.nom ?? 'Ouest',
       maturite: offer.maturite,
       volumeDisponible: Number(offer.quantiteDisponible),
@@ -528,3 +528,4 @@ router.put('/buyer/alert-preferences', requireAuth, async (req: AuthRequest, res
 });
 
 export default router;
+ */

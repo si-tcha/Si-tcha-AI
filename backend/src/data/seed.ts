@@ -1,4 +1,4 @@
-import { AppData } from '../domain/types';
+import { AppData } from '../domain/types.js';
 
 const now = '2026-07-22T08:00:00.000Z';
 

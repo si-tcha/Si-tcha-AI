@@ -16,7 +16,8 @@ enum StatutAgriculteur {
 
 model Acheteur {
   id                   String                 @id @default(uuid())
-  nom                  String                 
+  nom                  String    
+  adresse              String?             
   nomEntreprise        String 
   nui                  String                 @unique
   secteur_activite     String                 

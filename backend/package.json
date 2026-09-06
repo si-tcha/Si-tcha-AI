@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "seed": "tsx ./scripts/seed.ts",
+    "seed": "tsx ./scripts/seed-gic.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint . --ext .ts"
   },
@@ -22,6 +22,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.41",
     "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.11.6",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
@@ -43,6 +44,7 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.6.0",
+    "nodemailer": "^10.0.0",
     "pg": "^8.12.0",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1"
