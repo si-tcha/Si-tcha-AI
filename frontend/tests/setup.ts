@@ -18,3 +18,7 @@ if (typeof globalThis.localStorage === 'undefined') {
     },
   } as Storage;
 }
+
+if (typeof (globalThis as any).__DEV__ === 'undefined') {
+  (globalThis as any).__DEV__ = true;
+}

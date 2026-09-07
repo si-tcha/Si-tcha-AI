@@ -326,6 +326,10 @@ class DatabaseService {
       try {
         db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;");
       } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE parcels ADD COLUMN actualHarvestDate TEXT;");
+      } catch (e) { /* ignore if already exists */ }
+
 
       // Async sync from remote backend if network is online
       this.syncRemoteData().catch(() => {});
@@ -641,35 +645,83 @@ class DatabaseService {
     return this.getDb().getAllSync('SELECT * FROM parcels ORDER BY updatedAt DESC') as any[];
   }
 
-  async addParcel(parcelName: string, crop: string, sowingDate: string, stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter', estimatedHarvestDate: string, estimatedVolumeKg: number, actualHarvestVolumeKg?: number): Promise<ParcelGrowthRecord> {
+  async saveParcels(parcels: ParcelGrowthRecord[]): Promise<void> {
+    const db = this.getDb();
+    db.runSync('DELETE FROM parcels WHERE synced = 1 OR synced IS NULL');
+    for (const p of parcels) {
+      db.runSync(
+        'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, actualHarvestDate, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          p.id,
+          p.parcelName,
+          p.crop,
+          p.sowingDate,
+          p.stage,
+          p.estimatedHarvestDate,
+          p.estimatedVolumeKg,
+          p.actualHarvestVolumeKg ?? null,
+          p.actualHarvestDate ?? null,
+          p.updatedAt,
+          1,
+        ]
+      );
+    }
+  }
+
+  async addParcel(
+    parcelName: string,
+    crop: string,
+    sowingDate: string,
+    stage: ParcelGrowthRecord['stage'],
+    estimatedHarvestDate: string,
+    estimatedVolumeKg: number,
+    actualHarvestVolumeKg?: number | null,
+    actualHarvestDate?: string | null
+  ): Promise<ParcelGrowthRecord> {
     const id = Date.now().toString();
     const updatedAt = nowIso();
     const db = this.getDb();
     db.runSync(
-      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg || null, updatedAt, 0]
+      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, actualHarvestDate, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        id,
+        parcelName,
+        crop,
+        sowingDate,
+        stage,
+        estimatedHarvestDate,
+        estimatedVolumeKg,
+        actualHarvestVolumeKg ?? null,
+        actualHarvestDate ?? null,
+        updatedAt,
+        0,
+      ]
     );
 
-    // Background sync to backend
-    apiClient.createParcel({ parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg }).then(() => {
-      db.runSync('UPDATE parcels SET synced = 1 WHERE id = ?', [id]);
-      this.syncRemoteData().catch(() => {});
-    }).catch((e) => {
-      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : parcelle sauvegardée localement.");
-    });
-
-    return { id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt };
+    return {
+      id,
+      parcelName,
+      crop,
+      sowingDate,
+      stage,
+      estimatedHarvestDate,
+      estimatedVolumeKg,
+      actualHarvestVolumeKg: actualHarvestVolumeKg ?? null,
+      actualHarvestDate: actualHarvestDate ?? null,
+      updatedAt,
+      synced: false,
+    };
   }
 
-  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number): Promise<void> {
+  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number, actualHarvestDate?: string): Promise<void> {
     const db = this.getDb();
     const updatedAt = nowIso();
     db.runSync(
-      'UPDATE parcels SET actualHarvestVolumeKg = ?, updatedAt = ?, synced = 0 WHERE id = ?',
-      [actualHarvestVolumeKg, updatedAt, id]
+      'UPDATE parcels SET actualHarvestVolumeKg = ?, actualHarvestDate = COALESCE(?, actualHarvestDate), updatedAt = ?, synced = 0 WHERE id = ?',
+      [actualHarvestVolumeKg, actualHarvestDate ?? null, updatedAt, id]
     );
-    this.syncRemoteData().catch(() => {});
   }
+
 
   // --- Préfinancement & Trust Score (Lot D) ---
   async getPrefinancingDeals(): Promise<PrefinancingDeal[]> {

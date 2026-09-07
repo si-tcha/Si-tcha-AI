@@ -560,14 +560,19 @@ class DatabaseService {
     return readJson(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
   }
 
+  async saveParcels(parcels: ParcelGrowthRecord[]): Promise<void> {
+    writeJson(STORAGE_KEYS.PARCELS, parcels);
+  }
+
   async addParcel(
     parcelName: string,
     crop: string,
     sowingDate: string,
-    stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter',
+    stage: ParcelGrowthRecord['stage'],
     estimatedHarvestDate: string,
     estimatedVolumeKg: number,
-    actualHarvestVolumeKg?: number
+    actualHarvestVolumeKg?: number | null,
+    actualHarvestDate?: string | null
   ): Promise<ParcelGrowthRecord> {
     const list = await this.getParcels();
     const newParcel: ParcelGrowthRecord = {
@@ -578,13 +583,29 @@ class DatabaseService {
       stage,
       estimatedHarvestDate,
       estimatedVolumeKg,
-      actualHarvestVolumeKg,
+      actualHarvestVolumeKg: actualHarvestVolumeKg ?? null,
+      actualHarvestDate: actualHarvestDate ?? null,
       updatedAt: nowIso(),
+      synced: false,
     };
     list.unshift(newParcel);
     writeJson(STORAGE_KEYS.PARCELS, list);
     return newParcel;
   }
+
+  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number, actualHarvestDate?: string): Promise<void> {
+    const list = await this.getParcels();
+    const idx = list.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      list[idx].actualHarvestVolumeKg = actualHarvestVolumeKg;
+      if (actualHarvestDate) {
+        list[idx].actualHarvestDate = actualHarvestDate;
+      }
+      list[idx].updatedAt = nowIso();
+      writeJson(STORAGE_KEYS.PARCELS, list);
+    }
+  }
+
 
   // --- Préfinancement & Trust Score (Lot D) ---
   async getPrefinancingDeals(): Promise<PrefinancingDeal[]> {

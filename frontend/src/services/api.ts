@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { AlertPreferences, OrderType } from './database.shared';
+import { AlertPreferences, OrderType, ParcelGrowthRecord } from './database.shared';
 
 // Safe dynamic require pour expo-secure-store (non supporté hors environnement natif/Expo)
 let SecureStore: typeof import('expo-secure-store') | null = null;
@@ -432,6 +432,7 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
   if (!response.ok) {
     const message =
       payload?.message ||
+      payload?.error ||
       (Array.isArray(payload?.errors) ? payload.errors.map((e: any) => e.message || e).join(', ') : 'Erreur API SI-TCHA.');
     const requireOtp = Boolean(payload?.requireOtp);
 
@@ -533,8 +534,19 @@ export const apiClient = {
   getAlertPreferences: () => request<{ preferences: AlertPreferences }>('/buyer/alert-preferences'),
   saveAlertPreferences: (preferences: AlertPreferences) =>
     request<{ preferences: AlertPreferences }>('/buyer/alert-preferences', 'PUT', preferences),
-  askAgronomist: (crop: string, category: string, question: string) =>
-    request<{ answer: string }>('/gic/agronomist', 'POST', { crop, category, question }),
+  askAgronomist: async (crop: string, category: string, question: string) => {
+    if (!question || !question.trim()) {
+      throw new Error('La question ne peut pas être vide.');
+    }
+    if (question.length > 1000) {
+      throw new Error('La question ne peut pas dépasser 1000 caractères.');
+    }
+    return request<{ answer: string; disclaimer?: string; question?: string; model?: string; timestamp?: string }>(
+      '/gic/agronomist',
+      'POST',
+      { crop: crop?.trim() || 'Culture diverse', category: category?.trim() || 'Autre', question: question.trim() }
+    );
+  },
 
   // B2B Marketplace
   getB2BOffers: () => request<{ offers: unknown[] }>('/b2b/offers'),
@@ -542,9 +554,30 @@ export const apiClient = {
     request<{ offer: unknown }>('/b2b/offers', 'POST', data),
 
   // Parcelles / Journal de croissance
-  getParcels: () => request<{ parcels: unknown[] }>('/gic/parcels'),
-  createParcel: (data: { parcelName: string; crop: string; sowingDate: string; stage: string; estimatedHarvestDate: string; estimatedVolumeKg: number; actualHarvestVolumeKg?: number }) =>
-    request<{ parcel: unknown }>('/gic/parcels', 'POST', data),
+  getParcels: () => request<{ parcels: ParcelGrowthRecord[] }>('/gic/parcels'),
+  createParcel: (data: {
+    parcelName: string;
+    crop: string;
+    sowingDate: string;
+    stage?: string;
+    estimatedHarvestDate: string;
+    estimatedVolumeKg: number;
+    actualHarvestVolumeKg?: number | null;
+    actualHarvestDate?: string | null;
+  }) => request<{ parcel: ParcelGrowthRecord }>('/gic/parcels', 'POST', data),
+  updateParcel: (
+    id: string,
+    data: {
+      parcelName?: string;
+      crop?: string;
+      sowingDate?: string;
+      stage?: string;
+      estimatedHarvestDate?: string;
+      estimatedVolumeKg?: number;
+      actualHarvestVolumeKg?: number | null;
+      actualHarvestDate?: string | null;
+    }
+  ) => request<{ parcel: ParcelGrowthRecord }>(`/gic/parcels/${id}`, 'PUT', data),
 
   // Préfinancement
   getPrefinancingDeals: () => request<{ deals: unknown[] }>('/prefinancing/deals'),
