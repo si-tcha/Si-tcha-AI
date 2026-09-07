@@ -44,3 +44,12 @@ export const verifyOtpSchema = z.object({
     }),
   }),
 });
+
+export const resendOtpSchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    role: z.enum(['buyer', 'seller'], {
+      message: "Rôle requis ('buyer' ou 'seller').",
+    }),
+  }),
+});

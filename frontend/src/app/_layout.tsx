@@ -3,6 +3,7 @@ import { useColorScheme } from 'react-native';
 import { Stack } from 'expo-router';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { ToastProvider } from '@/components/ui/toast';
+import { AuthProvider } from '@/context/AuthContext';
 
 import { useEffect } from 'react';
 import { setSyncErrorHandler } from '@/services/database';
@@ -23,17 +24,18 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <ToastProvider>
-        <SyncErrorListener />
-        <AnimatedSplashOverlay />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="onboarding" />
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(buyer)" />
-          <Stack.Screen name="(seller)" />
-        </Stack>
+        <AuthProvider>
+          <SyncErrorListener />
+          <AnimatedSplashOverlay />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="onboarding" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(buyer)" />
+            <Stack.Screen name="(seller)" />
+          </Stack>
+        </AuthProvider>
       </ToastProvider>
     </ThemeProvider>
   );
 }
-

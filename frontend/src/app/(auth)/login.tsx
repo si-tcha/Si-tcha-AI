@@ -4,7 +4,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { apiClient } from '@/services/api';
+import { ApiError } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/toast';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -26,6 +27,7 @@ export default function LoginScreen() {
   const [focusedField, setFocusedField] = useState<'phone' | 'pin' | null>(null);
   const router = useRouter();
   const { showToast } = useToast();
+  const { signIn } = useAuth();
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -51,28 +53,33 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const session = await apiClient.login(phone, pin, role);
+      const session = await signIn(phone.trim(), pin.trim(), role);
 
       if (session.requireOtp) {
         showToast({ message: session.message || 'Vérification requise', type: 'info' });
-        router.push({ pathname: '/(auth)/otp-verification', params: { phone, role } });
+        router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim(), role } });
         return;
       }
 
       if (session.user) {
         showToast({ message: `Bienvenue ${session.user.name} !`, type: 'success' });
         if (session.user.role === 'seller') {
-          router.replace(session.user.status === 'active' ? '/(seller)/home' : '/(auth)/activation-pending');
+          const isSellerActive = session.user.status === 'active' || session.user.statut === 'APPROUVE';
+          router.replace(isSellerActive ? '/(seller)/home' : '/(auth)/activation-pending');
         } else {
           router.replace('/(buyer)/home');
         }
       }
     } catch (error: any) {
-      if (error.response?.data?.requireOtp) {
-        showToast({ message: error.response.data.message, type: 'warning' });
-        router.push({ pathname: '/(auth)/otp-verification', params: { phone, role } });
+      setPin('');
+      const requireOtp = Boolean(error?.requireOtp || error?.payload?.requireOtp);
+      const message = error?.message || 'Numéro ou code PIN incorrect.';
+
+      if (requireOtp) {
+        showToast({ message, type: 'warning' });
+        router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim(), role } });
       } else {
-        showToast({ message: error.response?.data?.message || error.message || 'Numéro ou code PIN incorrect.', type: 'error' });
+        showToast({ message, type: 'error' });
       }
     } finally {
       setIsLoading(false);

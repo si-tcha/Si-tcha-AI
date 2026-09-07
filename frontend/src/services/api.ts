@@ -1,21 +1,31 @@
 import { Platform } from 'react-native';
 let SecureStore: any;
 if (Platform.OS !== 'web') {
-  SecureStore = require('expo-secure-store');
+  try {
+    SecureStore = require('expo-secure-store');
+  } catch {
+    // SecureStore non disponible (ex: environnement node/vitest)
+  }
 }
 import { AlertPreferences, OrderType } from './database.shared';
 
-type HttpMethod = 'GET' | 'POST' | 'PUT';
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+
+export type CanonicalRole = 'seller' | 'buyer' | 'admin';
+export type CanonicalStatus = 'active' | 'pending' | 'rejected';
 
 export interface UserProfile {
   id: string;
-  role: 'seller' | 'buyer';
+  role: CanonicalRole;
   name: string;
   phone: string;
-  status: 'active' | 'pending';
-  buyerId?: string;
+  status: CanonicalStatus;
+  statut?: string; // backend agriculteur: 'EN_ATTENTE' | 'APPROUVE' | 'REJETE'
+  phoneVerified: boolean;
   gicId?: string;
+  buyerId?: string;
   gicRole?: 'leader' | 'member';
+  estLeader?: boolean;
 }
 
 export interface SessionResponse {
@@ -33,20 +43,61 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
-// URL de l'API — utilise la variable d'environnement ou le serveur de production par défaut.
-const PROD_API_URL = 'http://172.20.10.3:4000/api';
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? PROD_API_URL;
+export class ApiError extends Error {
+  status: number;
+  payload?: any;
+  requireOtp?: boolean;
+
+  constructor(message: string, status: number, payload?: any, requireOtp?: boolean) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.payload = payload;
+    this.requireOtp = requireOtp;
+  }
+}
+
+export function getApiBaseUrl(): string {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl && envUrl.trim() !== '') {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+
+  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+  if (!isDev) {
+    throw new Error(
+      'Configuration manquante: EXPO_PUBLIC_API_URL doit être définie en environnement de production / preview.'
+    );
+  }
+
+  if (Platform.OS === 'android') {
+    return 'http://10.0.2.2:5000/api';
+  }
+  return 'http://localhost:5000/api';
+}
+
 const TOKEN_KEY = 'sitcha_api_token';
+const ROLE_KEY = 'sitcha_user_role';
+const USER_KEY = 'sitcha_user_profile';
 
 let memoryToken: string | null = null;
+let memoryRole: CanonicalRole | null = null;
+let memoryUser: UserProfile | null = null;
 
-async function readToken(): Promise<string | null> {
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler;
+}
+
+export async function readToken(): Promise<string | null> {
   if (memoryToken) return memoryToken;
   if (Platform.OS === 'web') {
     if (typeof localStorage !== 'undefined') {
       memoryToken = localStorage.getItem(TOKEN_KEY);
     }
-  } else {
+  } else if (SecureStore) {
     try {
       memoryToken = await SecureStore.getItemAsync(TOKEN_KEY);
     } catch {}
@@ -54,74 +105,97 @@ async function readToken(): Promise<string | null> {
   return memoryToken;
 }
 
-export async function readRole(): Promise<'buyer' | 'seller' | null> {
+export async function readRole(): Promise<CanonicalRole | null> {
+  if (memoryRole) return memoryRole;
   if (Platform.OS === 'web') {
     if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('sitcha_user_role') as any;
+      memoryRole = localStorage.getItem(ROLE_KEY) as CanonicalRole | null;
     }
-  } else {
+  } else if (SecureStore) {
     try {
-      return (await SecureStore.getItemAsync('sitcha_user_role')) as any;
+      memoryRole = (await SecureStore.getItemAsync(ROLE_KEY)) as CanonicalRole | null;
+    } catch {}
+  }
+  return memoryRole;
+}
+
+export async function readStoredUser(): Promise<UserProfile | null> {
+  if (memoryUser) return memoryUser;
+  let raw: string | null = null;
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      raw = localStorage.getItem(USER_KEY);
+    }
+  } else if (SecureStore) {
+    try {
+      raw = await SecureStore.getItemAsync(USER_KEY);
+    } catch {}
+  }
+  if (raw) {
+    try {
+      memoryUser = JSON.parse(raw);
+      return memoryUser;
     } catch {}
   }
   return null;
 }
 
-async function saveRole(role: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sitcha_user_role', role);
-    }
-  } else {
-    try {
-      await SecureStore.setItemAsync('sitcha_user_role', role);
-    } catch {}
-  }
-}
-
-async function saveToken(token: string): Promise<void> {
+export async function saveSession(token: string, user: UserProfile): Promise<void> {
   memoryToken = token;
+  memoryRole = user.role;
+  memoryUser = user;
+
+  const rawUser = JSON.stringify(user);
   if (Platform.OS === 'web') {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(ROLE_KEY, user.role);
+      localStorage.setItem(USER_KEY, rawUser);
     }
-  } else {
+  } else if (SecureStore) {
     try {
       await SecureStore.setItemAsync(TOKEN_KEY, token);
-    } catch {}
+      await SecureStore.setItemAsync(ROLE_KEY, user.role);
+      await SecureStore.setItemAsync(USER_KEY, rawUser);
+    } catch (e) {
+      console.warn('Erreur SecureStore saveSession:', e);
+    }
   }
 }
 
-export async function clearToken(): Promise<void> {
+export async function clearSession(): Promise<void> {
   memoryToken = null;
+  memoryRole = null;
+  memoryUser = null;
+
   if (Platform.OS === 'web') {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(ROLE_KEY);
+      localStorage.removeItem(USER_KEY);
     }
-  } else {
+  } else if (SecureStore) {
     try {
       await SecureStore.deleteItemAsync(TOKEN_KEY);
-    } catch {}
-  }
-}
-
-export async function clearRole(): Promise<void> {
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('sitcha_user_role');
+      await SecureStore.deleteItemAsync(ROLE_KEY);
+      await SecureStore.deleteItemAsync(USER_KEY);
+    } catch (e) {
+      console.warn('Erreur SecureStore clearSession:', e);
     }
-  } else {
-    try {
-      await SecureStore.deleteItemAsync('sitcha_user_role');
-    } catch {}
   }
 }
 
-async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
+// Aliases pour rétrocompatibilité
+export const clearToken = clearSession;
+export const clearRole = clearSession;
+
+export async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
   const token = await readToken();
+  const baseUrl = getApiBaseUrl();
   let response: Response;
+
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(`${baseUrl}${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -133,52 +207,82 @@ async function request<T>(path: string, method: HttpMethod = 'GET', body?: unkno
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error('Pas de connexion réseau. Vérifiez votre connexion Internet et réessayez.');
+    throw new ApiError('Pas de connexion réseau. Vérifiez votre connexion Internet et réessayez.', 0);
   }
 
   const payload = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    throw new Error(payload?.message ?? 'Erreur API SI-TCHA.');
+    const message =
+      payload?.message ||
+      (Array.isArray(payload?.errors) ? payload.errors.map((e: any) => e.message || e).join(', ') : 'Erreur API SI-TCHA.');
+    const requireOtp = Boolean(payload?.requireOtp);
+
+    // Sur 401 sur route protégée : invalider la session immédiatement
+    if (response.status === 401) {
+      await clearSession();
+      if (unauthorizedHandler) {
+        unauthorizedHandler();
+      }
+    }
+    // Sur 403 : ne PAS invalider le token ou déconnecter l'utilisateur
+
+    throw new ApiError(message, response.status, payload, requireOtp);
   }
+
   return payload as T;
 }
 
 export const apiClient = {
-  // Login : téléphone + PIN, le backend auto-détecte le rôle
-  async login(phone: string, pin: string, role?: 'buyer' | 'seller') {
+  // Login : téléphone + PIN, le rôle peut être précisé
+  async login(phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> {
     const session = await request<SessionResponse>('/auth/login', 'POST', { phone, pin, role });
-    if (session.token) {
-      await saveToken(session.token);
-      if (session.user?.role) await saveRole(session.user.role);
+    if (session.token && session.user) {
+      await saveSession(session.token, session.user);
     }
     return session;
   },
 
-  async verifyOtp(phone: string, code: string, role?: 'buyer' | 'seller') {
+  async verifyOtp(phone: string, code: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> {
     const session = await request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code, role });
-    if (session.token) {
-      await saveToken(session.token);
-      if (session.user?.role) await saveRole(session.user.role);
+    if (session.token && session.user) {
+      await saveSession(session.token, session.user);
     }
     return session;
   },
 
-  async registerBuyer(input: { companyName: string; phone: string; pin: string; address?: string }) {
-    const session = await request<SessionResponse>('/auth/register/buyer', 'POST', input);
-    if (session.token) {
-      await saveToken(session.token);
-      await saveRole('buyer');
-    }
-    return session;
+  async resendOtp(input: { phone: string; role: 'buyer' | 'seller' }): Promise<SessionResponse> {
+    return request<SessionResponse>('/auth/resend-otp', 'POST', input);
   },
 
-  async registerSeller(input: { fullName: string; phone: string; pin: string; gicName: string }) {
-    const session = await request<SessionResponse>('/auth/register/seller', 'POST', input);
-    if (session.token) {
-      await saveToken(session.token);
-      await saveRole('seller');
+  async registerBuyer(input: { companyName: string; phone: string; pin: string; address?: string }): Promise<SessionResponse> {
+    return request<SessionResponse>('/auth/register/buyer', 'POST', input);
+  },
+
+  async registerSeller(input: { fullName: string; phone: string; pin: string; gicName: string }): Promise<SessionResponse> {
+    return request<SessionResponse>('/auth/register/seller', 'POST', input);
+  },
+
+  async getMe(): Promise<{ user: UserProfile }> {
+    const res = await request<{ user: UserProfile }>('/auth/me', 'GET');
+    if (res.user) {
+      memoryUser = res.user;
+      const token = await readToken();
+      if (token) {
+        await saveSession(token, res.user);
+      }
     }
-    return session;
+    return res;
+  },
+
+  async logout(): Promise<{ message: string }> {
+    try {
+      return await request<{ message: string }>('/auth/logout', 'POST');
+    } catch {
+      return { message: 'Déconnexion locale effectuée.' };
+    } finally {
+      await clearSession();
+    }
   },
 
   getProducts: (page = 1, limit = 20) => request<{ products: unknown[]; meta: PaginationMeta }>(`/catalog/products?page=${page}&limit=${limit}`),

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, me, registerBuyer, registerSeller, verifyOtp, requireAuth, requireActive, requireRole, adminLogin, logout } from '../../controllers/auth.controller.js';
+import { login, me, registerBuyer, registerSeller, verifyOtp, resendOtp, requireAuth, requireActive, requireRole, adminLogin, logout } from '../../controllers/auth.controller.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { getProducts, getGicsPublic, getTerrain } from '../../controllers/catalog.controller.js';
 import { getGicProfile, updateGicProfile, getGicHarvests, createGicHarvest, getGicExpenses, createGicExpense, getGicOrders, createGicNeed } from '../../controllers/gic.controller.js';
@@ -10,8 +10,8 @@ import { getParcels, createParcel } from '../../controllers/growth.controller.js
 import { getPrefinancingDeals, createPrefinancingDeal } from '../../controllers/prefinancing.controller.js';
 import { getTrustRatings, createTrustRating } from '../../controllers/trust.controller.js';
 import { validate } from '../../middlewares/validate.js';
-import { authLimiter } from '../../middlewares/rateLimiter.js';
-import { loginSchema, registerBuyerSchema, registerSellerSchema, verifyOtpSchema } from '../../schemas/auth.schema.js';
+import { authLimiter, otpLimiter } from '../../middlewares/rateLimiter.js';
+import { loginSchema, registerBuyerSchema, registerSellerSchema, verifyOtpSchema, resendOtpSchema } from '../../schemas/auth.schema.js';
 import {
   createHarvestSchema,
   createExpenseSchema,
@@ -34,6 +34,7 @@ const router = Router();
 router.post('/auth/register/buyer', authLimiter, validate(registerBuyerSchema), registerBuyer);
 router.post('/auth/register/seller', authLimiter, validate(registerSellerSchema), registerSeller);
 router.post('/auth/verify-otp', authLimiter, validate(verifyOtpSchema), verifyOtp);
+router.post('/auth/resend-otp', otpLimiter, validate(resendOtpSchema), resendOtp);
 router.post('/auth/login', authLimiter, validate(loginSchema), login);
 router.post('/auth/admin/login', authLimiter, asyncHandler(adminLogin));
 router.post('/auth/logout', logout);

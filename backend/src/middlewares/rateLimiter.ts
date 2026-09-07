@@ -21,3 +21,13 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+export const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'test' ? 15 : 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: 'Trop de demandes de code OTP. Veuillez patienter avant de réessayer.',
+  },
+});

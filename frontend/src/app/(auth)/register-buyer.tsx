@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { apiClient } from '@/services/api';
+import { apiClient, ApiError } from '@/services/api';
 import { useToast } from '@/components/ui/toast';
 import { isValidCameroonPhone } from './login';
 
@@ -86,7 +86,17 @@ export default function RegisterBuyerScreen() {
         router.replace('/(buyer)/home');
       }
     } catch (error: any) {
-      showToast({ message: error.response?.data?.message || 'Erreur lors de la création du compte.', type: 'error' });
+      setPin('');
+      setConfirmPin('');
+      const requireOtp = Boolean(error?.requireOtp || error?.payload?.requireOtp);
+      const message = error?.message || 'Erreur lors de la création du compte.';
+
+      if (requireOtp) {
+        showToast({ message, type: 'warning' });
+        router.push({ pathname: '/(auth)/otp-verification', params: { phone: phone.trim(), role: 'buyer' } });
+      } else {
+        showToast({ message, type: 'error' });
+      }
     } finally {
       setIsLoading(false);
     }

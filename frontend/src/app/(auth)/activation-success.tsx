@@ -1,5 +1,6 @@
 import { Dimensions, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useAuth } from '@/context/AuthContext';
 
 
 import { useRouter } from 'expo-router';
@@ -16,10 +17,24 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function ActivationSuccessScreen() {
   const router = useRouter();
+  const { user, authenticated, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading) {
+      if (!authenticated || !user) {
+        router.replace('/(auth)/login');
+      } else if (user.role !== 'seller' || (user.status !== 'active' && user.statut !== 'APPROUVE')) {
+        router.replace('/(auth)/activation-pending');
+      }
+    }
+  }, [loading, authenticated, user, router]);
 
   const handleGoToDashboard = () => {
-    // Redirige vers le dashboard du GIC vendeur (Simulation)
-    router.replace('/(seller)/home');
+    if (user?.role === 'seller' && (user.status === 'active' || user.statut === 'APPROUVE')) {
+      router.replace('/(seller)/home');
+    } else {
+      router.replace('/(auth)/activation-pending');
+    }
   };
 
   return (

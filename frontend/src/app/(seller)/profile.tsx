@@ -7,7 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { dbService, GicMember, GicNeed, GicProfile, TrustRating } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
-import { clearToken, clearRole } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -18,6 +18,7 @@ const NEED_CATEGORIES = ['Intrants', 'Terres', 'Matériel', 'Financement', 'Tran
 export default function SellerProfileScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { signOut } = useAuth();
   const [profile, setProfile] = useState<GicProfile | null>(null);
   const [members, setMembers] = useState<GicMember[]>([]);
   const [needs, setNeeds] = useState<GicNeed[]>([]);
@@ -98,10 +99,9 @@ export default function SellerProfileScreen() {
   };
 
   const handleLogout = async () => {
-    await clearToken();
-    await clearRole();
+    await signOut();
     showToast({ message: 'Déconnecté avec succès', type: 'info' });
-    router.replace('/onboarding');
+    router.replace('/(auth)/login');
   };
 
   return (

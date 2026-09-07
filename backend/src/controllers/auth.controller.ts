@@ -306,6 +306,84 @@ export async function registerSeller(req: Request, res: Response) {
 
 // ─── Verify OTP ─────────────────────────────────────────────────────────────
 
+export async function resendOtp(req: Request, res: Response) {
+  const { phone, role } = req.body;
+  const canonicalPhone = normalizePhone(phone.trim()) || phone.trim();
+
+  const [buyerMatch, sellerMatch] = await Promise.all([
+    prisma.acheteur.findUnique({
+      where: { contact: canonicalPhone },
+      select: { id: true, isVerified: true, phoneVerified: true },
+    }),
+    prisma.agriculteur.findUnique({
+      where: { contact: canonicalPhone },
+      select: { id: true, isVerified: true, phoneVerified: true },
+    }),
+  ]);
+
+  if (buyerMatch && sellerMatch) {
+    return res.status(409).json({
+      message:
+        "Conflit d'identité : ce numéro est associé à plusieurs types de comptes. Contactez le support.",
+    });
+  }
+
+  const targetAccount = role === 'buyer' ? buyerMatch : sellerMatch;
+  if (!targetAccount) {
+    return res.status(404).json({
+      message: `Compte ${role === 'buyer' ? 'acheteur' : 'vendeur'} introuvable pour ce numéro.`,
+    });
+  }
+
+  const isAlreadyVerified = Boolean(
+    targetAccount.phoneVerified || targetAccount.isVerified
+  );
+  if (isAlreadyVerified) {
+    return res.status(400).json({
+      message: 'Ce compte est déjà vérifié. Veuillez vous connecter directement.',
+    });
+  }
+
+  if (process.env.OTP_PROVIDER === 'disabled') {
+    return res.status(503).json({
+      message: 'Le service SMS est désactivé. Veuillez contacter le support.',
+    });
+  }
+
+  const code = generateSecureOtp();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  const smsResult = await defaultOtpProvider.sendSms(
+    canonicalPhone,
+    `Votre nouveau code de confirmation SI-TCHA est : ${code}. Valide pendant 10 minutes.`
+  );
+
+  if (!smsResult.success) {
+    return res.status(503).json({
+      message: 'Le service SMS est indisponible. Veuillez réessayer plus tard.',
+    });
+  }
+
+  await prisma.otpCode.upsert({
+    where: { phone: canonicalPhone },
+    create: {
+      phone: canonicalPhone,
+      code,
+      expiresAt,
+    },
+    update: {
+      code,
+      expiresAt,
+    },
+  });
+
+  return res.status(200).json({
+    message: 'Un nouveau code de vérification a été envoyé par SMS.',
+    requireOtp: true,
+    phone: canonicalPhone,
+  });
+}
+
 export async function verifyOtp(req: Request, res: Response) {
   const { phone, code, role } = req.body;
 

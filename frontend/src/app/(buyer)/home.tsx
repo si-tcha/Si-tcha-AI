@@ -4,7 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { clearToken } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 import { dbService, ProductOffer, DEFAULT_PRODUCTS } from '@/services/database';
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
@@ -37,6 +37,7 @@ export default function BuyerHomeScreen() {
 
   const router = useRouter();
   const { showToast } = useToast();
+  const { signOut } = useAuth();
 
   useEffect(() => {
     const init = async () => {
@@ -75,7 +76,7 @@ export default function BuyerHomeScreen() {
   );
 
   const handleLogout = async () => {
-    await clearToken();
+    await signOut();
     router.replace('/(auth)/login');
   };
 

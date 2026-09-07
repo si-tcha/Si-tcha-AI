@@ -1,30 +1,11 @@
-import { Redirect, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
-import { apiClient, readRole } from '../services/api';
+import { useAuth } from '@/context/AuthContext';
 
 export default function RootIndex() {
-  const [isReady, setIsReady] = useState(false);
-  const [route, setRoute] = useState<'/onboarding' | '/(buyer)/home' | '/(seller)/home'>('/onboarding');
-  const router = useRouter();
+  const { user, authenticated, loading } = useAuth();
 
-  useEffect(() => {
-    async function checkAuth() {
-      try {
-        const role = await readRole();
-        if (role === 'buyer') setRoute('/(buyer)/home');
-        else if (role === 'seller') setRoute('/(seller)/home');
-        else setRoute('/onboarding');
-      } catch {
-        setRoute('/onboarding');
-      } finally {
-        setIsReady(true);
-      }
-    }
-    checkAuth();
-  }, []);
-
-  if (!isReady) {
+  if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#101e0f' }}>
         <ActivityIndicator size="large" color="#d97834" />
@@ -32,5 +13,20 @@ export default function RootIndex() {
     );
   }
 
-  return <Redirect href={route} />;
+  if (!authenticated || !user) {
+    return <Redirect href="/onboarding" />;
+  }
+
+  if (user.role === 'buyer') {
+    return <Redirect href="/(buyer)/home" />;
+  }
+
+  if (user.role === 'seller') {
+    if (user.status === 'active' || user.statut === 'APPROUVE') {
+      return <Redirect href="/(seller)/home" />;
+    }
+    return <Redirect href="/(auth)/activation-pending" />;
+  }
+
+  return <Redirect href="/onboarding" />;
 }
