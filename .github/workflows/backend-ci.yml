@@ -2,11 +2,11 @@ name: Backend CI
 
 on:
   push:
-    branches: [ "main", "elsonkjimmy" ]
+    branches: [ "main", "master", "elsonkjimmy", "elsonkjimmy-*" ]
     paths:
       - 'backend/**'
   pull_request:
-    branches: [ "main", "elsonkjimmy" ]
+    branches: [ "main", "master", "elsonkjimmy", "elsonkjimmy-*" ]
     paths:
       - 'backend/**'
 
@@ -18,8 +18,31 @@ jobs:
       run:
         working-directory: ./backend
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: sitcha_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://test_user:test_password@localhost:5432/sitcha_test_db?schema=public
+      JWT_SECRET: ci-test-jwt-secret-placeholder-minimum-32-chars-long
+      NODE_ENV: test
+      CORS_ORIGIN: http://localhost:8081,http://localhost:19006
+      OTP_PROVIDER: test
+
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -28,7 +51,7 @@ jobs:
         cache: 'npm'
         cache-dependency-path: ./backend/package-lock.json
 
-    - name: Install dependencies
+    - name: Install dependencies (deterministic)
       run: npm ci
 
     - name: Validate Prisma Schema
@@ -37,11 +60,17 @@ jobs:
     - name: Generate Prisma Client
       run: npx prisma generate
 
+    - name: Deploy Migrations to Disposable Test Database
+      run: npx prisma migrate deploy
+
+    - name: Verify Migration Consistency & Status
+      run: npx prisma migrate status
+
     - name: TypeScript Compile Check
       run: npx tsc --noEmit
 
     - name: Run Tests
       run: npm test
 
-    - name: Build
+    - name: Build Application
       run: npm run build
