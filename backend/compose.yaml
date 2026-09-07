@@ -1,15 +1,43 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sitcha-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sitcha_user
+      POSTGRES_PASSWORD: sitcha_dev_password
+      POSTGRES_DB: sitcha_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sitcha_user -d sitcha_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: sitcha-backend
+    restart: unless-stopped
     ports:
       - "4000:4000"
     environment:
-      - PORT=4000
-      - DATABASE_URL=${DATABASE_URL}
-      - AGROMONITORING_API_KEY=${AGROMONITORING_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
-    env_file:
-      - .env
-    restart: always
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://sitcha_user:sitcha_dev_password@postgres:5432/sitcha_db?schema=public
+      JWT_SECRET: dev-jwt-secret-placeholder-minimum-32-chars-key
+      CORS_ORIGIN: http://localhost:8081,http://localhost:19006
+      TRUST_PROXY: "1"
+      LOG_LEVEL: info
+      OTP_PROVIDER: disabled
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
