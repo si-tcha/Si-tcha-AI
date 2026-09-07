@@ -6,11 +6,11 @@ import { getGicProfile, updateGicProfile, getGicHarvests, createGicHarvest, getG
 import { getBuyerOrders, createBuyerOrders, getBuyerAlertPreferences, updateBuyerAlertPreferences } from '../../controllers/buyer.controller.js';
 import { askAgronomist } from '../../controllers/agronomist.controller.js';
 import { getB2BOffers, createB2BOffer } from '../../controllers/b2b.controller.js';
-import { getParcels, createParcel } from '../../controllers/growth.controller.js';
+import { getParcels, createParcel, updateParcel } from '../../controllers/growth.controller.js';
 import { getPrefinancingDeals, createPrefinancingDeal } from '../../controllers/prefinancing.controller.js';
 import { getTrustRatings, createTrustRating } from '../../controllers/trust.controller.js';
 import { validate } from '../../middlewares/validate.js';
-import { authLimiter, otpLimiter } from '../../middlewares/rateLimiter.js';
+import { authLimiter, otpLimiter, agronomistLimiter } from '../../middlewares/rateLimiter.js';
 import { loginSchema, registerBuyerSchema, registerSellerSchema, verifyOtpSchema, resendOtpSchema } from '../../schemas/auth.schema.js';
 import {
   createHarvestSchema,
@@ -22,6 +22,7 @@ import {
   updateAlertPreferencesSchema,
   createB2BOfferSchema,
   createParcelSchema,
+  updateParcelSchema,
   createPrefinancingDealSchema,
   createTrustRatingSchema,
 } from '../../schemas/routes.schema.js';
@@ -58,7 +59,7 @@ router.get('/gic/expenses', requireAuth, requireActive, requireRole('seller'), g
 router.post('/gic/expenses', requireAuth, requireActive, requireRole('seller'), validate(createExpenseSchema), createGicExpense);
 router.post('/gic/needs', requireAuth, requireActive, requireRole('seller'), validate(createGicNeedSchema), createGicNeed);
 router.get('/gic/orders', requireAuth, requireActive, requireRole('seller'), getGicOrders);
-router.post('/gic/agronomist', requireAuth, requireActive, requireRole('seller'), validate(askAgronomistSchema), askAgronomist);
+router.post('/gic/agronomist', requireAuth, requireActive, requireRole('seller'), agronomistLimiter, validate(askAgronomistSchema), askAgronomist);
 
 // ==========================================
 // ACHETEURS
@@ -79,6 +80,7 @@ router.post('/b2b/offers', requireAuth, requireActive, requireRole('seller'), va
 // ==========================================
 router.get('/gic/parcels', requireAuth, requireActive, requireRole('seller'), getParcels);
 router.post('/gic/parcels', requireAuth, requireActive, requireRole('seller'), validate(createParcelSchema), createParcel);
+router.put('/gic/parcels/:id', requireAuth, requireActive, requireRole('seller'), validate(updateParcelSchema), updateParcel);
 
 // ==========================================
 // PRÉFINANCEMENT
