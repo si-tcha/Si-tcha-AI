@@ -3,11 +3,14 @@ import {
   apiClient,
   ApiError,
   getApiBaseUrl,
+  resolveApiBaseUrl,
   isNetworkError,
   saveSession,
   readStoredSession,
   clearSession,
   setUnauthorizedHandler,
+  isValidStoredSession,
+  _resetMemorySessionForTesting,
   UserProfile,
 } from '../src/services/api';
 
@@ -26,6 +29,7 @@ describe('Production API Client, Networking & Configuration Tests', () => {
   beforeEach(async () => {
     await clearSession();
     localStorage.clear();
+    _resetMemorySessionForTesting();
     vi.restoreAllMocks();
     delete process.env.EXPO_PUBLIC_API_URL;
   });
@@ -38,16 +42,124 @@ describe('Production API Client, Networking & Configuration Tests', () => {
     }
   });
 
-  describe('Centralized Base URL Resolution (Port 4000)', () => {
-    it('should use EXPO_PUBLIC_API_URL if defined in environment', () => {
-      process.env.EXPO_PUBLIC_API_URL = 'http://192.168.1.50:4000/api/';
-      expect(getApiBaseUrl()).toBe('http://192.168.1.50:4000/api');
+  describe('Centralized Base URL Resolution & Physical Device Detection', () => {
+    it('1. Web local en développement doit pointer sur http://localhost:4000/api', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'web',
+        isDevice: false,
+        envUrl: undefined,
+        isDev: true,
+      });
+      expect(url).toBe('http://localhost:4000/api');
     });
 
-    it('should fallback to port 4000 in development', () => {
-      delete process.env.EXPO_PUBLIC_API_URL;
-      const url = getApiBaseUrl();
-      expect(url).toMatch(/http:\/\/(localhost|10\.0\.2\.2):4000\/api/);
+    it('2. Simulateur iOS en développement doit pointer sur http://localhost:4000/api', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'ios',
+        isDevice: false,
+        envUrl: undefined,
+        isDev: true,
+      });
+      expect(url).toBe('http://localhost:4000/api');
+    });
+
+    it('3. Émulateur Android en développement doit pointer sur http://10.0.2.2:4000/api', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'android',
+        isDevice: false,
+        envUrl: undefined,
+        isDev: true,
+      });
+      expect(url).toBe('http://10.0.2.2:4000/api');
+    });
+
+    it('4. Android physique avec URL explicite doit utiliser cette URL', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'android',
+        isDevice: true,
+        envUrl: 'http://192.168.1.50:4000/api/',
+        isDev: true,
+      });
+      expect(url).toBe('http://192.168.1.50:4000/api');
+    });
+
+    it('5. Android physique sans EXPO_PUBLIC_API_URL doit lever une erreur explicite sans tenter 10.0.2.2', () => {
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: undefined,
+          isDev: true,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique/);
+    });
+
+    it('6. Mode production sans EXPO_PUBLIC_API_URL doit lever une erreur de configuration', () => {
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: false,
+          envUrl: undefined,
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
+    });
+  });
+
+  describe('Session Validation & Storage Hardening', () => {
+    it('isValidStoredSession should accept valid v1 session', () => {
+      const valid = {
+        version: 1,
+        token: 'token-123',
+        user: mockUser,
+      };
+      expect(isValidStoredSession(valid)).toBe(true);
+    });
+
+    it('isValidStoredSession should reject session with invalid version or empty token', () => {
+      expect(isValidStoredSession({ version: 2, token: 'token', user: mockUser })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: '', user: mockUser })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: '   ', user: mockUser })).toBe(false);
+    });
+
+    it('isValidStoredSession should reject invalid or missing user fields', () => {
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, role: 'invalid' } })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, status: 'unknown' } })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, phoneVerified: 'yes' } })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, id: '' } })).toBe(false);
+    });
+
+    it('saveSession should throw and NOT update memory if storage write throws', async () => {
+      vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+        throw new Error('QuotaExceededError');
+      });
+
+      _resetMemorySessionForTesting();
+      await expect(saveSession('token-abc', mockUser)).rejects.toThrow('QuotaExceededError');
+
+      // memorySession ne doit PAS être mis à jour
+      _resetMemorySessionForTesting();
+      // Lecture via localStorage (qui est vide)
+      const session = await readStoredSession();
+      expect(session).toBeNull();
+    });
+
+    it('readStoredSession should clean up corrupted JSON and return null', async () => {
+      localStorage.setItem('sitcha_session_v1', '{ invalid json syntax');
+      _resetMemorySessionForTesting();
+
+      const session = await readStoredSession();
+      expect(session).toBeNull();
+      expect(localStorage.getItem('sitcha_session_v1')).toBeNull();
+    });
+
+    it('readStoredSession should propagate real storage access failures', async () => {
+      vi.spyOn(localStorage, 'getItem').mockImplementationOnce(() => {
+        throw new Error('SecurityError: Access denied to storage');
+      });
+      _resetMemorySessionForTesting();
+
+      await expect(readStoredSession()).rejects.toThrow('SecurityError: Access denied to storage');
     });
   });
 

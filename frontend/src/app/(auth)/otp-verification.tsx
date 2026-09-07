@@ -1,5 +1,7 @@
 import {
   ActivityIndicator,
+  AppState,
+  AppStateStatus,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -20,31 +22,67 @@ import { useToast } from '@/components/ui/toast';
 import { dbService } from '@/services/database';
 import { useAuth } from '@/context/AuthContext';
 import { resolveSellerActivationState } from '@/auth/sessionRouting';
-import { OTP_DEFAULT_COOLDOWN_SECONDS } from '@/auth/otpCooldown';
+import {
+  calculateRemainingCooldown,
+  formatCooldownDisplay,
+  OTP_DEFAULT_COOLDOWN_SECONDS,
+} from '@/auth/otpCooldown';
+import { validateOtpParams } from '@/auth/otpValidation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function OtpVerificationScreen() {
+  const rawParams = useLocalSearchParams<{ phone?: string | string[]; role?: string | string[] }>();
+  const validation = validateOtpParams(rawParams.phone, rawParams.role);
+
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
-  const [cooldown, setCooldown] = useState(OTP_DEFAULT_COOLDOWN_SECONDS);
+  const [lastSentAt, setLastSentAt] = useState<number>(() => Date.now());
+  const [cooldown, setCooldown] = useState<number>(() =>
+    calculateRemainingCooldown(Date.now(), OTP_DEFAULT_COOLDOWN_SECONDS)
+  );
+
   const router = useRouter();
   const { showToast } = useToast();
   const { completeOtp } = useAuth();
-  const { phone, role } = useLocalSearchParams<{ phone: string; role?: 'buyer' | 'seller' }>();
 
-  const effectiveRole = (role === 'seller' ? 'seller' : 'buyer') as 'buyer' | 'seller';
+  const validationError = !validation.isValid ? validation.error : undefined;
 
   useEffect(() => {
-    if (cooldown <= 0) return;
-    const timer = setInterval(() => {
-      setCooldown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [cooldown]);
+    if (!validation.isValid) {
+      showToast({
+        message: validationError || 'Paramètres de vérification OTP invalides.',
+        type: 'error',
+      });
+      const timer = setTimeout(() => {
+        router.replace('/(auth)/login');
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [validation.isValid, validationError, router, showToast]);
+
+  useEffect(() => {
+    const updateCooldown = () => {
+      setCooldown(calculateRemainingCooldown(lastSentAt, OTP_DEFAULT_COOLDOWN_SECONDS));
+    };
+
+    updateCooldown();
+    const timer = setInterval(updateCooldown, 1000);
+
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        updateCooldown();
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [lastSentAt]);
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -56,16 +94,21 @@ export default function OtpVerificationScreen() {
 
   const handleResend = async () => {
     if (cooldown > 0 || isResending) return;
-    if (!phone) {
-      showToast({ message: 'Numéro de téléphone manquant pour le renvoi.', type: 'warning' });
+    if (!validation.isValid) {
+      showToast({ message: validation.error, type: 'error' });
       return;
     }
 
     setIsResending(true);
     try {
-      const res = await apiClient.resendOtp({ phone, role: effectiveRole });
+      const res = await apiClient.resendOtp({
+        phone: validation.params.phone,
+        role: validation.params.role,
+      });
       showToast({ message: res.message || 'Nouveau code OTP envoyé par SMS.', type: 'info' });
-      setCooldown(60);
+      const now = Date.now();
+      setLastSentAt(now);
+      setCooldown(OTP_DEFAULT_COOLDOWN_SECONDS);
     } catch (error: any) {
       if (error instanceof ApiError && error.status === 429) {
         showToast({
@@ -94,14 +137,15 @@ export default function OtpVerificationScreen() {
       return;
     }
 
-    if (!phone) {
-      showToast({ message: 'Numéro de téléphone manquant.', type: 'error' });
+    if (!validation.isValid) {
+      showToast({ message: validation.error, type: 'error' });
+      router.replace('/(auth)/login');
       return;
     }
 
     setIsLoading(true);
     try {
-      const res = await completeOtp(phone, code, effectiveRole);
+      const res = await completeOtp(validation.params.phone, code, validation.params.role);
       if (res.token && res.user) {
         showToast({ message: 'Numéro vérifié avec succès !', type: 'success' });
         try {
@@ -139,7 +183,7 @@ export default function OtpVerificationScreen() {
         });
       } else {
         showToast({
-          message: error?.message || 'Code OTP incorrect ou expiré.',
+          message: error?.message || 'Code OTP invalide ou expiré.',
           type: 'error',
         });
       }
@@ -147,6 +191,31 @@ export default function OtpVerificationScreen() {
       setIsLoading(false);
     }
   };
+
+  if (!validation.isValid) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.content}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Feather name="alert-circle" size={48} color="#dc2626" />
+            <Text style={[styles.mainTitle, { textAlign: 'center', marginTop: 16, fontSize: 20 }]}>
+              Paramètres manquants
+            </Text>
+            <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 8 }]}>
+              {validation.error}
+            </Text>
+            <TouchableOpacity
+              style={[styles.primaryButton, { width: '100%', marginTop: 24 }]}
+              onPress={() => router.replace('/(auth)/login')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.primaryButtonText}>Retour à la connexion</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
@@ -170,7 +239,7 @@ export default function OtpVerificationScreen() {
             <View style={styles.titleSection}>
               <Text style={styles.mainTitle}>Saisissez le code OTP</Text>
               <Text style={styles.subtitle}>
-                Un code à 6 chiffres a été envoyé par SMS au numéro {phone || 'indiqué'}.
+                Un code à 6 chiffres a été envoyé par SMS au numéro {validation.params.phone}.
               </Text>
             </View>
 
@@ -212,7 +281,7 @@ export default function OtpVerificationScreen() {
                         cooldown > 0 && styles.resendButtonTextDisabled,
                       ]}
                     >
-                      {cooldown > 0 ? `Renvoyer le code (${cooldown}s)` : 'Renvoyer le code'}
+                      {cooldown > 0 ? `Renvoyer le code (${formatCooldownDisplay(cooldown)})` : 'Renvoyer le code'}
                     </Text>
                   )}
                 </TouchableOpacity>

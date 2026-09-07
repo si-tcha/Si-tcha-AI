@@ -9,12 +9,15 @@ import {
   StoredSessionV1,
 } from '../services/api';
 
+export type SessionState = 'loading' | 'authenticated' | 'offline' | 'server_error' | 'unauthenticated';
+
 export type RestoreSessionResult =
   | { type: 'no_session' }
   | { type: 'authenticated'; token: string; user: UserProfile }
   | { type: 'invalid_token' }
   | { type: 'offline'; token: string; user: UserProfile; error: Error }
-  | { type: 'server_error'; token: string; user: UserProfile; status: number; message: string };
+  | { type: 'server_error'; token: string; user: UserProfile; status: number; message: string }
+  | { type: 'storage_error'; error: Error };
 
 export interface SessionRestoreDeps {
   readSession: () => Promise<StoredSessionV1 | null>;
@@ -31,6 +34,25 @@ const defaultDeps: SessionRestoreDeps = {
 };
 
 /**
+ * Calcule de manière déterministe et pure l'état d'authentification visible.
+ */
+export function computeSessionState(params: {
+  loading: boolean;
+  token: string | null;
+  user: UserProfile | null;
+  isOffline: boolean;
+  hasServerError: boolean;
+  hasVerifiedSession: boolean;
+}): SessionState {
+  if (params.loading) return 'loading';
+  if (!params.token || !params.user) return 'unauthenticated';
+  if (params.hasServerError) return 'server_error';
+  if (params.isOffline) return 'offline';
+  if (params.hasVerifiedSession) return 'authenticated';
+  return 'unauthenticated';
+}
+
+/**
  * Logique centralisée de restauration de session de production.
  */
 export async function performSessionRestore(
@@ -38,7 +60,16 @@ export async function performSessionRestore(
 ): Promise<RestoreSessionResult> {
   const deps: SessionRestoreDeps = { ...defaultDeps, ...customDeps };
 
-  const stored = await deps.readSession();
+  let stored: StoredSessionV1 | null = null;
+  try {
+    stored = await deps.readSession();
+  } catch (err: any) {
+    return {
+      type: 'storage_error',
+      error: err instanceof Error ? err : new Error(String(err?.message || 'Erreur accès stockage')),
+    };
+  }
+
   if (!stored) {
     return { type: 'no_session' };
   }

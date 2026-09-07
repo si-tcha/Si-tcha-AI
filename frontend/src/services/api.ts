@@ -12,6 +12,16 @@ if (Platform.OS !== 'web') {
   }
 }
 
+// Safe dynamic require pour expo-device
+let isPhysicalDevice = false;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Device = require('expo-device');
+  isPhysicalDevice = Boolean(Device?.isDevice);
+} catch {
+  // Non disponible dans cet environnement
+}
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 export type CanonicalRole = 'seller' | 'buyer' | 'admin';
@@ -86,25 +96,50 @@ export function isNetworkError(error: unknown): boolean {
 }
 
 /**
- * Résout l'URL de l'API avec port 4000 par défaut en développement.
+ * Résout l'URL de l'API selon l'environnement, la plateforme et le type d'appareil.
  */
-export function getApiBaseUrl(): string {
-  const envUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envUrl && envUrl.trim() !== '') {
-    return envUrl.trim().replace(/\/+$/, '');
+export interface ApiUrlResolutionOptions {
+  platform: string;
+  isDevice?: boolean;
+  envUrl?: string;
+  isDev?: boolean;
+}
+
+export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
+  const envUrl = options.envUrl?.trim();
+  if (envUrl && envUrl.length > 0) {
+    return envUrl.replace(/\/+$/, '');
   }
 
-  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+  const isDev = options.isDev !== undefined ? options.isDev : true;
   if (!isDev) {
     throw new Error(
       'Configuration manquante: EXPO_PUBLIC_API_URL doit être définie en environnement de production / preview.'
     );
   }
 
-  if (Platform.OS === 'android') {
+  // Sur un appareil physique (Android ou iOS), localhost ou 10.0.2.2 ne peuvent pas atteindre la machine de dev
+  if (options.isDevice) {
+    throw new Error(
+      "Configuration manquante: EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique (les adresses localhost et 10.0.2.2 ne sont pas accessibles depuis un téléphone réel)."
+    );
+  }
+
+  if (options.platform === 'android') {
     return 'http://10.0.2.2:4000/api';
   }
+
   return 'http://localhost:4000/api';
+}
+
+export function getApiBaseUrl(): string {
+  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+  return resolveApiBaseUrl({
+    platform: Platform.OS,
+    isDevice: isPhysicalDevice,
+    envUrl: process.env.EXPO_PUBLIC_API_URL,
+    isDev,
+  });
 }
 
 // ─── Persistance Atomique et Versionnée de Session ──────────────────────────
@@ -118,20 +153,27 @@ export interface StoredSessionV1 {
 }
 
 export function isValidStoredSession(data: any): data is StoredSessionV1 {
-  return (
-    data &&
-    typeof data === 'object' &&
-    data.version === 1 &&
-    typeof data.token === 'string' &&
-    data.token.trim().length > 0 &&
-    data.user &&
-    typeof data.user === 'object' &&
-    typeof data.user.id === 'string' &&
-    (data.user.role === 'buyer' || data.user.role === 'seller' || data.user.role === 'admin')
-  );
+  if (!data || typeof data !== 'object') return false;
+  if (data.version !== 1) return false;
+  if (typeof data.token !== 'string' || data.token.trim().length === 0) return false;
+
+  const user = data.user;
+  if (!user || typeof user !== 'object') return false;
+  if (typeof user.id !== 'string' || user.id.trim().length === 0) return false;
+  if (typeof user.phone !== 'string' || user.phone.trim().length === 0) return false;
+  if (typeof user.name !== 'string') return false;
+  if (user.role !== 'buyer' && user.role !== 'seller' && user.role !== 'admin') return false;
+  if (user.status !== 'active' && user.status !== 'pending' && user.status !== 'rejected') return false;
+  if (typeof user.phoneVerified !== 'boolean') return false;
+
+  return true;
 }
 
 let memorySession: StoredSessionV1 | null = null;
+
+export function _resetMemorySessionForTesting() {
+  memorySession = null;
+}
 
 type UnauthorizedHandler = () => void;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
@@ -151,6 +193,7 @@ const LEGACY_STORAGE_KEYS = [
 
 /**
  * Lit la session persistée. Si absente, tente de migrer les anciennes clés une fois.
+ * Ne masque pas les pannes réelles du stockage (disque / keychain / permissions).
  * Si les données sont corrompues, les supprime proprement et retourne null.
  */
 export async function readStoredSession(): Promise<StoredSessionV1 | null> {
@@ -158,83 +201,97 @@ export async function readStoredSession(): Promise<StoredSessionV1 | null> {
 
   let rawSession: string | null = null;
 
-  try {
-    if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') {
-        rawSession = localStorage.getItem(SESSION_KEY);
-      }
-    } else if (SecureStore) {
-      rawSession = await SecureStore.getItemAsync(SESSION_KEY);
+  // Lecture dans le stockage persistant
+  if (Platform.OS === 'web') {
+    if (typeof localStorage === 'undefined' || !localStorage) {
+      throw new Error('Stockage persistant indisponible: localStorage non disponible.');
     }
-  } catch (err) {
-    console.warn('Erreur lecture stockage session:', err);
-    return null;
+    rawSession = localStorage.getItem(SESSION_KEY);
+  } else {
+    if (!SecureStore || typeof SecureStore.getItemAsync !== 'function') {
+      throw new Error('Stockage persistant indisponible: SecureStore non disponible.');
+    }
+    rawSession = await SecureStore.getItemAsync(SESSION_KEY);
   }
 
   // 1. Session versionnée existante
   if (rawSession) {
+    let parsed: any;
     try {
-      const parsed = JSON.parse(rawSession);
-      if (isValidStoredSession(parsed)) {
-        memorySession = parsed;
-        return memorySession;
-      }
+      parsed = JSON.parse(rawSession);
     } catch {
-      // JSON corrompu
+      // Données JSON corrompues -> purge sécurisée
+      await clearSession();
+      return null;
     }
-    // Nettoyage en cas de corruption
+
+    if (isValidStoredSession(parsed)) {
+      memorySession = parsed;
+      return memorySession;
+    }
+
+    // Données incomplètes ou invalides -> purge sécurisée
     await clearSession();
     return null;
   }
 
   // 2. Migration des anciennes clés si sitcha_session_v1 n'existe pas encore
-  try {
-    let legacyToken: string | null = null;
-    let legacyUserRaw: string | null = null;
+  let legacyToken: string | null = null;
+  let legacyUserRaw: string | null = null;
 
-    if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') {
-        legacyToken = localStorage.getItem('sitcha_api_token') || localStorage.getItem('si_tcha_token');
-        legacyUserRaw = localStorage.getItem('sitcha_user_profile') || localStorage.getItem('si_tcha_user');
-      }
-    } else if (SecureStore) {
-      legacyToken =
-        (await SecureStore.getItemAsync('sitcha_api_token')) ||
-        (await SecureStore.getItemAsync('si_tcha_token'));
-      legacyUserRaw =
-        (await SecureStore.getItemAsync('sitcha_user_profile')) ||
-        (await SecureStore.getItemAsync('si_tcha_user'));
+  if (Platform.OS === 'web') {
+    legacyToken = localStorage.getItem('sitcha_api_token') || localStorage.getItem('si_tcha_token');
+    legacyUserRaw = localStorage.getItem('sitcha_user_profile') || localStorage.getItem('si_tcha_user');
+  } else if (SecureStore) {
+    legacyToken =
+      (await SecureStore.getItemAsync('sitcha_api_token')) ||
+      (await SecureStore.getItemAsync('si_tcha_token'));
+    legacyUserRaw =
+      (await SecureStore.getItemAsync('sitcha_user_profile')) ||
+      (await SecureStore.getItemAsync('si_tcha_user'));
+  }
+
+  if (legacyToken && legacyUserRaw) {
+    let parsedUser: any;
+    try {
+      parsedUser = JSON.parse(legacyUserRaw);
+    } catch {
+      return null;
     }
 
-    if (legacyToken && legacyUserRaw) {
-      const parsedUser = JSON.parse(legacyUserRaw);
-      if (parsedUser && typeof parsedUser.id === 'string' && parsedUser.role) {
-        const migrated: StoredSessionV1 = {
-          version: 1,
-          token: legacyToken,
-          user: parsedUser,
-        };
-        // Persister la session migrée
-        await saveSession(migrated.token, migrated.user);
+    const candidateSession: StoredSessionV1 = {
+      version: 1,
+      token: legacyToken,
+      user: {
+        id: parsedUser?.id || '',
+        name: parsedUser?.name || 'Utilisateur',
+        phone: parsedUser?.phone || '',
+        role: parsedUser?.role,
+        status: parsedUser?.status || 'active',
+        statut: parsedUser?.statut,
+        phoneVerified: typeof parsedUser?.phoneVerified === 'boolean' ? parsedUser.phoneVerified : true,
+        gicId: parsedUser?.gicId,
+        buyerId: parsedUser?.buyerId,
+        gicRole: parsedUser?.gicRole,
+        estLeader: parsedUser?.estLeader,
+      },
+    };
 
-        // Nettoyer les anciennes clés
-        if (Platform.OS === 'web') {
-          if (typeof localStorage !== 'undefined') {
-            for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
-          }
-        } else if (SecureStore) {
-          for (const key of LEGACY_STORAGE_KEYS) {
-            try {
-              await SecureStore.deleteItemAsync(key);
-            } catch {}
-          }
+    if (isValidStoredSession(candidateSession)) {
+      await saveSession(candidateSession.token, candidateSession.user);
+
+      // Nettoyer les anciennes clés
+      if (Platform.OS === 'web') {
+        for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
+      } else if (SecureStore) {
+        for (const key of LEGACY_STORAGE_KEYS) {
+          try {
+            await SecureStore.deleteItemAsync(key);
+          } catch {}
         }
-
-        return memorySession;
       }
+      return memorySession;
     }
-  } catch {
-    // Échec silencieux de migration
   }
 
   return null;
@@ -258,7 +315,7 @@ export async function readStoredUser(): Promise<UserProfile | null> {
 /**
  * Enregistre la session de manière atomique.
  * Ne met à jour l'état mémoire qu'après succès de la persistance.
- * Ne masque pas les erreurs de SecureStore.
+ * Lève une erreur si le stockage n'est pas disponible ou si l'écriture échoue.
  */
 export async function saveSession(token: string, user: UserProfile): Promise<void> {
   if (!token || !user) {
@@ -270,19 +327,27 @@ export async function saveSession(token: string, user: UserProfile): Promise<voi
     token,
     user,
   };
+
+  if (!isValidStoredSession(sessionData)) {
+    throw new Error('Données de session non conformes au schéma v1.');
+  }
+
   const serialized = JSON.stringify(sessionData);
 
   // 1. Écriture dans le stockage persistant
   if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(SESSION_KEY, serialized);
+    if (typeof localStorage === 'undefined' || !localStorage) {
+      throw new Error('Stockage persistant indisponible: localStorage non disponible.');
     }
-  } else if (SecureStore) {
-    // L'erreur doit se propager si SecureStore échoue
+    localStorage.setItem(SESSION_KEY, serialized);
+  } else {
+    if (!SecureStore || typeof SecureStore.setItemAsync !== 'function') {
+      throw new Error('Stockage persistant indisponible: SecureStore non disponible.');
+    }
     await SecureStore.setItemAsync(SESSION_KEY, serialized);
   }
 
-  // 2. Mise à jour de l'état mémoire après persistance réussie
+  // 2. Mise à jour de l'état mémoire UNIQUEMENT après persistance réussie
   memorySession = sessionData;
 }
 

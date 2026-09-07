@@ -11,7 +11,7 @@ import {
   isNetworkError,
 } from '@/services/api';
 
-import { performSessionRestore } from '@/auth/sessionRestore';
+import { performSessionRestore, SessionState } from '@/auth/sessionRestore';
 
 export type RefreshUserResult =
   | { type: 'success'; user: UserProfile }
@@ -25,6 +25,8 @@ export interface AuthContextType {
   loading: boolean;
   authenticated: boolean;
   isOffline: boolean;
+  sessionStatus: SessionState;
+  serverError: { status: number; message: string } | null;
   restoreSession: () => Promise<void>;
   refreshUser: () => Promise<RefreshUserResult>;
   signIn: (phone: string, pin: string, role?: 'buyer' | 'seller') => Promise<SessionResponse>;
@@ -39,6 +41,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [serverError, setServerError] = useState<{ status: number; message: string } | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionState>('loading');
 
   const signOut = useCallback(async () => {
     try {
@@ -50,6 +54,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setToken(null);
       setIsOffline(false);
+      setServerError(null);
+      setSessionStatus('unauthenticated');
     }
   }, []);
 
@@ -59,6 +65,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.user) {
         setUser(res.user);
         setIsOffline(false);
+        setServerError(null);
+        setSessionStatus('authenticated');
         const currentToken = await readToken();
         if (currentToken) {
           await saveSession(currentToken, res.user);
@@ -87,28 +95,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const restoreSession = useCallback(async () => {
     setLoading(true);
+    setSessionStatus('loading');
     try {
       const result = await performSessionRestore();
-      if (result.type === 'no_session') {
+      if (result.type === 'no_session' || result.type === 'invalid_token' || result.type === 'storage_error') {
         setUser(null);
         setToken(null);
         setIsOffline(false);
+        setServerError(null);
+        setSessionStatus('unauthenticated');
       } else if (result.type === 'authenticated') {
         setToken(result.token);
         setUser(result.user);
         setIsOffline(false);
-      } else if (result.type === 'invalid_token') {
-        setToken(null);
-        setUser(null);
-        setIsOffline(false);
+        setServerError(null);
+        setSessionStatus('authenticated');
       } else if (result.type === 'offline') {
+        // En mode hors ligne, le token et l'utilisateur sont conservés pour permettre le retry
         setToken(result.token);
         setUser(result.user);
         setIsOffline(true);
+        setServerError(null);
+        setSessionStatus('offline');
       } else if (result.type === 'server_error') {
+        // Sur erreur serveur 5xx, l'accès au dashboard DOIT être bloqué mais le profil conservé pour retry
         setToken(result.token);
         setUser(result.user);
         setIsOffline(false);
+        setServerError({ status: result.status, message: result.message });
+        setSessionStatus('server_error');
       }
     } finally {
       setLoading(false);
@@ -119,6 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUnauthorizedHandler(() => {
       setUser(null);
       setToken(null);
+      setSessionStatus('unauthenticated');
     });
 
     restoreSession();
@@ -135,6 +151,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(session.token);
         setUser(session.user);
         setIsOffline(false);
+        setServerError(null);
+        setSessionStatus('authenticated');
       }
       return session;
     },
@@ -148,14 +166,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(session.token);
         setUser(session.user);
         setIsOffline(false);
+        setServerError(null);
+        setSessionStatus('authenticated');
       }
       return session;
     },
     []
   );
 
-  // Authentifié uniquement si token, user valides ET connecté en ligne
-  const authenticated = Boolean(token && user && !isOffline);
+  // Authentifié uniquement si le statut de session est explicitement 'authenticated'
+  const authenticated = sessionStatus === 'authenticated' && Boolean(token && user);
 
   return (
     <AuthContext.Provider
@@ -165,6 +185,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         authenticated,
         isOffline,
+        sessionStatus,
+        serverError,
         restoreSession,
         refreshUser,
         signIn,

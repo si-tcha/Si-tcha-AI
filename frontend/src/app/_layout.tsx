@@ -18,10 +18,32 @@ function SyncErrorListener() {
 }
 
 function NavigationRoot() {
-  const { isOffline, token, restoreSession, signOut } = useAuth();
+  const { sessionStatus, isOffline, serverError, token, restoreSession, signOut } = useAuth();
 
-  // Mode hors-ligne avec session locale existante
-  if (isOffline && token) {
+  // Écran d'erreur serveur (5xx) sur démarrage à froid avec session locale
+  if (sessionStatus === 'server_error' && token) {
+    return (
+      <View style={styles.offlineContainer}>
+        <View style={styles.iconCircle}>
+          <Ionicons name="server-outline" size={54} color="#f59e0b" />
+        </View>
+        <Text style={styles.offlineTitle}>Serveur temporairement indisponible</Text>
+        <Text style={styles.offlineSubtitle}>
+          {serverError?.message || 'Nos serveurs rencontrent une indisponibilité momentanée. Veuillez réessayer dans quelques instants.'}
+        </Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => restoreSession()} activeOpacity={0.8}>
+          <Ionicons name="refresh-outline" size={20} color="#ffffff" style={{ marginRight: 8 }} />
+          <Text style={styles.retryText}>Réessayer</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.logoutButton} onPress={() => signOut()} activeOpacity={0.7}>
+          <Text style={styles.logoutText}>Changer de compte</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Mode hors-ligne sur démarrage à froid avec session locale existante
+  if ((sessionStatus === 'offline' || isOffline) && token) {
     return (
       <View style={styles.offlineContainer}>
         <View style={styles.iconCircle}>

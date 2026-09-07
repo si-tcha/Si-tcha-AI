@@ -8,7 +8,7 @@ import {
   ApiError,
   SESSION_KEY,
 } from '../src/services/api';
-import { performSessionRestore } from '../src/auth/sessionRestore';
+import { performSessionRestore, computeSessionState } from '../src/auth/sessionRestore';
 
 describe('Production Session Restoration, Persistence & Lifecycle Tests', () => {
   const mockBuyer: UserProfile = {
@@ -96,6 +96,28 @@ describe('Production Session Restoration, Persistence & Lifecycle Tests', () => 
       expect(stored?.token).toBe('saved-offline-token');
     });
 
+    it('should return server_error on HTTP 500, preserve local session for retry, and block dashboard access', async () => {
+      await saveSession('server-error-token', mockBuyer);
+
+      vi.spyOn(apiClient, 'getMe').mockRejectedValueOnce(
+        new ApiError('Erreur interne du serveur.', 500)
+      );
+
+      const result = await performSessionRestore();
+
+      expect(result.type).toBe('server_error');
+      if (result.type === 'server_error') {
+        expect(result.status).toBe(500);
+        expect(result.token).toBe('server-error-token');
+        expect(result.user.id).toBe('101');
+      }
+
+      // Vérifier que la session locale reste présente pour permettre un retry ultérieur
+      const stored = await readStoredSession();
+      expect(stored).not.toBeNull();
+      expect(stored?.token).toBe('server-error-token');
+    });
+
     it('should successfully restore user after retry when network returns', async () => {
       await saveSession('retry-token', mockBuyer);
 
@@ -117,6 +139,88 @@ describe('Production Session Restoration, Persistence & Lifecycle Tests', () => 
       if (retryAttempt.type === 'authenticated') {
         expect(retryAttempt.user.id).toBe('101');
       }
+    });
+  });
+
+  describe('Pure computeSessionState State Machine Tests', () => {
+    it('should return loading when loading is true', () => {
+      const state = computeSessionState({
+        loading: true,
+        token: 'tok',
+        user: mockBuyer,
+        isOffline: false,
+        hasServerError: false,
+        hasVerifiedSession: true,
+      });
+      expect(state).toBe('loading');
+    });
+
+    it('should return unauthenticated when token or user is missing', () => {
+      const state1 = computeSessionState({
+        loading: false,
+        token: null,
+        user: mockBuyer,
+        isOffline: false,
+        hasServerError: false,
+        hasVerifiedSession: true,
+      });
+      expect(state1).toBe('unauthenticated');
+
+      const state2 = computeSessionState({
+        loading: false,
+        token: 'tok',
+        user: null,
+        isOffline: false,
+        hasServerError: false,
+        hasVerifiedSession: true,
+      });
+      expect(state2).toBe('unauthenticated');
+    });
+
+    it('should return server_error on server error even with local session', () => {
+      const state = computeSessionState({
+        loading: false,
+        token: 'tok',
+        user: mockBuyer,
+        isOffline: false,
+        hasServerError: true,
+        hasVerifiedSession: false,
+      });
+      expect(state).toBe('server_error');
+    });
+
+    it('should return offline when offline even with local session', () => {
+      const state = computeSessionState({
+        loading: false,
+        token: 'tok',
+        user: mockBuyer,
+        isOffline: true,
+        hasServerError: false,
+        hasVerifiedSession: false,
+      });
+      expect(state).toBe('offline');
+    });
+
+    it('should only return authenticated when session has been verified', () => {
+      const authenticated = computeSessionState({
+        loading: false,
+        token: 'tok',
+        user: mockBuyer,
+        isOffline: false,
+        hasServerError: false,
+        hasVerifiedSession: true,
+      });
+      expect(authenticated).toBe('authenticated');
+
+      const unverified = computeSessionState({
+        loading: false,
+        token: 'tok',
+        user: mockBuyer,
+        isOffline: false,
+        hasServerError: false,
+        hasVerifiedSession: false,
+      });
+      expect(unverified).toBe('unauthenticated');
     });
   });
 
