@@ -1,64 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  getApiBaseUrl,
+  apiClient,
   ApiError,
-  request,
+  getApiBaseUrl,
+  isNetworkError,
   saveSession,
+  readStoredSession,
   clearSession,
-  readToken,
-  readRole,
-  readStoredUser,
   setUnauthorizedHandler,
   UserProfile,
 } from '../src/services/api';
 
-describe('API Service & URL Resolution', () => {
+describe('Production API Client, Networking & Configuration Tests', () => {
   const originalEnv = process.env.EXPO_PUBLIC_API_URL;
-  const originalNodeEnv = process.env.NODE_ENV;
 
-  afterEach(() => {
-    process.env.EXPO_PUBLIC_API_URL = originalEnv;
-    process.env.NODE_ENV = originalNodeEnv;
-    vi.restoreAllMocks();
-  });
-
-  it('should resolve base URL from EXPO_PUBLIC_API_URL and strip trailing slash', () => {
-    process.env.EXPO_PUBLIC_API_URL = 'https://api.example.com/api/';
-    expect(getApiBaseUrl()).toBe('https://api.example.com/api');
-  });
-
-  it('should fallback to local dev URL when EXPO_PUBLIC_API_URL is missing in dev mode', () => {
-    delete process.env.EXPO_PUBLIC_API_URL;
-    process.env.NODE_ENV = 'development';
-    const url = getApiBaseUrl();
-    expect(url).toMatch(/http:\/\/(localhost|10\.0\.2\.2):5000\/api/);
-  });
-
-  it('should throw explicit error when EXPO_PUBLIC_API_URL is missing in production mode', () => {
-    delete process.env.EXPO_PUBLIC_API_URL;
-    process.env.NODE_ENV = 'production';
-    expect(() => getApiBaseUrl()).toThrow(/Configuration manquante: EXPO_PUBLIC_API_URL/i);
-  });
-});
-
-describe('ApiError class', () => {
-  it('should instantiate correctly with status, message, payload and requireOtp', () => {
-    const payload = { detail: 'invalid' };
-    const err = new ApiError('Validation échouée', 400, payload, true);
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe('ApiError');
-    expect(err.message).toBe('Validation échouée');
-    expect(err.status).toBe(400);
-    expect(err.payload).toEqual(payload);
-    expect(err.requireOtp).toBe(true);
-  });
-});
-
-describe('request helper and error handling', () => {
   const mockUser: UserProfile = {
     id: 'user-1',
     role: 'buyer',
-    name: 'Acheteur Test',
+    name: 'Entreprise Test',
     phone: '+237699112233',
     status: 'active',
     phoneVerified: true,
@@ -66,148 +25,152 @@ describe('request helper and error handling', () => {
 
   beforeEach(async () => {
     await clearSession();
+    localStorage.clear();
     vi.restoreAllMocks();
-    process.env.EXPO_PUBLIC_API_URL = 'http://test-api.local/api';
+    delete process.env.EXPO_PUBLIC_API_URL;
   });
 
-  it('should parse successful JSON response and include token when available', async () => {
-    await saveSession('my-jwt-token', mockUser);
+  afterEach(() => {
+    if (originalEnv !== undefined) {
+      process.env.EXPO_PUBLIC_API_URL = originalEnv;
+    } else {
+      delete process.env.EXPO_PUBLIC_API_URL;
+    }
+  });
 
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true, data: [1, 2, 3] }),
+  describe('Centralized Base URL Resolution (Port 4000)', () => {
+    it('should use EXPO_PUBLIC_API_URL if defined in environment', () => {
+      process.env.EXPO_PUBLIC_API_URL = 'http://192.168.1.50:4000/api/';
+      expect(getApiBaseUrl()).toBe('http://192.168.1.50:4000/api');
     });
-    globalThis.fetch = mockFetch;
 
-    const res = await request<{ success: boolean; data: number[] }>('/test');
-    expect(res.success).toBe(true);
-    expect(res.data).toEqual([1, 2, 3]);
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://test-api.local/api/test',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer my-jwt-token',
-        }),
-      })
-    );
-  });
-
-  it('should handle network failures and throw ApiError with status 0', async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Failed to fetch'));
-
-    await expect(request('/catalog')).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 0,
-      message: expect.stringMatching(/Pas de connexion réseau/i),
+    it('should fallback to port 4000 in development', () => {
+      delete process.env.EXPO_PUBLIC_API_URL;
+      const url = getApiBaseUrl();
+      expect(url).toMatch(/http:\/\/(localhost|10\.0\.2\.2):4000\/api/);
     });
   });
 
-  it('should normalize standard API error and extract requireOtp flag', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      json: async () => ({ message: 'Code expiré', requireOtp: true }),
+  describe('Centralized Health Check', () => {
+    it('apiClient.health() should return true when GET /api/health responds ok', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'ok' }),
+      } as any);
+
+      const isHealthy = await apiClient.health();
+      expect(isHealthy).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/health$/),
+        expect.objectContaining({ method: 'GET' })
+      );
     });
 
-    await expect(request('/auth/verify-otp')).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 400,
-      message: 'Code expiré',
-      requireOtp: true,
-    });
-  });
+    it('apiClient.health() should return false when endpoint fails or network is down', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network offline'));
 
-  it('should normalize Zod validation errors into a concatenated string message', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      json: async () => ({
-        errors: [{ message: 'Le numéro de téléphone est requis' }, { message: 'PIN invalide' }],
-      }),
-    });
-
-    await expect(request('/auth/login')).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 400,
-      message: 'Le numéro de téléphone est requis, PIN invalide',
+      const isHealthy = await apiClient.health();
+      expect(isHealthy).toBe(false);
     });
   });
 
-  it('should automatically clear session and call unauthorizedHandler on 401 response', async () => {
-    await saveSession('old-token', mockUser);
-    const unauthorizedSpy = vi.fn();
-    setUnauthorizedHandler(unauthorizedSpy);
+  describe('HTTP Request & Security Lifecycle', () => {
+    it('should automatically attach Authorization header when session token exists', async () => {
+      await saveSession('jwt-token-alpha', mockUser);
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: async () => ({ message: 'Session expirée' }),
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: mockUser }),
+      } as any);
+
+      await apiClient.getMe();
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer jwt-token-alpha',
+          }),
+        })
+      );
     });
 
-    await expect(request('/auth/me')).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 401,
-      message: 'Session expirée',
+    it('should evict session on HTTP 401 Unauthorized', async () => {
+      await saveSession('expired-token', mockUser);
+
+      let unauthorizedCallbackCalled = false;
+      setUnauthorizedHandler(() => {
+        unauthorizedCallbackCalled = true;
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ message: 'Session expirée' }),
+      } as any);
+
+      await expect(apiClient.getMe()).rejects.toThrow('Session expirée');
+
+      // Le stockage de session doit être purgé
+      const session = await readStoredSession();
+      expect(session).toBeNull();
+      expect(unauthorizedCallbackCalled).toBe(true);
+
+      setUnauthorizedHandler(null);
     });
 
-    expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
-    expect(await readToken()).toBeNull();
-    expect(await readRole()).toBeNull();
-    expect(await readStoredUser()).toBeNull();
+    it('should NOT evict session on HTTP 403 Forbidden', async () => {
+      await saveSession('valid-token-forbidden-action', mockUser);
+
+      let unauthorizedCallbackCalled = false;
+      setUnauthorizedHandler(() => {
+        unauthorizedCallbackCalled = true;
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ message: 'Accès refusé' }),
+      } as any);
+
+      await expect(apiClient.getMe()).rejects.toThrow('Accès refusé');
+
+      // Le stockage de session NE DOIT PAS être purgé sur un 403
+      const session = await readStoredSession();
+      expect(session).not.toBeNull();
+      expect(session?.token).toBe('valid-token-forbidden-action');
+      expect(unauthorizedCallbackCalled).toBe(false);
+
+      setUnauthorizedHandler(null);
+    });
+
+    it('should throw ApiError with status 0 on network request failure', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+      let caughtError: any;
+      try {
+        await apiClient.getMe();
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(ApiError);
+      expect(caughtError.status).toBe(0);
+      expect(isNetworkError(caughtError)).toBe(true);
+    });
   });
 
-  it('should NOT clear session or call unauthorizedHandler on 403 response', async () => {
-    await saveSession('valid-token', mockUser);
-    const unauthorizedSpy = vi.fn();
-    setUnauthorizedHandler(unauthorizedSpy);
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 403,
-      json: async () => ({ message: 'Accès interdit pour ce rôle' }),
+  describe('isNetworkError Utility', () => {
+    it('should identify network errors correctly', () => {
+      expect(isNetworkError(new ApiError('Offline', 0))).toBe(true);
+      expect(isNetworkError(new TypeError('Failed to fetch'))).toBe(true);
+      expect(isNetworkError(new Error('Network request failed'))).toBe(true);
+      expect(isNetworkError(new Error('connect ECONNREFUSED 127.0.0.1:4000'))).toBe(true);
+      expect(isNetworkError(new ApiError('Not found', 404))).toBe(false);
+      expect(isNetworkError(new ApiError('Server error', 500))).toBe(false);
+      expect(isNetworkError(null)).toBe(false);
     });
-
-    await expect(request('/gic/profile')).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 403,
-      message: 'Accès interdit pour ce rôle',
-    });
-
-    expect(unauthorizedSpy).not.toHaveBeenCalled();
-    expect(await readToken()).toBe('valid-token');
-    expect(await readRole()).toBe('buyer');
-  });
-});
-
-describe('Session Storage Management', () => {
-  const mockUser: UserProfile = {
-    id: 'user-2',
-    role: 'seller',
-    name: 'Vendeur Planteur',
-    phone: '+237677889900',
-    status: 'pending',
-    phoneVerified: true,
-    gicId: 'gic-42',
-    gicRole: 'member',
-  };
-
-  it('should atomically save and retrieve session info', async () => {
-    await clearSession();
-    await saveSession('seller-token-xyz', mockUser);
-
-    expect(await readToken()).toBe('seller-token-xyz');
-    expect(await readRole()).toBe('seller');
-    const storedUser = await readStoredUser();
-    expect(storedUser).toEqual(mockUser);
-  });
-
-  it('should atomically clear all session info upon clearSession', async () => {
-    await saveSession('seller-token-xyz', mockUser);
-    await clearSession();
-
-    expect(await readToken()).toBeNull();
-    expect(await readRole()).toBeNull();
-    expect(await readStoredUser()).toBeNull();
   });
 });

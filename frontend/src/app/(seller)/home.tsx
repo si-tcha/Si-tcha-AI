@@ -7,6 +7,8 @@ import { Feather } from '@expo/vector-icons';
 import { dbService, ExpenseRecord, HarvestRecord, GicProfile } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { apiClient } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -16,6 +18,7 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export default function SellerHomeScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { signOut } = useAuth();
 
   // États pour les récoltes et dépenses (persistés via dbService)
   const [harvests, setHarvests] = useState<HarvestRecord[]>([]);
@@ -58,22 +61,18 @@ export default function SellerHomeScreen() {
 
     loadLocalData();
 
-    // Check online status periodically
+    // Check online status periodically via centralized apiClient.health()
     const checkStatus = async () => {
-      try {
-        const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000/api';
-        const res = await fetch(baseUrl.replace('/api', '/api/health'), { method: 'GET' });
-        setIsOnline(res.ok);
-      } catch {
-        setIsOnline(false);
-      }
+      const online = await apiClient.health();
+      setIsOnline(online);
     };
     checkStatus();
     const interval = setInterval(checkStatus, 15000); // Check every 15s
     return () => clearInterval(interval);
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await signOut();
     router.replace('/(auth)/welcome');
   };
 

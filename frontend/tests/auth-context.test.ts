@@ -3,16 +3,18 @@ import {
   apiClient,
   saveSession,
   clearSession,
-  readToken,
+  readStoredSession,
   UserProfile,
   ApiError,
+  SESSION_KEY,
 } from '../src/services/api';
+import { performSessionRestore } from '../src/auth/sessionRestore';
 
-describe('Auth Session Logic & Lifecycle', () => {
+describe('Production Session Restoration, Persistence & Lifecycle Tests', () => {
   const mockBuyer: UserProfile = {
     id: '101',
     role: 'buyer',
-    name: 'Entreprise Cacao',
+    name: 'Entreprise Cacao Sarl',
     phone: '+237699112233',
     status: 'active',
     phoneVerified: true,
@@ -21,126 +23,158 @@ describe('Auth Session Logic & Lifecycle', () => {
   const mockSellerPending: UserProfile = {
     id: '202',
     role: 'seller',
-    name: 'Planteur Jean',
+    name: 'Planteur Martin',
     phone: '+237677223344',
     status: 'pending',
     statut: 'EN_ATTENTE',
     phoneVerified: true,
-    gicId: 'gic-99',
+    gicId: 'gic-10',
   };
 
   beforeEach(async () => {
     await clearSession();
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
-  it('restoreSession should set unauthenticated state when no token is present', async () => {
-    const token = await readToken();
-    expect(token).toBeNull();
-
-    const restoredToken = await readToken();
-    let user: UserProfile | null = null;
-    let isOffline = false;
-
-    if (!restoredToken) {
-      user = null;
-      isOffline = false;
-    }
-
-    expect(user).toBeNull();
-    expect(isOffline).toBe(false);
-  });
-
-  it('restoreSession should validate stored token via getMe and set active user', async () => {
-    await saveSession('valid-token-123', mockBuyer);
-
-    const getMeSpy = vi.spyOn(apiClient, 'getMe').mockResolvedValueOnce({
-      user: mockBuyer,
+  describe('Session Restoration (performSessionRestore)', () => {
+    it('should return no_session when local storage is empty', async () => {
+      const result = await performSessionRestore();
+      expect(result.type).toBe('no_session');
     });
 
-    const storedToken = await readToken();
-    expect(storedToken).toBe('valid-token-123');
+    it('should return authenticated and update stored session when token is valid', async () => {
+      await saveSession('token-xyz', mockBuyer);
 
-    const meRes = await apiClient.getMe();
-    expect(getMeSpy).toHaveBeenCalledTimes(1);
-    expect(meRes.user).toEqual(mockBuyer);
-    expect(meRes.user.status).toBe('active');
-  });
+      vi.spyOn(apiClient, 'getMe').mockResolvedValueOnce({
+        user: { ...mockBuyer, name: 'Entreprise Cacao Modifiée' },
+      });
 
-  it('restoreSession should purge session when backend returns 401 (expired/revoked token)', async () => {
-    await saveSession('expired-token', mockBuyer);
+      const result = await performSessionRestore();
 
-    vi.spyOn(apiClient, 'getMe').mockRejectedValueOnce(
-      new ApiError('Non autorisé, jeton invalide ou expiré', 401)
-    );
-
-    let user: UserProfile | null = mockBuyer;
-    let token: string | null = 'expired-token';
-
-    try {
-      await apiClient.getMe();
-    } catch (err: any) {
-      if (err instanceof ApiError && err.status === 401) {
-        await clearSession();
-        user = null;
-        token = null;
+      expect(result.type).toBe('authenticated');
+      if (result.type === 'authenticated') {
+        expect(result.token).toBe('token-xyz');
+        expect(result.user.name).toBe('Entreprise Cacao Modifiée');
       }
-    }
 
-    expect(user).toBeNull();
-    expect(token).toBeNull();
-    expect(await readToken()).toBeNull();
-  });
-
-  it('restoreSession should enter explicit offline mode upon network failure without faking user', async () => {
-    await saveSession('offline-token', mockBuyer);
-
-    vi.spyOn(apiClient, 'getMe').mockRejectedValueOnce(
-      new ApiError('Pas de connexion réseau.', 0)
-    );
-
-    let user: UserProfile | null = null;
-    let token: string | null = null;
-    let isOffline = false;
-
-    try {
-      const res = await apiClient.getMe();
-      user = res.user;
-    } catch (err: any) {
-      if (err instanceof ApiError && err.status === 0) {
-        isOffline = true;
-        user = null;
-        token = null;
-      }
-    }
-
-    expect(isOffline).toBe(true);
-    expect(user).toBeNull();
-    expect(token).toBeNull();
-  });
-
-  it('signOut should call backend logout and atomically wipe local session', async () => {
-    await saveSession('active-token', mockSellerPending);
-
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ message: 'Déconnexion réussie.' }),
+      const stored = await readStoredSession();
+      expect(stored?.user.name).toBe('Entreprise Cacao Modifiée');
     });
 
-    const res = await apiClient.logout();
+    it('should return invalid_token and clean storage when getMe returns 401', async () => {
+      await saveSession('expired-token', mockBuyer);
 
-    expect(res.message).toBe('Déconnexion réussie.');
-    expect(await readToken()).toBeNull();
+      vi.spyOn(apiClient, 'getMe').mockRejectedValueOnce(
+        new ApiError('Token expiré', 401)
+      );
+
+      const result = await performSessionRestore();
+
+      expect(result.type).toBe('invalid_token');
+      const stored = await readStoredSession();
+      expect(stored).toBeNull();
+    });
+
+    it('should enter offline mode and PRESERVE local session during network failure', async () => {
+      await saveSession('saved-offline-token', mockSellerPending);
+
+      const networkError = new ApiError('Pas de connexion réseau.', 0);
+      vi.spyOn(apiClient, 'getMe').mockRejectedValueOnce(networkError);
+
+      const result = await performSessionRestore();
+
+      expect(result.type).toBe('offline');
+      if (result.type === 'offline') {
+        expect(result.token).toBe('saved-offline-token');
+        expect(result.user.name).toBe('Planteur Martin');
+      }
+
+      // La session locale DOIT être préservée intacte en mode hors ligne
+      const stored = await readStoredSession();
+      expect(stored).not.toBeNull();
+      expect(stored?.token).toBe('saved-offline-token');
+    });
+
+    it('should successfully restore user after retry when network returns', async () => {
+      await saveSession('retry-token', mockBuyer);
+
+      // 1. Première tentative : panne réseau
+      vi.spyOn(apiClient, 'getMe').mockRejectedValueOnce(
+        new ApiError('Pas de connexion réseau.', 0)
+      );
+
+      const firstAttempt = await performSessionRestore();
+      expect(firstAttempt.type).toBe('offline');
+
+      // 2. Deuxième tentative (Retry) : le réseau est rétabli
+      vi.spyOn(apiClient, 'getMe').mockResolvedValueOnce({
+        user: mockBuyer,
+      });
+
+      const retryAttempt = await performSessionRestore();
+      expect(retryAttempt.type).toBe('authenticated');
+      if (retryAttempt.type === 'authenticated') {
+        expect(retryAttempt.user.id).toBe('101');
+      }
+    });
   });
 
-  it('signOut should guarantee local session wipe even if backend logout fails with network error', async () => {
-    await saveSession('active-token', mockSellerPending);
+  describe('Atomic Storage, Corruption & Migration', () => {
+    it('should delete corrupt session data and return null', async () => {
+      localStorage.setItem(SESSION_KEY, 'invalid-non-json-content{');
 
-    globalThis.fetch = vi.fn().mockRejectedValueOnce(new Error('Network offline'));
+      const stored = await readStoredSession();
+      expect(stored).toBeNull();
+      expect(localStorage.getItem(SESSION_KEY)).toBeNull();
+    });
 
-    const res = await apiClient.logout();
-    expect(res.message).toMatch(/Déconnexion locale/i);
-    expect(await readToken()).toBeNull();
+    it('should delete session data with invalid schema (e.g. missing role) and return null', async () => {
+      const invalidData = {
+        version: 1,
+        token: 'token-123',
+        user: { id: '99', name: 'Invalide' }, // role manquant
+      };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(invalidData));
+
+      const stored = await readStoredSession();
+      expect(stored).toBeNull();
+      expect(localStorage.getItem(SESSION_KEY)).toBeNull();
+    });
+
+    it('should throw and not update memory state if storage persistence fails', async () => {
+      vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+        throw new Error('QuotaExceeded / SecureStore disk full');
+      });
+
+      await expect(saveSession('failed-token', mockBuyer)).rejects.toThrow(
+        'QuotaExceeded / SecureStore disk full'
+      );
+
+      // La mémoire ne doit pas être mise à jour
+      const current = await readStoredSession();
+      expect(current).toBeNull();
+    });
+
+    it('should migrate legacy storage keys to sitcha_session_v1 and clean up old keys', async () => {
+      // Simuler la présence d'anciennes clés
+      localStorage.setItem('sitcha_api_token', 'legacy-token-777');
+      localStorage.setItem('sitcha_user_profile', JSON.stringify(mockBuyer));
+      localStorage.setItem('sitcha_user_role', 'buyer');
+
+      const session = await readStoredSession();
+
+      expect(session).not.toBeNull();
+      expect(session?.token).toBe('legacy-token-777');
+      expect(session?.user.role).toBe('buyer');
+
+      // Vérifier que la nouvelle clé sitcha_session_v1 a été créée
+      expect(localStorage.getItem(SESSION_KEY)).not.toBeNull();
+
+      // Vérifier que les anciennes clés ont été supprimées
+      expect(localStorage.getItem('sitcha_api_token')).toBeNull();
+      expect(localStorage.getItem('sitcha_user_profile')).toBeNull();
+      expect(localStorage.getItem('sitcha_user_role')).toBeNull();
+    });
   });
 });

@@ -1,35 +1,23 @@
+import React from 'react';
 import { Redirect, Stack } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
+import { canAccessBuyer, resolveSessionRoute } from '@/auth/sessionRouting';
 
 export default function BuyerLayout() {
   const { user, authenticated, loading } = useAuth();
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#101e0f' }}>
-        <ActivityIndicator size="large" color="#d97834" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#064e3b' }}>
+        <ActivityIndicator size="large" color="#10b981" />
       </View>
     );
   }
 
-  if (!authenticated || !user) {
-    return <Redirect href="/(auth)/login" />;
-  }
-
-  if (user.role !== 'buyer') {
-    if (user.role === 'seller') {
-      return (
-        <Redirect
-          href={
-            user.status === 'active' || user.statut === 'APPROUVE'
-              ? '/(seller)/home'
-              : '/(auth)/activation-pending'
-          }
-        />
-      );
-    }
-    return <Redirect href="/(auth)/login" />;
+  if (!authenticated || !canAccessBuyer(user)) {
+    const redirectRoute = resolveSessionRoute(user);
+    return <Redirect href={redirectRoute as any} />;
   }
 
   return (

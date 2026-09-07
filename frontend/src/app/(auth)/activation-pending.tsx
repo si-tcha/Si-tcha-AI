@@ -17,6 +17,7 @@ import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/toast';
+import { resolveSellerActivationState, resolveSessionRoute } from '@/auth/sessionRouting';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -24,63 +25,101 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function ActivationPendingScreen() {
   const router = useRouter();
-  const { user, refreshUser, signOut } = useAuth();
+  const { user, loading, authenticated, refreshUser, signOut } = useAuth();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const checkStatus = useCallback(async () => {
-    try {
-      const freshUser = await refreshUser();
-      if (freshUser?.status === 'active' || freshUser?.statut === 'APPROUVE') {
-        router.replace('/(auth)/activation-success');
-      }
-    } catch {
-      // Ignorer les erreurs silencieuses lors du polling en arrière-plan
-    }
-  }, [refreshUser, router]);
-
-  // Vérification au montage
+  // Guard : un utilisateur non authentifié ou un buyer ne peut pas rester ici
   useEffect(() => {
-    if (user?.status === 'active' || user?.statut === 'APPROUVE') {
+    if (loading) return;
+    if (!authenticated || !user) {
+      router.replace('/(auth)/welcome');
+      return;
+    }
+    if (user.role !== 'seller') {
+      router.replace(resolveSessionRoute(user) as any);
+      return;
+    }
+    const state = resolveSellerActivationState(user);
+    if (state === 'APPROVED') {
       router.replace('/(auth)/activation-success');
     }
-  }, [user, router]);
+  }, [loading, authenticated, user, router]);
 
-  // Polling propre toutes les 20 secondes avec nettoyage au démontage
+  const checkStatus = useCallback(async () => {
+    if (!user || user.role !== 'seller' || resolveSellerActivationState(user) !== 'PENDING') {
+      return;
+    }
+    const result = await refreshUser();
+    if (result.type === 'success') {
+      const freshState = resolveSellerActivationState(result.user);
+      if (freshState === 'APPROVED') {
+        router.replace('/(auth)/activation-success');
+      }
+    } else if (result.type === 'unauthenticated') {
+      router.replace('/(auth)/welcome');
+    }
+  }, [user, refreshUser, router]);
+
+  // Polling propre toutes les 20 secondes UNIQUEMENT si le vendeur est en attente
   useEffect(() => {
+    if (!authenticated || user?.role !== 'seller' || resolveSellerActivationState(user) !== 'PENDING') {
+      return;
+    }
     const interval = setInterval(() => {
       checkStatus();
     }, 20000);
     return () => clearInterval(interval);
-  }, [checkStatus]);
+  }, [authenticated, user, checkStatus]);
 
-  // Rafraîchissement lors du retour de l'application au premier plan
+  // Rafraîchissement lors du retour au premier plan
   useEffect(() => {
+    if (!authenticated || user?.role !== 'seller' || resolveSellerActivationState(user) !== 'PENDING') {
+      return;
+    }
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         checkStatus();
       }
     });
     return () => subscription.remove();
-  }, [checkStatus]);
+  }, [authenticated, user, checkStatus]);
 
-  // Rafraîchissement manuel par l'utilisateur
+  // Rafraîchissement manuel par l'utilisateur avec distinction des erreurs
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
-    try {
-      const freshUser = await refreshUser();
-      if (freshUser?.status === 'active' || freshUser?.statut === 'APPROUVE') {
+    const result = await refreshUser();
+    setIsRefreshing(false);
+
+    if (result.type === 'network_error') {
+      showToast({
+        message: 'Réseau indisponible. Vérifiez votre connexion Internet et réessayez.',
+        type: 'error',
+      });
+      return;
+    }
+
+    if (result.type === 'unauthenticated') {
+      showToast({ message: 'Session expirée. Veuillez vous reconnecter.', type: 'error' });
+      router.replace('/(auth)/welcome');
+      return;
+    }
+
+    if (result.type === 'server_error') {
+      showToast({ message: result.message || 'Erreur serveur lors de la vérification.', type: 'error' });
+      return;
+    }
+
+    if (result.type === 'success') {
+      const freshState = resolveSellerActivationState(result.user);
+      if (freshState === 'APPROVED') {
         showToast({ message: 'Votre compte a été validé !', type: 'success' });
         router.replace('/(auth)/activation-success');
-      } else if (freshUser?.status === 'rejected' || freshUser?.statut === 'REJETE') {
+      } else if (freshState === 'REJECTED') {
         showToast({ message: 'Votre demande a été refusée par le responsable du GIC.', type: 'error' });
       } else {
         showToast({ message: 'Votre demande est toujours en attente de validation.', type: 'info' });
       }
-    } catch {
-      showToast({ message: 'Impossible de vérifier le statut. Vérifiez votre connexion.', type: 'error' });
-    } finally {
-      setIsRefreshing(false);
     }
   };
 
@@ -89,7 +128,7 @@ export default function ActivationPendingScreen() {
     router.replace('/(auth)/login');
   };
 
-  const isRejected = user?.status === 'rejected' || user?.statut === 'REJETE';
+  const isRejected = resolveSellerActivationState(user) === 'REJECTED';
 
   return (
     <SafeAreaView style={styles.outerContainer}>

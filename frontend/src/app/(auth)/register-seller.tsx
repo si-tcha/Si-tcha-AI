@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { apiClient, ApiError } from '@/services/api';
+import { apiClient } from '@/services/api';
 import { useToast } from '@/components/ui/toast';
 import { isValidCameroonPhone } from './login';
 
@@ -23,7 +23,7 @@ const GIC_LIST = [
   "GIC Cultures Vivrières Bangangté"
 ];
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 

@@ -4,9 +4,9 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { ApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/toast';
+import { resolveSessionRoute } from '@/auth/sessionRouting';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -63,12 +63,7 @@ export default function LoginScreen() {
 
       if (session.user) {
         showToast({ message: `Bienvenue ${session.user.name} !`, type: 'success' });
-        if (session.user.role === 'seller') {
-          const isSellerActive = session.user.status === 'active' || session.user.statut === 'APPROUVE';
-          router.replace(isSellerActive ? '/(seller)/home' : '/(auth)/activation-pending');
-        } else {
-          router.replace('/(buyer)/home');
-        }
+        router.replace(resolveSessionRoute(session.user) as any);
       }
     } catch (error: any) {
       setPin('');

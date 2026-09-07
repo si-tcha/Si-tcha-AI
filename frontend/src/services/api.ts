@@ -1,13 +1,16 @@
 import { Platform } from 'react-native';
-let SecureStore: any;
+import { AlertPreferences, OrderType } from './database.shared';
+
+// Safe dynamic require pour expo-secure-store (non supporté hors environnement natif/Expo)
+let SecureStore: typeof import('expo-secure-store') | null = null;
 if (Platform.OS !== 'web') {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     SecureStore = require('expo-secure-store');
   } catch {
-    // SecureStore non disponible (ex: environnement node/vitest)
+    // Non disponible dans cet environnement
   }
 }
-import { AlertPreferences, OrderType } from './database.shared';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -57,6 +60,34 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Détermine si une erreur correspond à une absence de connectivité réseau.
+ */
+export function isNetworkError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof ApiError && error.status === 0) return true;
+  if (
+    error instanceof TypeError &&
+    (error.message.includes('fetch') ||
+      error.message.includes('Network') ||
+      error.message.includes('network') ||
+      error.message.includes('Failed to fetch'))
+  ) {
+    return true;
+  }
+  const msg = String((error as any)?.message || error);
+  return (
+    msg.includes('Network request failed') ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ENOTFOUND') ||
+    msg.includes('Pas de connexion réseau')
+  );
+}
+
+/**
+ * Résout l'URL de l'API avec port 4000 par défaut en développement.
+ */
 export function getApiBaseUrl(): string {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
   if (envUrl && envUrl.trim() !== '') {
@@ -71,18 +102,36 @@ export function getApiBaseUrl(): string {
   }
 
   if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:5000/api';
+    return 'http://10.0.2.2:4000/api';
   }
-  return 'http://localhost:5000/api';
+  return 'http://localhost:4000/api';
 }
 
-const TOKEN_KEY = 'sitcha_api_token';
-const ROLE_KEY = 'sitcha_user_role';
-const USER_KEY = 'sitcha_user_profile';
+// ─── Persistance Atomique et Versionnée de Session ──────────────────────────
 
-let memoryToken: string | null = null;
-let memoryRole: CanonicalRole | null = null;
-let memoryUser: UserProfile | null = null;
+export const SESSION_KEY = 'sitcha_session_v1';
+
+export interface StoredSessionV1 {
+  version: 1;
+  token: string;
+  user: UserProfile;
+}
+
+export function isValidStoredSession(data: any): data is StoredSessionV1 {
+  return (
+    data &&
+    typeof data === 'object' &&
+    data.version === 1 &&
+    typeof data.token === 'string' &&
+    data.token.trim().length > 0 &&
+    data.user &&
+    typeof data.user === 'object' &&
+    typeof data.user.id === 'string' &&
+    (data.user.role === 'buyer' || data.user.role === 'seller' || data.user.role === 'admin')
+  );
+}
+
+let memorySession: StoredSessionV1 | null = null;
 
 type UnauthorizedHandler = () => void;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
@@ -91,96 +140,179 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
   unauthorizedHandler = handler;
 }
 
-export async function readToken(): Promise<string | null> {
-  if (memoryToken) return memoryToken;
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      memoryToken = localStorage.getItem(TOKEN_KEY);
-    }
-  } else if (SecureStore) {
-    try {
-      memoryToken = await SecureStore.getItemAsync(TOKEN_KEY);
-    } catch {}
-  }
-  return memoryToken;
-}
+const LEGACY_STORAGE_KEYS = [
+  'sitcha_api_token',
+  'sitcha_user_role',
+  'sitcha_user_profile',
+  'si_tcha_token',
+  'si_tcha_user_role',
+  'si_tcha_user',
+];
 
-export async function readRole(): Promise<CanonicalRole | null> {
-  if (memoryRole) return memoryRole;
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      memoryRole = localStorage.getItem(ROLE_KEY) as CanonicalRole | null;
-    }
-  } else if (SecureStore) {
-    try {
-      memoryRole = (await SecureStore.getItemAsync(ROLE_KEY)) as CanonicalRole | null;
-    } catch {}
-  }
-  return memoryRole;
-}
+/**
+ * Lit la session persistée. Si absente, tente de migrer les anciennes clés une fois.
+ * Si les données sont corrompues, les supprime proprement et retourne null.
+ */
+export async function readStoredSession(): Promise<StoredSessionV1 | null> {
+  if (memorySession) return memorySession;
 
-export async function readStoredUser(): Promise<UserProfile | null> {
-  if (memoryUser) return memoryUser;
-  let raw: string | null = null;
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      raw = localStorage.getItem(USER_KEY);
+  let rawSession: string | null = null;
+
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        rawSession = localStorage.getItem(SESSION_KEY);
+      }
+    } else if (SecureStore) {
+      rawSession = await SecureStore.getItemAsync(SESSION_KEY);
     }
-  } else if (SecureStore) {
-    try {
-      raw = await SecureStore.getItemAsync(USER_KEY);
-    } catch {}
+  } catch (err) {
+    console.warn('Erreur lecture stockage session:', err);
+    return null;
   }
-  if (raw) {
+
+  // 1. Session versionnée existante
+  if (rawSession) {
     try {
-      memoryUser = JSON.parse(raw);
-      return memoryUser;
-    } catch {}
+      const parsed = JSON.parse(rawSession);
+      if (isValidStoredSession(parsed)) {
+        memorySession = parsed;
+        return memorySession;
+      }
+    } catch {
+      // JSON corrompu
+    }
+    // Nettoyage en cas de corruption
+    await clearSession();
+    return null;
   }
+
+  // 2. Migration des anciennes clés si sitcha_session_v1 n'existe pas encore
+  try {
+    let legacyToken: string | null = null;
+    let legacyUserRaw: string | null = null;
+
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        legacyToken = localStorage.getItem('sitcha_api_token') || localStorage.getItem('si_tcha_token');
+        legacyUserRaw = localStorage.getItem('sitcha_user_profile') || localStorage.getItem('si_tcha_user');
+      }
+    } else if (SecureStore) {
+      legacyToken =
+        (await SecureStore.getItemAsync('sitcha_api_token')) ||
+        (await SecureStore.getItemAsync('si_tcha_token'));
+      legacyUserRaw =
+        (await SecureStore.getItemAsync('sitcha_user_profile')) ||
+        (await SecureStore.getItemAsync('si_tcha_user'));
+    }
+
+    if (legacyToken && legacyUserRaw) {
+      const parsedUser = JSON.parse(legacyUserRaw);
+      if (parsedUser && typeof parsedUser.id === 'string' && parsedUser.role) {
+        const migrated: StoredSessionV1 = {
+          version: 1,
+          token: legacyToken,
+          user: parsedUser,
+        };
+        // Persister la session migrée
+        await saveSession(migrated.token, migrated.user);
+
+        // Nettoyer les anciennes clés
+        if (Platform.OS === 'web') {
+          if (typeof localStorage !== 'undefined') {
+            for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
+          }
+        } else if (SecureStore) {
+          for (const key of LEGACY_STORAGE_KEYS) {
+            try {
+              await SecureStore.deleteItemAsync(key);
+            } catch {}
+          }
+        }
+
+        return memorySession;
+      }
+    }
+  } catch {
+    // Échec silencieux de migration
+  }
+
   return null;
 }
 
-export async function saveSession(token: string, user: UserProfile): Promise<void> {
-  memoryToken = token;
-  memoryRole = user.role;
-  memoryUser = user;
-
-  const rawUser = JSON.stringify(user);
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(TOKEN_KEY, token);
-      localStorage.setItem(ROLE_KEY, user.role);
-      localStorage.setItem(USER_KEY, rawUser);
-    }
-  } else if (SecureStore) {
-    try {
-      await SecureStore.setItemAsync(TOKEN_KEY, token);
-      await SecureStore.setItemAsync(ROLE_KEY, user.role);
-      await SecureStore.setItemAsync(USER_KEY, rawUser);
-    } catch (e) {
-      console.warn('Erreur SecureStore saveSession:', e);
-    }
-  }
+export async function readToken(): Promise<string | null> {
+  const session = await readStoredSession();
+  return session ? session.token : null;
 }
 
+export async function readRole(): Promise<CanonicalRole | null> {
+  const session = await readStoredSession();
+  return session ? session.user.role : null;
+}
+
+export async function readStoredUser(): Promise<UserProfile | null> {
+  const session = await readStoredSession();
+  return session ? session.user : null;
+}
+
+/**
+ * Enregistre la session de manière atomique.
+ * Ne met à jour l'état mémoire qu'après succès de la persistance.
+ * Ne masque pas les erreurs de SecureStore.
+ */
+export async function saveSession(token: string, user: UserProfile): Promise<void> {
+  if (!token || !user) {
+    throw new Error('Données de session incomplètes.');
+  }
+
+  const sessionData: StoredSessionV1 = {
+    version: 1,
+    token,
+    user,
+  };
+  const serialized = JSON.stringify(sessionData);
+
+  // 1. Écriture dans le stockage persistant
+  if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SESSION_KEY, serialized);
+    }
+  } else if (SecureStore) {
+    // L'erreur doit se propager si SecureStore échoue
+    await SecureStore.setItemAsync(SESSION_KEY, serialized);
+  }
+
+  // 2. Mise à jour de l'état mémoire après persistance réussie
+  memorySession = sessionData;
+}
+
+/**
+ * Supprime la session locale et l'état en mémoire.
+ */
 export async function clearSession(): Promise<void> {
-  memoryToken = null;
-  memoryRole = null;
-  memoryUser = null;
+  memorySession = null;
 
   if (Platform.OS === 'web') {
     if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(ROLE_KEY);
-      localStorage.removeItem(USER_KEY);
+      try {
+        localStorage.removeItem(SESSION_KEY);
+        for (const key of LEGACY_STORAGE_KEYS) {
+          localStorage.removeItem(key);
+        }
+      } catch (err) {
+        console.warn('Erreur localStorage clearSession:', err);
+      }
     }
   } else if (SecureStore) {
     try {
-      await SecureStore.deleteItemAsync(TOKEN_KEY);
-      await SecureStore.deleteItemAsync(ROLE_KEY);
-      await SecureStore.deleteItemAsync(USER_KEY);
-    } catch (e) {
-      console.warn('Erreur SecureStore clearSession:', e);
+      await SecureStore.deleteItemAsync(SESSION_KEY);
+    } catch (err) {
+      console.warn('Erreur SecureStore clearSession:', err);
+    }
+    for (const key of LEGACY_STORAGE_KEYS) {
+      try {
+        await SecureStore.deleteItemAsync(key);
+      } catch {}
     }
   }
 }
@@ -234,7 +366,20 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
 }
 
 export const apiClient = {
-  // Login : téléphone + PIN, le rôle peut être précisé
+  /**
+   * Health check centralisé vers GET /api/health
+   */
+  async health(): Promise<boolean> {
+    try {
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/health`, { method: 'GET' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  // Login : téléphone + PIN, rôle facultatif
   async login(phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> {
     const session = await request<SessionResponse>('/auth/login', 'POST', { phone, pin, role });
     if (session.token && session.user) {
@@ -243,7 +388,8 @@ export const apiClient = {
     return session;
   },
 
-  async verifyOtp(phone: string, code: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> {
+  // Verify OTP : rôle obligatoire (strictement aligné avec le backend)
+  async verifyOtp(phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> {
     const session = await request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code, role });
     if (session.token && session.user) {
       await saveSession(session.token, session.user);
@@ -266,7 +412,6 @@ export const apiClient = {
   async getMe(): Promise<{ user: UserProfile }> {
     const res = await request<{ user: UserProfile }>('/auth/me', 'GET');
     if (res.user) {
-      memoryUser = res.user;
       const token = await readToken();
       if (token) {
         await saveSession(token, res.user);
@@ -296,7 +441,7 @@ export const apiClient = {
     request<{ expense: unknown }>('/gic/expenses', 'POST', { label, amount, category }),
   addGicNeed: (need: { id: string; category: string; description: string; updatedAt?: string; authorRole?: string }) =>
     request<{ need: unknown }>('/gic/needs', 'POST', need),
-  createOrder: (type: OrderType, items: Array<{ productId: string; quantity: number }>) =>
+  createOrder: (type: OrderType, items: { productId: string; quantity: number }[]) =>
     request<{ orders: unknown[] }>('/buyer/orders', 'POST', { type, items }),
   getOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/buyer/orders?page=${page}&limit=${limit}`),
   getGicOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/gic/orders?page=${page}&limit=${limit}`),

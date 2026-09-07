@@ -19,6 +19,8 @@ import { apiClient, ApiError } from '@/services/api';
 import { useToast } from '@/components/ui/toast';
 import { dbService } from '@/services/database';
 import { useAuth } from '@/context/AuthContext';
+import { resolveSellerActivationState } from '@/auth/sessionRouting';
+import { OTP_DEFAULT_COOLDOWN_SECONDS } from '@/auth/otpCooldown';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -28,7 +30,7 @@ export default function OtpVerificationScreen() {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
-  const [cooldown, setCooldown] = useState(60);
+  const [cooldown, setCooldown] = useState(OTP_DEFAULT_COOLDOWN_SECONDS);
   const router = useRouter();
   const { showToast } = useToast();
   const { completeOtp } = useAuth();
@@ -107,15 +109,15 @@ export default function OtpVerificationScreen() {
         } catch {}
 
         if (res.user.role === 'seller') {
-          if (res.user.status === 'rejected' || res.user.statut === 'REJETE') {
+          const state = resolveSellerActivationState(res.user);
+          if (state === 'APPROVED') {
+            router.replace('/(seller)/home');
+          } else if (state === 'REJECTED') {
             showToast({
               message: 'Votre adhésion a été refusée par le responsable du GIC.',
               type: 'error',
             });
-            return;
-          }
-          if (res.user.status === 'active' || res.user.statut === 'APPROUVE') {
-            router.replace('/(seller)/home');
+            router.replace('/(auth)/activation-pending');
           } else {
             router.replace('/(auth)/activation-pending');
           }

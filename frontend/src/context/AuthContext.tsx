@@ -4,10 +4,20 @@ import {
   SessionResponse,
   apiClient,
   readToken,
+  saveSession,
   clearSession,
   setUnauthorizedHandler,
   ApiError,
+  isNetworkError,
 } from '@/services/api';
+
+import { performSessionRestore } from '@/auth/sessionRestore';
+
+export type RefreshUserResult =
+  | { type: 'success'; user: UserProfile }
+  | { type: 'unauthenticated' }
+  | { type: 'network_error'; error: Error }
+  | { type: 'server_error'; status: number; message: string };
 
 export interface AuthContextType {
   user: UserProfile | null;
@@ -16,7 +26,7 @@ export interface AuthContextType {
   authenticated: boolean;
   isOffline: boolean;
   restoreSession: () => Promise<void>;
-  refreshUser: () => Promise<UserProfile | null>;
+  refreshUser: () => Promise<RefreshUserResult>;
   signIn: (phone: string, pin: string, role?: 'buyer' | 'seller') => Promise<SessionResponse>;
   completeOtp: (phone: string, code: string, role: 'buyer' | 'seller') => Promise<SessionResponse>;
   signOut: () => Promise<void>;
@@ -34,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await apiClient.logout();
     } catch {
-      // Ignorer les erreurs réseau pour garantir la déconnexion locale
+      // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
       await clearSession();
       setUser(null);
@@ -43,68 +53,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const refreshUser = useCallback(async (): Promise<UserProfile | null> => {
+  const refreshUser = useCallback(async (): Promise<RefreshUserResult> => {
     try {
       const res = await apiClient.getMe();
       if (res.user) {
         setUser(res.user);
         setIsOffline(false);
-        return res.user;
+        const currentToken = await readToken();
+        if (currentToken) {
+          await saveSession(currentToken, res.user);
+        }
+        return { type: 'success', user: res.user };
       }
-      return null;
+      return { type: 'server_error', status: 500, message: 'Réponse utilisateur invalide' };
     } catch (err: any) {
       if (err instanceof ApiError && err.status === 401) {
         await signOut();
-        return null;
+        return { type: 'unauthenticated' };
       }
-      if (err instanceof ApiError && err.status === 0) {
+      if (isNetworkError(err)) {
         setIsOffline(true);
+        return {
+          type: 'network_error',
+          error: err instanceof Error ? err : new Error(String(err?.message || 'Erreur réseau')),
+        };
       }
-      return null;
+      if (err instanceof ApiError) {
+        return { type: 'server_error', status: err.status, message: err.message };
+      }
+      return { type: 'server_error', status: 500, message: err?.message || 'Erreur serveur' };
     }
   }, [signOut]);
 
   const restoreSession = useCallback(async () => {
     setLoading(true);
     try {
-      const storedToken = await readToken();
-      if (!storedToken) {
+      const result = await performSessionRestore();
+      if (result.type === 'no_session') {
         setUser(null);
         setToken(null);
         setIsOffline(false);
-        return;
-      }
-
-      // Valider obligatoirement le token auprès du backend via GET /api/auth/me
-      try {
-        const res = await apiClient.getMe();
-        if (res.user) {
-          setUser(res.user);
-          setToken(storedToken);
-          setIsOffline(false);
-        } else {
-          await clearSession();
-          setUser(null);
-          setToken(null);
-          setIsOffline(false);
-        }
-      } catch (err: any) {
-        if (err instanceof ApiError && err.status === 401) {
-          // Token expiré ou révoqué
-          await clearSession();
-          setUser(null);
-          setToken(null);
-          setIsOffline(false);
-        } else if (err instanceof ApiError && err.status === 0) {
-          // Échec réseau au démarrage : mode dégradé explicite sans inventer un profil utilisateur actif non validé
-          setIsOffline(true);
-          setUser(null);
-          setToken(null);
-        } else {
-          await clearSession();
-          setUser(null);
-          setToken(null);
-        }
+      } else if (result.type === 'authenticated') {
+        setToken(result.token);
+        setUser(result.user);
+        setIsOffline(false);
+      } else if (result.type === 'invalid_token') {
+        setToken(null);
+        setUser(null);
+        setIsOffline(false);
+      } else if (result.type === 'offline') {
+        setToken(result.token);
+        setUser(result.user);
+        setIsOffline(true);
+      } else if (result.type === 'server_error') {
+        setToken(result.token);
+        setUser(result.user);
+        setIsOffline(false);
       }
     } finally {
       setLoading(false);
@@ -150,7 +154,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const authenticated = Boolean(token && user);
+  // Authentifié uniquement si token, user valides ET connecté en ligne
+  const authenticated = Boolean(token && user && !isOffline);
 
   return (
     <AuthContext.Provider

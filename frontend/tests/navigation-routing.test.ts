@@ -1,163 +1,156 @@
 import { describe, it, expect } from 'vitest';
 import { UserProfile } from '../src/services/api';
+import {
+  canAccessBuyer,
+  canAccessSeller,
+  resolveSellerActivationState,
+  resolveSessionRoute,
+} from '../src/auth/sessionRouting';
 
-function resolveInitialRoute(user: UserProfile | null, authenticated: boolean): string {
-  if (!authenticated || !user) {
-    return '/onboarding';
-  }
-  if (user.role === 'buyer') {
-    return '/(buyer)/home';
-  }
-  if (user.role === 'seller') {
-    if (user.status === 'active' || user.statut === 'APPROUVE') {
-      return '/(seller)/home';
-    }
-    return '/(auth)/activation-pending';
-  }
-  return '/onboarding';
-}
-
-function guardRoute(
-  user: UserProfile | null,
-  authenticated: boolean,
-  targetLayout: 'buyer' | 'seller'
-): { allowed: boolean; redirect: string | null } {
-  if (!authenticated || !user) {
-    return { allowed: false, redirect: '/(auth)/login' };
-  }
-
-  if (targetLayout === 'buyer') {
-    if (user.role !== 'buyer') {
-      const redirect =
-        user.role === 'seller'
-          ? user.status === 'active' || user.statut === 'APPROUVE'
-            ? '/(seller)/home'
-            : '/(auth)/activation-pending'
-          : '/(auth)/login';
-      return { allowed: false, redirect };
-    }
-    return { allowed: true, redirect: null };
-  }
-
-  if (targetLayout === 'seller') {
-    if (user.role !== 'seller') {
-      return {
-        allowed: false,
-        redirect: user.role === 'buyer' ? '/(buyer)/home' : '/(auth)/login',
-      };
-    }
-    if (user.status !== 'active' && user.statut !== 'APPROUVE') {
-      return { allowed: false, redirect: '/(auth)/activation-pending' };
-    }
-    return { allowed: true, redirect: null };
-  }
-
-  return { allowed: false, redirect: '/(auth)/login' };
-}
-
-describe('Navigation & Authorization Routing Matrix', () => {
+describe('Production Navigation & Authorization Routing Matrix', () => {
   const activeBuyer: UserProfile = {
     id: '1',
     role: 'buyer',
     name: 'Acheteur Pro',
-    phone: '+237699112233',
+    phone: '+237699111111',
     status: 'active',
     phoneVerified: true,
   };
 
-  const pendingSeller: UserProfile = {
+  const unverifiedBuyer: UserProfile = {
     id: '2',
-    role: 'seller',
-    name: 'Vendeur En Attente',
-    phone: '+237677112233',
+    role: 'buyer',
+    name: 'Acheteur Non Vérifié',
+    phone: '+237699222222',
+    status: 'active',
+    phoneVerified: false,
+  };
+
+  const inactiveBuyer: UserProfile = {
+    id: '3',
+    role: 'buyer',
+    name: 'Acheteur Inactif',
+    phone: '+237699333333',
     status: 'pending',
-    statut: 'EN_ATTENTE',
     phoneVerified: true,
   };
 
-  const activeSeller: UserProfile = {
-    id: '3',
+  const approvedSeller: UserProfile = {
+    id: '4',
     role: 'seller',
     name: 'Vendeur Validé',
-    phone: '+237677998877',
+    phone: '+237677111111',
     status: 'active',
     statut: 'APPROUVE',
     phoneVerified: true,
+    gicId: 'gic-1',
+  };
+
+  const pendingSeller: UserProfile = {
+    id: '5',
+    role: 'seller',
+    name: 'Vendeur En Attente',
+    phone: '+237677222222',
+    status: 'pending',
+    statut: 'EN_ATTENTE',
+    phoneVerified: true,
+    gicId: 'gic-1',
   };
 
   const rejectedSeller: UserProfile = {
-    id: '4',
+    id: '6',
     role: 'seller',
-    name: 'Vendeur Rejeté',
-    phone: '+237677000000',
+    name: 'Vendeur Refusé',
+    phone: '+237677333333',
     status: 'rejected',
     statut: 'REJETE',
     phoneVerified: true,
+    gicId: 'gic-1',
   };
 
-  describe('RootIndex / Initial Route Resolution', () => {
-    it('should route unauthenticated session to /onboarding', () => {
-      expect(resolveInitialRoute(null, false)).toBe('/onboarding');
-    });
+  const sellerActiveStatusOnly: UserProfile = {
+    id: '7',
+    role: 'seller',
+    name: 'Vendeur Status Active Mais Non Approuvé GIC',
+    phone: '+237677444444',
+    status: 'active',
+    statut: 'EN_ATTENTE',
+    phoneVerified: true,
+    gicId: 'gic-1',
+  };
 
-    it('should route active buyer to /(buyer)/home', () => {
-      expect(resolveInitialRoute(activeBuyer, true)).toBe('/(buyer)/home');
-    });
+  const unverifiedSeller: UserProfile = {
+    id: '8',
+    role: 'seller',
+    name: 'Vendeur Non Vérifié',
+    phone: '+237677555555',
+    status: 'active',
+    statut: 'APPROUVE',
+    phoneVerified: false,
+    gicId: 'gic-1',
+  };
 
-    it('should route pending seller to /(auth)/activation-pending', () => {
-      expect(resolveInitialRoute(pendingSeller, true)).toBe('/(auth)/activation-pending');
-    });
-
-    it('should route active seller to /(seller)/home', () => {
-      expect(resolveInitialRoute(activeSeller, true)).toBe('/(seller)/home');
-    });
-
-    it('should route rejected seller to /(auth)/activation-pending (never to /home)', () => {
-      expect(resolveInitialRoute(rejectedSeller, true)).toBe('/(auth)/activation-pending');
+  describe('User without session', () => {
+    it('should redirect unauthenticated user to welcome screen', () => {
+      expect(resolveSessionRoute(null)).toBe('/(auth)/welcome');
+      expect(canAccessBuyer(null)).toBe(false);
+      expect(canAccessSeller(null)).toBe(false);
+      expect(resolveSellerActivationState(null)).toBe('UNVERIFIED');
     });
   });
 
-  describe('Route Guards (Layout Protections against direct deep links)', () => {
-    it('should block unauthenticated access to /(buyer)/* and redirect to login', () => {
-      const res = guardRoute(null, false, 'buyer');
-      expect(res.allowed).toBe(false);
-      expect(res.redirect).toBe('/(auth)/login');
+  describe('Buyer authorization rules', () => {
+    it('should grant access to active and phoneVerified buyer', () => {
+      expect(canAccessBuyer(activeBuyer)).toBe(true);
+      expect(canAccessSeller(activeBuyer)).toBe(false);
+      expect(resolveSessionRoute(activeBuyer)).toBe('/(buyer)/home');
     });
 
-    it('should block unauthenticated access to /(seller)/* and redirect to login', () => {
-      const res = guardRoute(null, false, 'seller');
-      expect(res.allowed).toBe(false);
-      expect(res.redirect).toBe('/(auth)/login');
+    it('should deny access to unverified buyer and redirect to login', () => {
+      expect(canAccessBuyer(unverifiedBuyer)).toBe(false);
+      expect(resolveSessionRoute(unverifiedBuyer)).toBe('/(auth)/login');
     });
 
-    it('should allow active buyer into buyer layout', () => {
-      const res = guardRoute(activeBuyer, true, 'buyer');
-      expect(res.allowed).toBe(true);
-      expect(res.redirect).toBeNull();
+    it('should deny access to inactive buyer and redirect to login', () => {
+      expect(canAccessBuyer(inactiveBuyer)).toBe(false);
+      expect(resolveSessionRoute(inactiveBuyer)).toBe('/(auth)/login');
     });
 
-    it('should block buyer from accessing seller layout and redirect to /(buyer)/home', () => {
-      const res = guardRoute(activeBuyer, true, 'seller');
-      expect(res.allowed).toBe(false);
-      expect(res.redirect).toBe('/(buyer)/home');
+    it('should deny buyer access to seller dashboard', () => {
+      expect(canAccessSeller(activeBuyer)).toBe(false);
+    });
+  });
+
+  describe('Seller cumulative authorization rules', () => {
+    it('should grant dashboard access only to seller with phoneVerified, status=active AND statut=APPROUVE', () => {
+      expect(canAccessSeller(approvedSeller)).toBe(true);
+      expect(canAccessBuyer(approvedSeller)).toBe(false);
+      expect(resolveSellerActivationState(approvedSeller)).toBe('APPROVED');
+      expect(resolveSessionRoute(approvedSeller)).toBe('/(seller)/home');
     });
 
-    it('should block pending seller from accessing seller dashboard and redirect to activation-pending', () => {
-      const res = guardRoute(pendingSeller, true, 'seller');
-      expect(res.allowed).toBe(false);
-      expect(res.redirect).toBe('/(auth)/activation-pending');
+    it('should keep pending seller on activation-pending', () => {
+      expect(canAccessSeller(pendingSeller)).toBe(false);
+      expect(resolveSellerActivationState(pendingSeller)).toBe('PENDING');
+      expect(resolveSessionRoute(pendingSeller)).toBe('/(auth)/activation-pending');
     });
 
-    it('should block rejected seller from accessing seller dashboard and redirect to activation-pending', () => {
-      const res = guardRoute(rejectedSeller, true, 'seller');
-      expect(res.allowed).toBe(false);
-      expect(res.redirect).toBe('/(auth)/activation-pending');
+    it('should send rejected seller to activation-pending and strictly deny dashboard', () => {
+      expect(canAccessSeller(rejectedSeller)).toBe(false);
+      expect(resolveSellerActivationState(rejectedSeller)).toBe('REJECTED');
+      expect(resolveSessionRoute(rejectedSeller)).toBe('/(auth)/activation-pending');
     });
 
-    it('should allow active seller into seller layout', () => {
-      const res = guardRoute(activeSeller, true, 'seller');
-      expect(res.allowed).toBe(true);
-      expect(res.redirect).toBeNull();
+    it('CRITICAL: should NOT grant access to seller with status=active but statut!=APPROUVE (cumulative rule)', () => {
+      expect(canAccessSeller(sellerActiveStatusOnly)).toBe(false);
+      expect(resolveSellerActivationState(sellerActiveStatusOnly)).toBe('PENDING');
+      expect(resolveSessionRoute(sellerActiveStatusOnly)).toBe('/(auth)/activation-pending');
+    });
+
+    it('should require phoneVerified for sellers', () => {
+      expect(canAccessSeller(unverifiedSeller)).toBe(false);
+      expect(resolveSellerActivationState(unverifiedSeller)).toBe('UNVERIFIED');
+      expect(resolveSessionRoute(unverifiedSeller)).toBe('/(auth)/login');
     });
   });
 });

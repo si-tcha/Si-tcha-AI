@@ -310,6 +310,20 @@ export async function resendOtp(req: Request, res: Response) {
   const { phone, role } = req.body;
   const canonicalPhone = normalizePhone(phone.trim()) || phone.trim();
 
+  // 1. Vérification du provider SMS via sa propre méthode getMode()
+  if (defaultOtpProvider.getMode() === 'disabled') {
+    return res.status(503).json({
+      message: 'Le service SMS est actuellement désactivé. Veuillez contacter le support.',
+    });
+  }
+
+  // Réponse publique générique pour prévenir l'énumération de comptes
+  const GENERIC_RESPONSE = {
+    message: 'Si les informations correspondent à un compte en attente de validation, un code OTP a été envoyé.',
+    requireOtp: true,
+  };
+
+  // 2. Recherche du compte
   const [buyerMatch, sellerMatch] = await Promise.all([
     prisma.acheteur.findUnique({
       where: { contact: canonicalPhone },
@@ -321,49 +335,32 @@ export async function resendOtp(req: Request, res: Response) {
     }),
   ]);
 
-  if (buyerMatch && sellerMatch) {
-    return res.status(409).json({
-      message:
-        "Conflit d'identité : ce numéro est associé à plusieurs types de comptes. Contactez le support.",
-    });
-  }
-
   const targetAccount = role === 'buyer' ? buyerMatch : sellerMatch;
-  if (!targetAccount) {
-    return res.status(404).json({
-      message: `Compte ${role === 'buyer' ? 'acheteur' : 'vendeur'} introuvable pour ce numéro.`,
-    });
-  }
-
   const isAlreadyVerified = Boolean(
-    targetAccount.phoneVerified || targetAccount.isVerified
+    targetAccount && (targetAccount.phoneVerified || targetAccount.isVerified)
   );
+
+  // Anti-énumération : compte introuvable, rôle non concordant ou déjà vérifié
+  // Ne pas générer ni persister d'OTP en base, retourner une réponse publique générique
+  if (!targetAccount) {
+    if (req.log?.info) {
+      req.log.info({ phone: canonicalPhone, role }, 'Resend OTP : compte introuvable ou rôle invalide');
+    }
+    return res.status(200).json(GENERIC_RESPONSE);
+  }
+
   if (isAlreadyVerified) {
-    return res.status(400).json({
-      message: 'Ce compte est déjà vérifié. Veuillez vous connecter directement.',
-    });
+    if (req.log?.info) {
+      req.log.info({ phone: canonicalPhone, role }, 'Resend OTP : compte déjà vérifié');
+    }
+    return res.status(200).json(GENERIC_RESPONSE);
   }
 
-  if (process.env.OTP_PROVIDER === 'disabled') {
-    return res.status(503).json({
-      message: 'Le service SMS est désactivé. Veuillez contacter le support.',
-    });
-  }
-
+  // 3. Compte valide en attente : générer le code
   const code = generateSecureOtp();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  const smsResult = await defaultOtpProvider.sendSms(
-    canonicalPhone,
-    `Votre nouveau code de confirmation SI-TCHA est : ${code}. Valide pendant 10 minutes.`
-  );
-
-  if (!smsResult.success) {
-    return res.status(503).json({
-      message: 'Le service SMS est indisponible. Veuillez réessayer plus tard.',
-    });
-  }
-
+  // 4. PERSISTER l'OTP en base AVANT d'appeler le provider SMS
   await prisma.otpCode.upsert({
     where: { phone: canonicalPhone },
     create: {
@@ -377,11 +374,24 @@ export async function resendOtp(req: Request, res: Response) {
     },
   });
 
-  return res.status(200).json({
-    message: 'Un nouveau code de vérification a été envoyé par SMS.',
-    requireOtp: true,
-    phone: canonicalPhone,
-  });
+  // 5. Ensuite seulement, demander l'envoi au provider SMS
+  const smsResult = await defaultOtpProvider.sendSms(
+    canonicalPhone,
+    `Votre nouveau code de confirmation SI-TCHA est : ${code}. Valide pendant 10 minutes.`
+  );
+
+  // 6. Si l'envoi échoue après persistance : retourner 503 sans valider le compte
+  if (!smsResult.success) {
+    if (req.log?.error) {
+      req.log.error({ phone: canonicalPhone, error: smsResult.error }, 'Échec d’envoi SMS par le provider');
+    }
+    return res.status(503).json({
+      message: 'Le service SMS est temporairement indisponible. Veuillez réessayer plus tard.',
+    });
+  }
+
+  // 7. Succès : réponse générique sans émettre de JWT
+  return res.status(200).json(GENERIC_RESPONSE);
 }
 
 export async function verifyOtp(req: Request, res: Response) {
