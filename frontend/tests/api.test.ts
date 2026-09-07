@@ -125,7 +125,45 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
     });
 
-    it('7. computeNativePhysicalDevice et getApiBaseUrl doivent normaliser le Web comme non physique natif', () => {
+    it('7. Mode production avec localhost ou IP locale doit lever une erreur explicite', () => {
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: 'http://localhost:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://127.0.0.1:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: false,
+          envUrl: 'http://10.0.2.2:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost/);
+
+      // Une URL HTTPS de production valide doit être acceptée
+      const validProdUrl = resolveApiBaseUrl({
+        platform: 'android',
+        isDevice: true,
+        envUrl: 'https://api.sitcha.org/api',
+        isDev: false,
+      });
+      expect(validProdUrl).toBe('https://api.sitcha.org/api');
+    });
+
+    it('8. computeNativePhysicalDevice et getApiBaseUrl doivent normaliser le Web comme non physique natif', () => {
       // computeNativePhysicalDevice
       expect(computeNativePhysicalDevice('web', true)).toBe(false);
       expect(computeNativePhysicalDevice('android', true)).toBe(true);

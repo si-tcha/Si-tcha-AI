@@ -111,15 +111,23 @@ export function computeNativePhysicalDevice(platform: string, isDevice: boolean)
 
 export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
   const envUrl = options.envUrl?.trim();
-  if (envUrl && envUrl.length > 0) {
-    return envUrl.replace(/\/+$/, '');
+  const isDev = options.isDev !== undefined ? options.isDev : true;
+
+  if (!isDev) {
+    if (!envUrl || envUrl.length === 0) {
+      throw new Error(
+        'Configuration manquante: EXPO_PUBLIC_API_URL doit être définie en environnement de production / preview.'
+      );
+    }
+    if (/^(https?:\/\/)?(localhost|127\.0\.0\.1|10\.0\.2\.2)(:\d+)?(\/.*)?$/i.test(envUrl)) {
+      throw new Error(
+        'Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost ou une adresse locale en production / preview.'
+      );
+    }
   }
 
-  const isDev = options.isDev !== undefined ? options.isDev : true;
-  if (!isDev) {
-    throw new Error(
-      'Configuration manquante: EXPO_PUBLIC_API_URL doit être définie en environnement de production / preview.'
-    );
+  if (envUrl && envUrl.length > 0) {
+    return envUrl.replace(/\/+$/, '');
   }
 
   // La notion d'appareil physique ne s'applique qu'à android et ios.
