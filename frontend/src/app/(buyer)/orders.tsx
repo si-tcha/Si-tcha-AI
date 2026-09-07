@@ -1,4 +1,16 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Image } from 'react-native';
+import {
+  Dimensions,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  Image,
+} from 'react-native';
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,17 +30,92 @@ const TYPE_LABELS: Record<string, string> = {
   reservation: 'Réservation garantie',
 };
 
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; badgeBg: string; badgeBorder: string; badgeColor: string; note: string }
+> = {
+  en_attente: {
+    label: 'EN ATTENTE',
+    badgeBg: '#fff7ed',
+    badgeBorder: '#fed7aa',
+    badgeColor: '#c2410c',
+    note: 'En attente de préparation par le GIC · Espèces à la remise',
+  },
+  confirmee: {
+    label: 'CONFIRMÉE',
+    badgeBg: '#f0fdf4',
+    badgeBorder: '#bbf7d0',
+    badgeColor: '#15803d',
+    note: 'Préparation en cours · Règlement en espèces à la livraison',
+  },
+  livree: {
+    label: 'LIVRÉE',
+    badgeBg: '#eff6ff',
+    badgeBorder: '#bfdbfe',
+    badgeColor: '#1d4ed8',
+    note: 'Réceptionnée · Règlement en espèces effectué',
+  },
+  annulee: {
+    label: 'ANNULÉE',
+    badgeBg: '#fef2f2',
+    badgeBorder: '#fecaca',
+    badgeColor: '#b91c1c',
+    note: 'Commande annulée · Aucun montant dû',
+  },
+};
+
+function formatOrderDate(dateStr?: string): string {
+  if (!dateStr) return 'Date inconnue';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleString('fr-FR', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 export default function BuyerOrdersScreen() {
   const router = useRouter();
   const { showToast } = useToast();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
+
   // Rating state
   const [ratingOrder, setRatingOrder] = useState<OrderRecord | null>(null);
   const [ratingStars, setRatingStars] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
   const [ratedOrders, setRatedOrders] = useState<Set<string>>(new Set());
+
+  const loadOrders = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await dbService.initDatabase();
+      const loaded = await dbService.getOrders(true);
+      setOrders(loaded);
+      setIsOffline(!dbService.isLastOrdersSyncSuccessful());
+    } catch {
+      const cached = await dbService.getOrders(false);
+      setOrders(cached);
+      setIsOffline(true);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadOrders();
+    }, [loadOrders])
+  );
 
   const handleSubmitRating = async () => {
     if (!ratingOrder || ratingStars === 0) return;
@@ -40,46 +127,51 @@ export default function BuyerOrdersScreen() {
         ratingComment.trim(),
         'Acheteur'
       );
-      setRatedOrders(prev => new Set([...prev, ratingOrder.id]));
+      setRatedOrders((prev) => new Set([...prev, ratingOrder.id]));
       setRatingOrder(null);
       setRatingStars(0);
       setRatingComment('');
       showToast({ message: 'Merci pour votre évaluation !', type: 'success' });
-    } catch (err) {
-      showToast({ message: 'Erreur lors de l\'évaluation.', type: 'error' });
+    } catch {
+      showToast({ message: "Erreur lors de l'évaluation.", type: 'error' });
     }
   };
-
-  useFocusEffect(
-    useCallback(() => {
-      const load = async () => {
-        setIsLoading(true);
-        await dbService.initDatabase();
-        setOrders(await dbService.getOrders());
-        setIsLoading(false);
-      };
-      load();
-    }, [])
-  );
 
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
 
-        {/* Header Unifié Hauteur Fixe 56px */}
+        {/* Header Fixe 56px */}
         <View style={styles.header}>
           <View style={styles.headerTitleGroup}>
             <Text style={styles.headerTitle}>Mes Commandes & Bordereaux</Text>
-            <Text style={styles.headerSubtitle}>Suivi Logistique & Reçus QR</Text>
+            <Text style={styles.headerSubtitle}>Suivi logistique · Espèces à la livraison</Text>
           </View>
 
           <View style={styles.headerIcons}>
-            <View style={styles.iconButton}>
-              <Feather name="file-text" size={18} color="#f3ecd8" />
-            </View>
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={loadOrders}
+              accessibilityLabel="Actualiser les commandes"
+            >
+              <Feather name="refresh-cw" size={16} color="#f3ecd8" />
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* Bannière Hors-Ligne */}
+        {isOffline && (
+          <View style={styles.offlineBanner}>
+            <Feather name="wifi-off" size={14} color="#d97834" />
+            <Text style={styles.offlineBannerText}>
+              Mode hors-ligne : affichage des commandes enregistrées en cache local.
+            </Text>
+            <TouchableOpacity style={styles.refreshBtn} onPress={loadOrders}>
+              <Text style={styles.refreshBtnText}>Réessayer</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {isLoading ? (
@@ -89,70 +181,111 @@ export default function BuyerOrdersScreen() {
           ) : orders.length === 0 ? (
             <View style={styles.empty}>
               <Feather name="shopping-bag" size={40} color="#889e87" />
-              <Text style={styles.emptyText}>Aucune commande enregistrée pour l'instant.</Text>
+              <Text style={styles.emptyTitle}>Aucune commande enregistrée pour l'instant.</Text>
+              <Text style={styles.emptyText}>Vos récoltes commandées auprès des GIC apparaîtront ici.</Text>
               <TouchableOpacity style={styles.shopBtn} onPress={() => router.replace('/(buyer)/home')}>
                 <Text style={styles.shopBtnText}>Explorer le marché direct</Text>
               </TouchableOpacity>
             </View>
           ) : (
-            orders.map((o) => (
-              <View key={o.id} style={styles.card}>
-                <View style={styles.row}>
-                  <Text style={styles.title}>{o.productName}</Text>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>✓ {o.status === 'en_attente' ? 'EN ATTENTE' : (o.status === 'confirmee' ? 'CONFIRMÉE' : o.status.toUpperCase())}</Text>
-                  </View>
-                </View>
+            orders.map((o) => {
+              const statusCfg = STATUS_CONFIG[o.status] || {
+                label: o.status?.toUpperCase() || 'EN COURS',
+                badgeBg: '#f3ecd8',
+                badgeBorder: '#e6dfcc',
+                badgeColor: '#101e0f',
+                note: 'Règlement en espèces à la livraison',
+              };
 
-                <View style={styles.typeBadgeRow}>
-                  <Text style={styles.typeBadgeText}>{TYPE_LABELS[o.type] ?? o.type}</Text>
-                  <Text style={styles.gicTag} numberOfLines={1}>GIC: {o.gicName}</Text>
-                </View>
-
-                <View style={styles.priceRow}>
-                  <Text style={styles.value}>
-                    {o.quantity} {o.unit} · {o.price} FCFA/{o.unit}
-                  </Text>
-                  <Text style={styles.totalPrice}>{(o.quantity * parseFloat(o.price || '0')).toLocaleString()} FCFA</Text>
-                </View>
-
-                {/* Timeline Progress */}
-                <View style={styles.timelineRow}>
-                  <View style={styles.timelineStepActive}>
-                    <Feather name="check" size={10} color="#ffffff" />
+              return (
+                <View key={o.id} style={styles.card}>
+                  <View style={styles.row}>
+                    <Text style={styles.title}>{o.productName}</Text>
+                    <View
+                      style={[
+                        styles.badge,
+                        { backgroundColor: statusCfg.badgeBg, borderColor: statusCfg.badgeBorder },
+                      ]}
+                    >
+                      <Text style={[styles.badgeText, { color: statusCfg.badgeColor }]}>
+                        ✓ {statusCfg.label}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.timelineLineActive} />
-                  <View style={styles.timelineStepActive}>
-                    <Feather name={o.type === 'reservation' ? "loader" : "package"} size={10} color="#ffffff" />
-                  </View>
-                  <View style={styles.timelineLine} />
-                  <View style={styles.timelineStep}>
-                    <Feather name={o.type === 'reservation' ? "sun" : "truck"} size={10} color="#889e87" />
-                  </View>
-                </View>
-                <Text style={styles.timelineLabel}>
-                  {o.type === 'reservation' ? 'Fonds Avancés · Production en cours' : 'Préparé en entrepôt GIC · Prêt pour transport'}
-                </Text>
 
-                <View style={styles.footerRow}>
-                  <Text style={styles.dateMeta}>
-                    {new Date(o.createdAt).toLocaleString('fr-FR')}
-                  </Text>
-                  <View style={{ flexDirection: 'row', gap: 6 }}>
-                    {o.status === 'confirmee' && !ratedOrders.has(o.id) && (
-                      <TouchableOpacity style={styles.rateBtn} onPress={() => { setRatingOrder(o); setRatingStars(0); setRatingComment(''); }}>
-                        <Feather name="star" size={13} color="#d97834" />
-                        <Text style={styles.rateBtnText}>Noter</Text>
+                  <View style={styles.typeBadgeRow}>
+                    <Text style={styles.typeBadgeText}>{TYPE_LABELS[o.type] ?? o.type}</Text>
+                    <Text style={styles.gicTag} numberOfLines={1}>
+                      GIC : {o.gicName}
+                    </Text>
+                  </View>
+
+                  <View style={styles.priceRow}>
+                    <Text style={styles.value}>
+                      {o.quantity} {o.unit} · {o.price} FCFA/{o.unit}
+                    </Text>
+                    <Text style={styles.totalPrice}>
+                      {(o.quantity * parseFloat(o.price || '0')).toLocaleString()} FCFA
+                    </Text>
+                  </View>
+
+                  {/* Mention explicite de paiement en espèces */}
+                  <View style={styles.cashNoticeRow}>
+                    <Feather name="dollar-sign" size={13} color="#15803d" />
+                    <Text style={styles.cashNoticeText}>
+                      Règlement en espèces à la remise/livraison
+                    </Text>
+                  </View>
+
+                  {/* Timeline Progress */}
+                  <View style={styles.timelineRow}>
+                    <View style={styles.timelineStepActive}>
+                      <Feather name="check" size={10} color="#ffffff" />
+                    </View>
+                    <View style={styles.timelineLineActive} />
+                    <View style={styles.timelineStepActive}>
+                      <Feather
+                        name={o.type === 'reservation' ? 'loader' : 'package'}
+                        size={10}
+                        color="#ffffff"
+                      />
+                    </View>
+                    <View style={styles.timelineLine} />
+                    <View style={styles.timelineStep}>
+                      <Feather
+                        name={o.type === 'reservation' ? 'sun' : 'truck'}
+                        size={10}
+                        color="#889e87"
+                      />
+                    </View>
+                  </View>
+                  <Text style={styles.timelineLabel}>{statusCfg.note}</Text>
+
+                  <View style={styles.footerRow}>
+                    <Text style={styles.dateMeta}>{formatOrderDate(o.createdAt)}</Text>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {o.status === 'confirmee' && !ratedOrders.has(o.id) && (
+                        <TouchableOpacity
+                          style={styles.rateBtn}
+                          onPress={() => {
+                            setRatingOrder(o);
+                            setRatingStars(0);
+                            setRatingComment('');
+                          }}
+                        >
+                          <Feather name="star" size={13} color="#d97834" />
+                          <Text style={styles.rateBtnText}>Noter</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity style={styles.receiptBtn} onPress={() => setSelectedOrder(o)}>
+                        <Feather name="grid" size={13} color="#101e0f" />
+                        <Text style={styles.receiptBtnText}>Reçu QR</Text>
                       </TouchableOpacity>
-                    )}
-                    <TouchableOpacity style={styles.receiptBtn} onPress={() => setSelectedOrder(o)}>
-                      <Feather name="grid" size={13} color="#101e0f" />
-                      <Text style={styles.receiptBtnText}>Reçu QR</Text>
-                    </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
 
@@ -161,7 +294,7 @@ export default function BuyerOrdersScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Reçu Transactionnel QR</Text>
+                <Text style={styles.modalTitle}>Bordereau & Reçu QR</Text>
                 <TouchableOpacity onPress={() => setSelectedOrder(null)}>
                   <Feather name="x" size={22} color="#101e0f" />
                 </TouchableOpacity>
@@ -171,15 +304,33 @@ export default function BuyerOrdersScreen() {
                 <View style={styles.receiptBox}>
                   <View style={styles.qrPlaceholder}>
                     <Image
-                      source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(selectedOrder.id)}` }}
+                      source={{
+                        uri: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
+                          selectedOrder.id
+                        )}`,
+                      }}
                       style={{ width: 120, height: 120 }}
                     />
                   </View>
-                  <Text style={styles.receiptCode}>REF-{selectedOrder.id.substring(0, 8).toUpperCase()}</Text>
+                  <Text style={styles.receiptCode}>
+                    REF-{selectedOrder.id.substring(0, 8).toUpperCase()}
+                  </Text>
                   <Text style={styles.receiptProd}>{selectedOrder.productName}</Text>
-                  <Text style={styles.receiptGic}>Fournisseur: {selectedOrder.gicName}</Text>
-                  <Text style={styles.receiptTotal}>Total: {(selectedOrder.quantity * parseFloat(selectedOrder.price || '0')).toLocaleString()} FCFA</Text>
-                  <Text style={styles.receiptHint}>Paiement Mobile Money Sécurisé · Présentez ce QR Code au magasinier du GIC.</Text>
+                  <Text style={styles.receiptGic}>Fournisseur : {selectedOrder.gicName}</Text>
+                  <Text style={styles.receiptQty}>
+                    Quantité : {selectedOrder.quantity} {selectedOrder.unit}
+                  </Text>
+                  <Text style={styles.receiptTotal}>
+                    Total à régler en espèces :{' '}
+                    {(
+                      selectedOrder.quantity * parseFloat(selectedOrder.price || '0')
+                    ).toLocaleString()}{' '}
+                    FCFA
+                  </Text>
+                  <Text style={styles.receiptHint}>
+                    Règlement intégral en espèces à la remise physique · Présentez ce reçu ou cette
+                    référence au transporteur ou au magasinier du GIC.
+                  </Text>
                 </View>
               )}
             </View>
@@ -207,7 +358,7 @@ export default function BuyerOrdersScreen() {
                     {[1, 2, 3, 4, 5].map((star) => (
                       <TouchableOpacity key={star} onPress={() => setRatingStars(star)}>
                         <Feather
-                          name={star <= ratingStars ? 'star' : 'star'}
+                          name="star"
                           size={32}
                           color={star <= ratingStars ? '#d97834' : '#e6dfcc'}
                         />
@@ -286,9 +437,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scroll: { padding: Spacing.four, gap: 12, paddingBottom: 90 },
-  empty: { alignItems: 'center', paddingVertical: 60, gap: 12 },
-  emptyText: { fontSize: 13, color: '#5a6258', fontWeight: '600' },
-  shopBtn: { backgroundColor: '#d97834', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12 },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff7ed',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fed7aa',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#c2410c',
+    fontWeight: '600',
+  },
+  refreshBtn: {
+    backgroundColor: '#101e0f',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  refreshBtnText: {
+    fontSize: 11,
+    color: '#f3ecd8',
+    fontWeight: '700',
+  },
+  empty: { alignItems: 'center', paddingVertical: 60, gap: 8 },
+  emptyTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
+  emptyText: { fontSize: 12, color: '#5a6258', fontWeight: '500', textAlign: 'center' },
+  shopBtn: { backgroundColor: '#d97834', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12, marginTop: 4 },
   shopBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 13 },
   card: {
     backgroundColor: '#ffffff',
@@ -301,20 +481,34 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 15, fontWeight: '800', color: '#101e0f', flex: 1 },
   badge: {
-    backgroundColor: '#f0fdf4',
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderWidth: 1,
-    borderColor: '#bbf7d0',
   },
-  badgeText: { fontSize: 10, fontWeight: '800', color: '#15803d' },
+  badgeText: { fontSize: 10, fontWeight: '800' },
   typeBadgeRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   typeBadgeText: { fontSize: 11, fontWeight: '700', color: '#d97834' },
   gicTag: { fontSize: 11, color: '#5a6258', fontWeight: '600', flexShrink: 1 },
   priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f9f6ef', padding: 10, borderRadius: 10 },
   value: { fontSize: 12, fontWeight: '700', color: '#101e0f' },
   totalPrice: { fontSize: 15, fontWeight: '900', color: '#d97834' },
+  cashNoticeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  cashNoticeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803d',
+  },
   timelineRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   timelineStepActive: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#15803d', alignItems: 'center', justifyContent: 'center' },
   timelineLineActive: { flex: 1, height: 3, backgroundColor: '#15803d' },
@@ -336,6 +530,7 @@ const styles = StyleSheet.create({
   receiptCode: { fontSize: 12, fontWeight: '800', color: '#889e87', letterSpacing: 1 },
   receiptProd: { fontSize: 16, fontWeight: '800', color: '#101e0f' },
   receiptGic: { fontSize: 12, color: '#5a6258' },
-  receiptTotal: { fontSize: 18, fontWeight: '900', color: '#d97834', marginTop: 4 },
+  receiptQty: { fontSize: 13, fontWeight: '700', color: '#101e0f' },
+  receiptTotal: { fontSize: 16, fontWeight: '900', color: '#d97834', marginTop: 4, textAlign: 'center' },
   receiptHint: { fontSize: 11, color: '#5a6258', textAlign: 'center', lineHeight: 16, marginTop: 6 },
 });

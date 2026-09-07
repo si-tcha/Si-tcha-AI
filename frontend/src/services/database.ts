@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
-import { Platform, Alert } from 'react-native';
+import * as Crypto from 'expo-crypto';
+import { Alert } from 'react-native';
 import { apiClient } from './api';
 import {
   AgriProgramRecord,
@@ -35,7 +36,6 @@ import {
   MarketPriceRecord,
   OrderRecord,
   OrderType,
-  OrderStatus,
   ParcelGrowthRecord,
   PhytoAlertRecord,
   PrefinancingDeal,
@@ -46,6 +46,22 @@ import {
   WeatherRecord,
   nowIso,
 } from './database.shared';
+
+function generateClientRequestId(): string {
+  try {
+    if (typeof Crypto?.randomUUID === 'function') {
+      return Crypto.randomUUID();
+    }
+  } catch {}
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 export {
   DEFAULT_AGRONOMIST_QUESTIONS,
@@ -396,28 +412,66 @@ class DatabaseService {
   }
 
   async getCart(): Promise<CartItemRecord[]> {
-    const rows = this.getDb().getAllSync('SELECT * FROM cart_items') as any[];
-    return rows.map(r => ({ ...r, synced: !!r.synced }));
+    const rows = this.getDb().getAllSync('SELECT * FROM cart_items ORDER BY rowid ASC') as any[];
+    return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
   async getCartCount(): Promise<number> {
     const row = this.getDb().getFirstSync('SELECT SUM(quantity) as count FROM cart_items') as { count: number | null };
-    return row?.count || 0;
+    return Number(row?.count) || 0;
+  }
+
+  async getCartTotal(): Promise<number> {
+    const items = await this.getCart();
+    return items.reduce((sum, item) => sum + (parseFloat(item.price || '0') * item.quantity), 0);
+  }
+
+  async getCartClientRequestId(): Promise<string | null> {
+    return this.readKv<string | null>(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, null);
+  }
+
+  async getOrCreateCartClientRequestId(): Promise<string> {
+    let key = await this.getCartClientRequestId();
+    if (!key) {
+      key = generateClientRequestId();
+      this.writeKv(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, key);
+    }
+    return key;
+  }
+
+  async invalidateCartClientRequestId(): Promise<void> {
+    try {
+      const db = this.getDb();
+      db.runSync('DELETE FROM kv_store WHERE key = ?;', [STORAGE_KEYS.CART_CLIENT_REQUEST_ID]);
+    } catch {}
   }
 
   async clearCart(): Promise<void> {
     this.getDb().runSync('DELETE FROM cart_items');
+    await this.invalidateCartClientRequestId();
   }
 
-  async addToCart(product: { productId: string; name: string; price: string; unit: string; }): Promise<CartItemRecord> {
+  async addToCart(
+    product: { productId: string; name: string; price: string; unit: string },
+    maxStock?: number
+  ): Promise<CartItemRecord> {
     const targetId = String(product.productId);
     const db = this.getDb();
+
+    if (maxStock !== undefined && maxStock < 1) {
+      throw new Error(`Stock indisponible pour ${product.name}.`);
+    }
 
     const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
 
     if (existing) {
-      const newQuantity = existing.quantity + 1;
+      const currentQty = Number(existing.quantity);
+      if (maxStock !== undefined && currentQty >= maxStock) {
+        throw new Error(`Stock maximum atteint (${maxStock} ${product.unit}).`);
+      }
+      const newQuantity = currentQty + 1;
       db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+      await this.invalidateCartClientRequestId();
       return { ...existing, quantity: newQuantity, synced: false };
     }
 
@@ -426,7 +480,49 @@ class DatabaseService {
       'INSERT INTO cart_items (id, productId, name, price, unit, quantity, synced) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [id, targetId, product.name, product.price, product.unit, 1, 0]
     );
+    await this.invalidateCartClientRequestId();
     return { id, productId: targetId, name: product.name, price: product.price, unit: product.unit, quantity: 1, synced: false };
+  }
+
+  async incrementCartItem(productId: string, maxStock?: number): Promise<CartItemRecord | null> {
+    const targetId = String(productId);
+    const db = this.getDb();
+    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
+    if (!existing) return null;
+
+    const currentQty = Number(existing.quantity);
+    if (maxStock !== undefined && currentQty >= maxStock) {
+      throw new Error(`Stock maximum atteint (${maxStock} ${existing.unit}).`);
+    }
+
+    const newQuantity = currentQty + 1;
+    db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+    await this.invalidateCartClientRequestId();
+    return { ...existing, quantity: newQuantity, synced: false };
+  }
+
+  async decrementCartItem(productId: string): Promise<CartItemRecord | null> {
+    const targetId = String(productId);
+    const db = this.getDb();
+    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
+    if (!existing) return null;
+
+    const currentQty = Number(existing.quantity);
+    if (currentQty <= 1) {
+      await this.removeFromCart(targetId);
+      return null;
+    }
+
+    const newQuantity = currentQty - 1;
+    db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+    await this.invalidateCartClientRequestId();
+    return { ...existing, quantity: newQuantity, synced: false };
+  }
+
+  async removeFromCart(productId: string): Promise<void> {
+    const targetId = String(productId);
+    this.getDb().runSync('DELETE FROM cart_items WHERE productId = ?', [targetId]);
+    await this.invalidateCartClientRequestId();
   }
 
   async getGicProfile(): Promise<GicProfile> {
@@ -483,8 +579,36 @@ class DatabaseService {
   async getProducts(): Promise<ProductOffer[]> { return this.readKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS); }
   async getConfidentialGics(): Promise<ConfidentialGic[]> { return this.readKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC); }
 
-  async getOrders(): Promise<OrderRecord[]> {
-    return this.getDb().getAllSync('SELECT * FROM orders ORDER BY createdAt DESC') as any[];
+  private lastOrdersSyncSuccessful = true;
+
+  isLastOrdersSyncSuccessful(): boolean {
+    return this.lastOrdersSyncSuccessful;
+  }
+
+  async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
+    const db = this.getDb();
+
+    if (syncWithServer) {
+      try {
+        const res = await apiClient.getOrders();
+        if (Array.isArray(res?.orders)) {
+          db.runSync('DELETE FROM orders');
+          for (const o of (res.orders as any[])) {
+            db.runSync(
+              'INSERT OR REPLACE INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+            );
+          }
+          this.lastOrdersSyncSuccessful = true;
+        }
+      } catch (err) {
+        console.warn('Erreur lors de la synchronisation des commandes avec le serveur:', err);
+        this.lastOrdersSyncSuccessful = false;
+      }
+    }
+
+    const rows = db.getAllSync('SELECT * FROM orders ORDER BY createdAt DESC, id DESC') as any[];
+    return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
   async updateOrderStatus(id: string, status: string): Promise<void> {
@@ -497,36 +621,20 @@ class DatabaseService {
     const cart = await this.getCart();
     if (!cart.length) return [];
 
-    try {
-      const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
-      await apiClient.createOrder(type, items);
-      await this.syncRemoteData();
-      await this.clearCart();
-      return await this.getOrders();
-    } catch (err) {
-      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : commande sauvegardée localement.");
-      const products = await this.getProducts();
-      const db = this.getDb();
+    const clientRequestId = await this.getOrCreateCartClientRequestId();
+    const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
 
-      const created: OrderRecord[] = [];
-      for (let i = 0; i < cart.length; i++) {
-        const item = cart[i];
-        const offer = products.find((p) => p.id === item.productId);
-        const id = `${Date.now()}-${i}`;
-        const status = type === 'reservation' ? 'en_attente' : 'confirmee';
-        const gicName = offer?.gicName ?? 'GIC partenaire';
-        const createdAt = nowIso();
+    // Appel direct au backend avec la clé d'idempotence
+    // Aucune simulation locale : si échec (stock, réseau, 401, 500),
+    // l'erreur est propagée, le panier reste INTACT, et la clé d'idempotence conservée pour le retry.
+    await apiClient.createOrder(type, items, clientRequestId);
 
-        db.runSync(
-          'INSERT INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, type, status, item.productId, item.name, item.quantity, item.unit, item.price, gicName, createdAt, 0]
-        );
-        created.push({ id, type, status, productId: item.productId, productName: item.name, quantity: item.quantity, unit: item.unit, price: item.price, gicName, createdAt });
-      }
+    // En cas de succès serveur avéré :
+    // 1. Vider le panier local et nettoyer la clé d'idempotence
+    await this.clearCart();
 
-      await this.clearCart();
-      return await this.getOrders();
-    }
+    // 2. Récupérer les commandes synchronisées depuis le serveur
+    return await this.getOrders(true);
   }
 
   async getAlertPreferences(): Promise<AlertPreferences> { return this.readKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS); }

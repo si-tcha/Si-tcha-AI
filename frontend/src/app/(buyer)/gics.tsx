@@ -70,15 +70,18 @@ export default function BuyerGicsScreen() {
 
   const handleAddToCart = async (product: ProductOffer) => {
     try {
-      await addProductToCart({
-        productId: product.id,
-        name: product.name,
-        price: product.price,
-        unit: product.unit,
-      });
+      await addProductToCart(
+        {
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          unit: product.unit,
+        },
+        product.volumeDisponible
+      );
       showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
-    } catch (err) {
-      showToast({ message: 'Erreur ajout panier.', type: 'error' });
+    } catch (err: any) {
+      showToast({ message: err?.message || 'Erreur ajout panier.', type: 'error' });
     }
   };
 

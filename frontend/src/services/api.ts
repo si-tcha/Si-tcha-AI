@@ -526,8 +526,16 @@ export const apiClient = {
     request<{ expense: unknown }>('/gic/expenses', 'POST', { label, amount, category }),
   addGicNeed: (need: { id: string; category: string; description: string; updatedAt?: string; authorRole?: string }) =>
     request<{ need: unknown }>('/gic/needs', 'POST', need),
-  createOrder: (type: OrderType, items: { productId: string; quantity: number }[]) =>
-    request<{ orders: unknown[] }>('/buyer/orders', 'POST', { type, items }),
+  createOrder: (
+    type: OrderType,
+    items: { productId: string; quantity: number }[],
+    clientRequestId?: string
+  ) =>
+    request<{ orders: unknown[]; idempotentReplay?: boolean }>('/buyer/orders', 'POST', {
+      type,
+      items,
+      ...(clientRequestId ? { clientRequestId } : {}),
+    }),
   getOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/buyer/orders?page=${page}&limit=${limit}`),
   getGicOrders: (page = 1, limit = 20) => request<{ orders: unknown[]; meta: PaginationMeta }>(`/gic/orders?page=${page}&limit=${limit}`),
   getAlertPreferences: () => request<{ preferences: AlertPreferences }>('/buyer/alert-preferences'),

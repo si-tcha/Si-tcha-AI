@@ -137,6 +137,9 @@ export interface OrderRecord {
   price: string;
   gicName: string;
   createdAt: string;
+  buyerId?: string;
+  gicId?: string;
+  synced?: boolean;
 }
 
 export interface AlertPreferences {
@@ -174,6 +177,7 @@ export const STORAGE_KEYS = {
   PARCELS: 'sitcha_parcels',
   PREFINANCING: 'sitcha_prefinancing',
   TRUST_RATINGS: 'sitcha_trust_ratings',
+  CART_CLIENT_REQUEST_ID: 'sitcha_cart_client_request_id',
 } as const;
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [];

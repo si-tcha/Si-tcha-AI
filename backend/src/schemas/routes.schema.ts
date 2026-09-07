@@ -63,6 +63,7 @@ export const createOrderSchema = z.object({
       productId: z.string().min(1, "L'identifiant du produit est requis"),
       quantity: z.number().positive('La quantité doit être positive'),
     })).min(1, 'Au moins un article est requis'),
+    clientRequestId: z.string().min(1, "L'identifiant de requête est requis").max(100).optional(),
   }),
 });
 

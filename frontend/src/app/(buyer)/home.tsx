@@ -20,7 +20,6 @@ const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 let cachedProducts: ProductOffer[] = DEFAULT_PRODUCTS;
-let cachedCartCount = 0;
 let cachedAlertCount = 0;
 
 export default function BuyerHomeScreen() {
@@ -82,16 +81,19 @@ export default function BuyerHomeScreen() {
 
   const handleAddToCart = async (product: ProductOffer) => {
     try {
-      await addProductToCart({
-        productId: product.id,
-        name: product.name,
-        price: product.price,
-        unit: product.unit,
-      });
+      await addProductToCart(
+        {
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          unit: product.unit,
+        },
+        product.volumeDisponible
+      );
       showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Erreur ajout panier:', err);
-      showToast({ message: 'Impossible d\'ajouter au panier.', type: 'error' });
+      showToast({ message: err?.message || 'Impossible d\'ajouter au panier.', type: 'error' });
     }
   };
 

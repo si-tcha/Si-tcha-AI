@@ -192,16 +192,21 @@ model RecolteOffre {
 }
 
 model TransactionAcheteur {
-  id             BigInt       @id @default(autoincrement())
-  type           String       @db.VarChar(50)
-  quantite       Decimal      @db.Decimal(15, 2)
-  prixConvenu    Decimal      @db.Decimal(15, 2)
-  statut         String       @db.VarChar(50)
-  recolteOffreId BigInt
-  acheteurId     BigInt
-  recolteOffre   RecolteOffre @relation(fields: [recolteOffreId], references: [id])
-  acheteur       Acheteur     @relation(fields: [acheteurId], references: [id])
-  evaluations    Evaluation[]
+  id              BigInt       @id @default(autoincrement())
+  type            String       @db.VarChar(50)
+  quantite        Decimal      @db.Decimal(15, 2)
+  prixConvenu     Decimal      @db.Decimal(15, 2)
+  statut          String       @db.VarChar(50)
+  recolteOffreId  BigInt
+  acheteurId      BigInt
+  clientRequestId String?      @db.VarChar(100)
+  createdAt       DateTime     @default(now()) @db.Timestamptz
+  recolteOffre    RecolteOffre @relation(fields: [recolteOffreId], references: [id])
+  acheteur        Acheteur     @relation(fields: [acheteurId], references: [id])
+  evaluations     Evaluation[]
+
+  @@unique([acheteurId, clientRequestId, recolteOffreId])
+  @@index([acheteurId, clientRequestId])
 }
 
 model BesoinGIC {

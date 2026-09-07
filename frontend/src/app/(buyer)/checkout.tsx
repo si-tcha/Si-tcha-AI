@@ -1,10 +1,20 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
+import {
+  Dimensions,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { Spacing } from '@/constants/theme';
-import { CartItemRecord, dbService, OrderType } from '@/services/database';
+import { dbService, OrderType, ProductOffer } from '@/services/database';
+import { isNetworkError } from '@/services/api';
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
@@ -22,28 +32,62 @@ const ORDER_TYPES: { type: OrderType; label: string; hint: string }[] = [
 export default function BuyerCheckoutScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { cart, addToCart: addProductToCart, clearCart, refreshCart } = useCart();
-  const [selectedType, setSelectedType] = useState<OrderType>('reservation');
-  const [paymentMethod, setPaymentMethod] = useState<'momo' | 'om' | 'cash'>('momo');
-  const [phoneNumber, setPhoneNumber] = useState('677000000');
+  const {
+    cart,
+    totalAmount,
+    incrementCartItem,
+    decrementCartItem,
+    removeFromCart,
+    clearCart,
+    refreshCart,
+  } = useCart();
+  const [selectedType, setSelectedType] = useState<OrderType>('commande_ferme');
+  const [products, setProducts] = useState<ProductOffer[]>([]);
   const [busy, setBusy] = useState(false);
 
-  // Rafraîchissement automatique du panier à chaque prise de focus de l'écran
+  const loadProducts = useCallback(async () => {
+    try {
+      const items = await dbService.getProducts();
+      setProducts(items);
+    } catch {
+      // Ignorer si échec
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       refreshCart();
-    }, [refreshCart])
+      loadProducts();
+    }, [refreshCart, loadProducts])
   );
 
   const handleIncrement = async (productId: string) => {
-    const item = cart.find(i => i.productId === productId);
-    if (item) {
-      await addProductToCart({
-        productId: item.productId,
-        name: item.name,
-        price: item.price,
-        unit: item.unit,
+    const product = products.find((p) => p.id === productId);
+    const maxStock = product?.volumeDisponible;
+    try {
+      await incrementCartItem(productId, maxStock);
+    } catch (err: any) {
+      showToast({
+        message: err?.message || 'Stock maximal atteint pour ce produit.',
+        type: 'warning',
       });
+    }
+  };
+
+  const handleDecrement = async (productId: string) => {
+    try {
+      await decrementCartItem(productId);
+    } catch {
+      showToast({ message: 'Erreur lors de la modification de quantité.', type: 'error' });
+    }
+  };
+
+  const handleRemove = async (productId: string) => {
+    try {
+      await removeFromCart(productId);
+      showToast({ message: 'Article retiré du panier.', type: 'info' });
+    } catch {
+      showToast({ message: 'Erreur lors du retrait de l\'article.', type: 'error' });
     }
   };
 
@@ -52,26 +96,34 @@ export default function BuyerCheckoutScreen() {
     showToast({ message: 'Panier vidé.', type: 'info' });
   };
 
-  const totalAmount = cart.reduce((sum, item) => sum + (parseFloat(item.price || '0') * item.quantity), 0);
-
   const handleConfirm = async () => {
-    if (!cart.length) {
-      showToast({ message: 'Votre panier est vide.', type: 'warning' });
-      return;
-    }
-    if (!phoneNumber.trim() || phoneNumber.length < 8) {
-      showToast({ message: 'Veuillez saisir un numéro de téléphone valide.', type: 'warning' });
-      return;
-    }
+    if (!cart.length || busy) return;
+
     setBusy(true);
     try {
       await dbService.createOrderFromCart(selectedType);
       await refreshCart();
-      showToast({ message: 'Commande et paiement enregistrés avec succès !', type: 'success' });
+      showToast({
+        message: 'Commande enregistrée auprès du GIC ! Le règlement s\'effectuera en espèces lors de la livraison.',
+        type: 'success',
+      });
       router.replace('/(buyer)/orders');
-    } catch (err) {
-      console.warn(err);
-      showToast({ message: 'Impossible de valider la commande.', type: 'error' });
+    } catch (err: any) {
+      console.warn('Erreur validation commande:', err);
+      let errorMsg = 'Impossible de valider la commande. Votre panier a été conservé.';
+      if (isNetworkError(err)) {
+        errorMsg = 'Connexion réseau impossible. Votre panier reste intact, vous pouvez retenter dès le retour de la connexion.';
+      } else if (err?.status === 409) {
+        errorMsg =
+          err.payload?.message ||
+          err.message ||
+          'Stock insuffisant ou conflit d\'idempotence. Votre panier a été conservé.';
+      } else if (err?.status === 401) {
+        errorMsg = 'Session expirée. Veuillez vous reconnecter pour valider votre commande.';
+      } else if (err?.message) {
+        errorMsg = err.message;
+      }
+      showToast({ message: errorMsg, type: 'error' });
     } finally {
       setBusy(false);
     }
@@ -82,29 +134,33 @@ export default function BuyerCheckoutScreen() {
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#101e0f" />
 
-        {/* Header Unifié Hauteur Fixe 56px */}
+        {/* Header Fixe 56px */}
         <View style={styles.header}>
           <View style={styles.headerTitleGroup}>
-            <Text style={styles.headerTitle}>Mon Panier & Paiement MoMo</Text>
-            <Text style={styles.headerSubtitle}>MTN MoMo, Orange Money & Espèces GIC</Text>
+            <Text style={styles.headerTitle}>Mon Panier & Commande</Text>
+            <Text style={styles.headerSubtitle}>Règlement en espèces à la livraison</Text>
           </View>
 
           <View style={styles.headerIcons}>
             {cart.length > 0 && (
-              <TouchableOpacity style={styles.iconButton} onPress={handleClearCart}>
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={handleClearCart}
+                accessibilityLabel="Vider le panier"
+                disabled={busy}
+              >
                 <Feather name="trash-2" size={16} color="#d97834" />
               </TouchableOpacity>
             )}
           </View>
         </View>
 
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Panier list */}
+          {/* Section Liste Panier */}
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Articles du panier ({cart.length})</Text>
             {cart.length > 0 && (
-              <TouchableOpacity onPress={handleClearCart}>
+              <TouchableOpacity onPress={handleClearCart} disabled={busy}>
                 <Text style={styles.clearCartText}>Vider tout</Text>
               </TouchableOpacity>
             )}
@@ -116,44 +172,87 @@ export default function BuyerCheckoutScreen() {
                 <Feather name="shopping-cart" size={40} color="#889e87" />
                 <Text style={styles.emptyTitle}>Votre panier est actuellement vide.</Text>
                 <Text style={styles.emptySub}>Ajoutez des récoltes fraîches depuis le marché direct.</Text>
-                <TouchableOpacity style={styles.browseBtn} onPress={() => router.replace('/(buyer)/home')}>
+                <TouchableOpacity
+                  style={styles.browseBtn}
+                  onPress={() => router.replace('/(buyer)/home')}
+                >
                   <Text style={styles.browseBtnText}>Explorer le Marché</Text>
                 </TouchableOpacity>
               </View>
             ) : (
-              cart.map((item) => (
-                <View key={item.id} style={styles.listItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemTitle}>{item.name}</Text>
-                    <Text style={styles.meta}>{item.quantity} {item.unit} × {item.price} FCFA/{item.unit}</Text>
+              cart.map((item) => {
+                const product = products.find((p) => p.id === item.productId);
+                const maxStock = product?.volumeDisponible;
+                const isAtMaxStock = maxStock !== undefined && item.quantity >= maxStock;
+
+                return (
+                  <View key={item.id} style={styles.listItem}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={styles.itemTitle}>{item.name}</Text>
+                      <Text style={styles.meta}>
+                        {item.price} FCFA / {item.unit}
+                        {maxStock !== undefined ? ` · Dispo: ${maxStock} ${item.unit}` : ''}
+                      </Text>
+                    </View>
+
+                    <View style={styles.quantityControlRow}>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => handleDecrement(item.productId)}
+                        disabled={busy}
+                        accessibilityLabel="Diminuer la quantité"
+                      >
+                        <Feather name={item.quantity === 1 ? 'trash' : 'minus'} size={14} color="#f3ecd8" />
+                      </TouchableOpacity>
+
+                      <Text style={styles.qtyText}>{item.quantity}</Text>
+
+                      <TouchableOpacity
+                        style={[styles.qtyBtn, isAtMaxStock && styles.qtyBtnDisabled]}
+                        onPress={() => handleIncrement(item.productId)}
+                        disabled={busy || isAtMaxStock}
+                        accessibilityLabel="Augmenter la quantité"
+                      >
+                        <Feather name="plus" size={14} color={isAtMaxStock ? '#889e87' : '#f3ecd8'} />
+                      </TouchableOpacity>
+
+                      <View style={styles.itemTotalContainer}>
+                        <Text style={styles.itemTotal}>
+                          {(parseFloat(item.price || '0') * item.quantity).toLocaleString()} FCFA
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={styles.removeBtn}
+                        onPress={() => handleRemove(item.productId)}
+                        disabled={busy}
+                        accessibilityLabel="Supprimer l'article"
+                      >
+                        <Feather name="x" size={16} color="#d97834" />
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <View style={styles.quantityControlRow}>
-                    <TouchableOpacity style={styles.qtyPlusBtn} onPress={() => handleIncrement(item.productId)}>
-                      <Feather name="plus" size={14} color="#f3ecd8" />
-                    </TouchableOpacity>
-                    <Text style={styles.itemTotal}>{(parseFloat(item.price || '0') * item.quantity).toLocaleString()} FCFA</Text>
-                  </View>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
 
           {cart.length > 0 && (
-            <View style={styles.totalSummaryCard}>
-              <Text style={styles.totalSummaryLabel}>Total de la commande</Text>
-              <Text style={styles.totalSummaryValue}>{totalAmount.toLocaleString()} FCFA</Text>
-            </View>
-          )}
-
-          {/* Operation type */}
-          {cart.length > 0 && (
             <>
-              <Text style={styles.sectionTitle}>Type de transaction</Text>
+              {/* Total Résumé */}
+              <View style={styles.totalSummaryCard}>
+                <Text style={styles.totalSummaryLabel}>Total de la commande</Text>
+                <Text style={styles.totalSummaryValue}>{totalAmount.toLocaleString()} FCFA</Text>
+              </View>
+
+              {/* Type de transaction */}
+              <Text style={styles.sectionTitle}>Type d'engagement d'achat</Text>
               {ORDER_TYPES.map((opt) => (
                 <TouchableOpacity
                   key={opt.type}
                   style={[styles.typeCard, selectedType === opt.type && styles.typeCardActive]}
                   onPress={() => setSelectedType(opt.type)}
+                  disabled={busy}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.typeLabel, selectedType === opt.type && styles.typeLabelActive]}>
@@ -165,68 +264,45 @@ export default function BuyerCheckoutScreen() {
                 </TouchableOpacity>
               ))}
 
-              {/* Payment Method selector */}
-              <Text style={styles.sectionTitle}>Mode de paiement Mobile Money</Text>
-              <View style={styles.paymentMethodRow}>
-                <TouchableOpacity
-                  style={[styles.paymentBtn, paymentMethod === 'momo' && styles.paymentBtnActive]}
-                  onPress={() => setPaymentMethod('momo')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.paymentEmoji}>💛</Text>
-                  <Text style={[styles.paymentText, paymentMethod === 'momo' && styles.paymentTextActive]}>MTN MoMo</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.paymentBtn, paymentMethod === 'om' && styles.paymentBtnActive]}
-                  onPress={() => setPaymentMethod('om')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.paymentEmoji}>🧡</Text>
-                  <Text style={[styles.paymentText, paymentMethod === 'om' && styles.paymentTextActive]}>Orange Money</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.paymentBtn, paymentMethod === 'cash' && styles.paymentBtnActive]}
-                  onPress={() => setPaymentMethod('cash')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.paymentEmoji}>💵</Text>
-                  <Text style={[styles.paymentText, paymentMethod === 'cash' && styles.paymentTextActive]}>Espèces GIC</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Mobile phone number input */}
-              <View style={styles.phoneSection}>
-                <Text style={styles.inputLabel}>Numéro de téléphone pour la transaction</Text>
-                <View style={styles.phoneInputRow}>
-                  <Text style={styles.countryCode}>+237</Text>
-                  <TextInput
-                    style={styles.phoneInput}
-                    keyboardType="phone-pad"
-                    value={phoneNumber}
-                    onChangeText={setPhoneNumber}
-                    placeholder="6XX XXX XXX"
-                    placeholderTextColor="#9ca49a"
-                  />
+              {/* Modalité de règlement : Espèces uniquement */}
+              <Text style={styles.sectionTitle}>Modalité de règlement</Text>
+              <View style={styles.cashNoticeCard}>
+                <View style={styles.cashNoticeHeader}>
+                  <View style={styles.cashNoticeBadge}>
+                    <Feather name="dollar-sign" size={16} color="#15803d" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cashNoticeTitle}>Paiement en espèces à la remise/livraison</Text>
+                    <Text style={styles.cashNoticeSubtitle}>Aucun paiement en ligne requis</Text>
+                  </View>
                 </View>
+                <Text style={styles.cashNoticeBody}>
+                  Le règlement de cette commande s'effectue intégralement en espèces lors de la remise physique
+                  des produits par le transporteur ou auprès du magasinier du GIC. Vous recevrez un bordereau
+                  et un reçu QR pour vérifier vos récoltes à la livraison.
+                </Text>
               </View>
 
+              {/* Bouton de confirmation */}
               <TouchableOpacity
                 style={[styles.confirmBtn, (!cart.length || busy) && styles.confirmDisabled]}
                 onPress={handleConfirm}
                 disabled={!cart.length || busy}
                 activeOpacity={0.85}
               >
-                <Feather name="lock" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Feather
+                  name={busy ? 'loader' : 'check-circle'}
+                  size={18}
+                  color="#ffffff"
+                  style={{ marginRight: 8 }}
+                />
                 <Text style={styles.confirmText}>
-                  {busy ? 'Traitement en cours…' : `Valider et Payer (${totalAmount.toLocaleString()} FCFA)`}
+                  {busy ? 'Transmission en cours…' : `Valider la commande (${totalAmount.toLocaleString()} FCFA)`}
                 </Text>
               </TouchableOpacity>
             </>
           )}
         </ScrollView>
-        </KeyboardAvoidingView>
 
         <BottomNavBar role="buyer" cartCount={cart.length} />
       </View>
@@ -259,7 +335,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scroll: { padding: Spacing.four, gap: 10, paddingBottom: 90 },
+  scroll: { padding: Spacing.four, gap: 12, paddingBottom: 90 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   clearCartText: { fontSize: 11, fontWeight: '800', color: '#d97834', textDecorationLine: 'underline' },
@@ -279,15 +355,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 14,
+    padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f3ecd8',
   },
   itemTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   meta: { fontSize: 11, color: '#5a6258', marginTop: 2, fontWeight: '600' },
-  quantityControlRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  qtyPlusBtn: { width: 26, height: 26, borderRadius: 8, backgroundColor: '#101e0f', alignItems: 'center', justifyContent: 'center' },
-  itemTotal: { fontSize: 14, fontWeight: '900', color: '#d97834' },
+  quantityControlRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  qtyBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#101e0f',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyBtnDisabled: {
+    backgroundColor: '#cfd8ce',
+  },
+  qtyText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#101e0f',
+    minWidth: 20,
+    textAlign: 'center',
+  },
+  itemTotalContainer: {
+    minWidth: 70,
+    alignItems: 'flex-end',
+    marginLeft: 4,
+  },
+  itemTotal: { fontSize: 13, fontWeight: '900', color: '#d97834' },
+  removeBtn: {
+    padding: 4,
+    marginLeft: 2,
+  },
   totalSummaryCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -309,38 +411,44 @@ const styles = StyleSheet.create({
   typeCardActive: { backgroundColor: '#101e0f', borderColor: '#101e0f' },
   typeLabel: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   typeLabelActive: { color: '#f3ecd8' },
-  paymentMethodRow: { flexDirection: 'row', gap: 8 },
-  paymentBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e6dfcc',
-    borderRadius: 14,
-    paddingVertical: 10,
+  cashNoticeCard: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#bbf7d0',
+    padding: 14,
+    gap: 8,
   },
-  paymentBtnActive: { borderColor: '#d97834', backgroundColor: '#fff7ed' },
-  paymentEmoji: { fontSize: 20 },
-  paymentText: { fontSize: 11, fontWeight: '700', color: '#5a6258' },
-  paymentTextActive: { color: '#d97834', fontWeight: '800' },
-  phoneSection: { marginTop: 4, gap: 6 },
-  inputLabel: { fontSize: 12, fontWeight: '700', color: '#101e0f' },
-  phoneInputRow: {
+  cashNoticeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderWidth: 1.5,
-    borderColor: '#e6dfcc',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    height: 48,
+    gap: 10,
   },
-  countryCode: { fontSize: 14, fontWeight: '800', color: '#d97834', marginRight: 8 },
-  phoneInput: { flex: 1, fontSize: 15, fontWeight: '700', color: '#101e0f' },
+  cashNoticeBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cashNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#15803d',
+  },
+  cashNoticeSubtitle: {
+    fontSize: 11,
+    color: '#166534',
+    fontWeight: '600',
+  },
+  cashNoticeBody: {
+    fontSize: 11,
+    color: '#166534',
+    lineHeight: 16,
+  },
   confirmBtn: {
-    marginTop: 10,
+    marginTop: 6,
     marginBottom: 20,
     backgroundColor: '#d97834',
     borderRadius: 16,

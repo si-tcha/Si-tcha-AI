@@ -1,3 +1,5 @@
+import * as Crypto from 'expo-crypto';
+import { apiClient } from './api';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -86,7 +88,21 @@ function ensure(key: string, fallback: unknown) {
   }
 }
 
-import { apiClient } from './api';
+function generateClientRequestId(): string {
+  try {
+    if (typeof Crypto?.randomUUID === 'function') {
+      return Crypto.randomUUID();
+    }
+  } catch {}
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 let syncErrorHandler: ((message?: string) => void) | null = null;
 export function setSyncErrorHandler(handler: (message?: string) => void) {
@@ -96,10 +112,11 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 class DatabaseService {
   async syncRemoteData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes] = await Promise.all([
+      const [productsRes, gicsRes, terrainRes, ordersRes] = await Promise.all([
         apiClient.getProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
+        apiClient.getOrders().catch(() => null),
       ]);
 
       let updated = false;
@@ -116,6 +133,10 @@ class DatabaseService {
         if (terrainRes.market?.length) writeJson(STORAGE_KEYS.MARKET, terrainRes.market);
         if (terrainRes.phytoAlerts?.length) writeJson(STORAGE_KEYS.PHYTO, terrainRes.phytoAlerts);
         if (terrainRes.programs?.length) writeJson(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
+        updated = true;
+      }
+      if (Array.isArray(ordersRes?.orders)) {
+        writeJson(STORAGE_KEYS.ORDERS, ordersRes.orders);
         updated = true;
       }
       return updated;
@@ -220,21 +241,55 @@ class DatabaseService {
     return cart.reduce((acc, item) => acc + item.quantity, 0);
   }
 
-  async clearCart(): Promise<void> {
-    writeJson(STORAGE_KEYS.CART, []);
+  async getCartTotal(): Promise<number> {
+    const cart = await this.getCart();
+    return cart.reduce((sum, item) => sum + (parseFloat(item.price || '0') * item.quantity), 0);
   }
 
-  async addToCart(product: {
-    productId: string;
-    name: string;
-    price: string;
-    unit: string;
-  }): Promise<CartItemRecord> {
+  async getCartClientRequestId(): Promise<string | null> {
+    return readJson<string | null>(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, null);
+  }
+
+  async getOrCreateCartClientRequestId(): Promise<string> {
+    let key = await this.getCartClientRequestId();
+    if (!key) {
+      key = generateClientRequestId();
+      writeJson(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, key);
+    }
+    return key;
+  }
+
+  async invalidateCartClientRequestId(): Promise<void> {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(STORAGE_KEYS.CART_CLIENT_REQUEST_ID);
+  }
+
+  async clearCart(): Promise<void> {
+    writeJson(STORAGE_KEYS.CART, []);
+    await this.invalidateCartClientRequestId();
+  }
+
+  async addToCart(
+    product: {
+      productId: string;
+      name: string;
+      price: string;
+      unit: string;
+    },
+    maxStock?: number
+  ): Promise<CartItemRecord> {
     const targetId = String(product.productId);
+    if (maxStock !== undefined && maxStock < 1) {
+      throw new Error(`Stock indisponible pour ${product.name}.`);
+    }
+
     const cart = await this.getCart();
     const existing = cart.find((item) => String(item.productId) === targetId);
 
     if (existing) {
+      if (maxStock !== undefined && existing.quantity >= maxStock) {
+        throw new Error(`Stock maximum atteint (${maxStock} ${product.unit}).`);
+      }
       const updatedItem: CartItemRecord = {
         ...existing,
         quantity: existing.quantity + 1,
@@ -242,6 +297,7 @@ class DatabaseService {
       };
       const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
       writeJson(STORAGE_KEYS.CART, updatedCart);
+      await this.invalidateCartClientRequestId();
       return updatedItem;
     }
 
@@ -254,8 +310,60 @@ class DatabaseService {
       quantity: 1,
       synced: false,
     };
-    writeJson(STORAGE_KEYS.CART, [newItem, ...cart]);
+    writeJson(STORAGE_KEYS.CART, [...cart, newItem]);
+    await this.invalidateCartClientRequestId();
     return newItem;
+  }
+
+  async incrementCartItem(productId: string, maxStock?: number): Promise<CartItemRecord | null> {
+    const targetId = String(productId);
+    const cart = await this.getCart();
+    const existing = cart.find((item) => String(item.productId) === targetId);
+    if (!existing) return null;
+
+    if (maxStock !== undefined && existing.quantity >= maxStock) {
+      throw new Error(`Stock maximum atteint (${maxStock} ${existing.unit}).`);
+    }
+
+    const updatedItem: CartItemRecord = {
+      ...existing,
+      quantity: existing.quantity + 1,
+      synced: false,
+    };
+    const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
+    writeJson(STORAGE_KEYS.CART, updatedCart);
+    await this.invalidateCartClientRequestId();
+    return updatedItem;
+  }
+
+  async decrementCartItem(productId: string): Promise<CartItemRecord | null> {
+    const targetId = String(productId);
+    const cart = await this.getCart();
+    const existing = cart.find((item) => String(item.productId) === targetId);
+    if (!existing) return null;
+
+    if (existing.quantity <= 1) {
+      await this.removeFromCart(targetId);
+      return null;
+    }
+
+    const updatedItem: CartItemRecord = {
+      ...existing,
+      quantity: existing.quantity - 1,
+      synced: false,
+    };
+    const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
+    writeJson(STORAGE_KEYS.CART, updatedCart);
+    await this.invalidateCartClientRequestId();
+    return updatedItem;
+  }
+
+  async removeFromCart(productId: string): Promise<void> {
+    const targetId = String(productId);
+    const cart = await this.getCart();
+    const updatedCart = cart.filter((item) => String(item.productId) !== targetId);
+    writeJson(STORAGE_KEYS.CART, updatedCart);
+    await this.invalidateCartClientRequestId();
   }
 
   async getGicProfile(): Promise<GicProfile> {
@@ -335,7 +443,25 @@ class DatabaseService {
     return readJson(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
   }
 
-  async getOrders(): Promise<OrderRecord[]> {
+  private lastOrdersSyncSuccessful = true;
+
+  isLastOrdersSyncSuccessful(): boolean {
+    return this.lastOrdersSyncSuccessful;
+  }
+
+  async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
+    if (syncWithServer) {
+      try {
+        const res = await apiClient.getOrders();
+        if (Array.isArray(res?.orders)) {
+          writeJson(STORAGE_KEYS.ORDERS, res.orders);
+          this.lastOrdersSyncSuccessful = true;
+        }
+      } catch (err) {
+        console.warn('Erreur lors de la synchronisation des commandes avec le serveur:', err);
+        this.lastOrdersSyncSuccessful = false;
+      }
+    }
     return readJson(STORAGE_KEYS.ORDERS, []);
   }
 
@@ -343,34 +469,20 @@ class DatabaseService {
     const cart = await this.getCart();
     if (!cart.length) return [];
 
-    let products: ProductOffer[] = [];
-    try {
-      products = await this.getProducts();
-    } catch (err) {
-      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : commande sauvegardée localement.");
-      // Fallback offline
-      products = DEFAULT_PRODUCTS;
-    }
+    const clientRequestId = await this.getOrCreateCartClientRequestId();
+    const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
 
-    const created: OrderRecord[] = cart.map((item, index) => {
-      const offer = products.find((p) => p.id === item.productId);
-      return {
-        id: `${Date.now()}-${index}`,
-        type,
-        status: type === 'reservation' ? 'en_attente' : 'confirmee',
-        productId: item.productId,
-        productName: item.name,
-        quantity: item.quantity,
-        unit: item.unit,
-        price: item.price,
-        gicName: offer?.gicName ?? 'GIC partenaire',
-        createdAt: nowIso(),
-      };
-    });
-    const existing = await this.getOrders();
-    writeJson(STORAGE_KEYS.ORDERS, [...created, ...existing]);
+    // Appel direct au backend avec la clé d'idempotence
+    // Aucune simulation locale : si échec (stock, réseau, 401, 500),
+    // l'erreur est propagée, le panier reste INTACT, et la clé d'idempotence conservée pour le retry.
+    await apiClient.createOrder(type, items, clientRequestId);
+
+    // En cas de succès serveur avéré :
+    // 1. Vider le panier local et nettoyer la clé d'idempotence
     await this.clearCart();
-    return created;
+
+    // 2. Récupérer les commandes synchronisées depuis le serveur
+    return await this.getOrders(true);
   }
 
   async getAlertPreferences(): Promise<AlertPreferences> {

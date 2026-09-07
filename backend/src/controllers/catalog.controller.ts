@@ -1,16 +1,26 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma.js';
 import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 import { getEmojiForCategory, getImageUrlForProduct } from '../utils/productUtils.js';
 
-export async function getProducts(req: Request, res: Response) {
+export async function getProducts(req: Request, res: Response, next: NextFunction) {
   try {
     const { page, limit, skip } = getPagination(req);
 
+    // Seules les offres avec du stock disponible (> 0) et un prix serveur défini sont proposées
+    const whereClause = {
+      quantiteDisponible: { gt: 0 },
+      produitAgricole: {
+        prix: { not: null },
+      },
+    };
+
     const [offers, total] = await Promise.all([
       prisma.recolteOffre.findMany({
+        where: whereClause,
         skip,
         take: limit,
+        orderBy: [{ id: 'asc' }],
         include: {
           produitAgricole: true,
           gic: {
@@ -18,36 +28,41 @@ export async function getProducts(req: Request, res: Response) {
           },
         },
       }),
-      prisma.recolteOffre.count(),
+      prisma.recolteOffre.count({ where: whereClause }),
     ]);
 
-    const products = offers.map((offer) => ({
-      id: offer.id.toString(),
-      name: offer.produitAgricole.nom,
-      category: offer.produitAgricole.categorie,
-      gicId: offer.gicId.toString(),
-      gicName: offer.gic.nom,
-      gicRef: offer.gic.identifiantREF,
-      price: '500',
-      unit: offer.produitAgricole.categorie === 'Fruits' ? 'régime' : 'kg',
-      emoji: getEmojiForCategory(offer.produitAgricole.categorie, offer.produitAgricole.nom),
-      imageUrl: offer.photoURL ?? offer.produitAgricole.imageURL ?? getImageUrlForProduct(offer.produitAgricole.nom),
-      bassin: offer.gic?.bassinProduction?.nom ?? 'Ouest',
-      maturite: offer.maturite,
-      volumeDisponible: Number(offer.quantiteDisponible),
-      dateDispo: offer.dateDispoEstimee.toISOString().slice(0, 10),
-    }));
+    const products = offers.map((offer) => {
+      const serverPrice = offer.produitAgricole.prix ? offer.produitAgricole.prix.toString() : '';
+      const serverUnit = offer.produitAgricole.unite || 'kg';
+
+      return {
+        id: offer.id.toString(),
+        name: offer.produitAgricole.nom,
+        category: offer.produitAgricole.categorie,
+        gicId: offer.gicId.toString(),
+        gicName: offer.gic.nom,
+        gicRef: offer.gic.identifiantREF,
+        price: serverPrice,
+        unit: serverUnit,
+        emoji: getEmojiForCategory(offer.produitAgricole.categorie, offer.produitAgricole.nom),
+        imageUrl: offer.photoURL ?? offer.produitAgricole.imageURL ?? getImageUrlForProduct(offer.produitAgricole.nom),
+        bassin: offer.gic?.bassinProduction?.nom ?? 'Ouest',
+        maturite: offer.maturite,
+        volumeDisponible: Number(offer.quantiteDisponible),
+        dateDispo: offer.dateDispoEstimee ? offer.dateDispoEstimee.toISOString().slice(0, 10) : '',
+      };
+    });
 
     res.json({
       products,
-      meta: buildPaginationMeta(total, page, limit)
+      meta: buildPaginationMeta(total, page, limit),
     });
   } catch (error) {
-    res.json({ products: [], meta: buildPaginationMeta(0, 1, 20) });
+    next(error);
   }
 }
 
-export async function getGicsPublic(req: Request, res: Response) {
+export async function getGicsPublic(req: Request, res: Response, next: NextFunction) {
   try {
     const { page, limit, skip } = getPagination(req);
 
@@ -55,6 +70,7 @@ export async function getGicsPublic(req: Request, res: Response) {
       prisma.gIC.findMany({
         skip,
         take: limit,
+        orderBy: [{ id: 'asc' }],
         include: { bassinProduction: true, gicNeedEntries: true },
       }),
       prisma.gIC.count(),
@@ -67,20 +83,20 @@ export async function getGicsPublic(req: Request, res: Response) {
       emoji: '🌿',
       bassin: gic.bassinProduction?.nom ?? 'Ouest',
       logoUrl: gic.logoURL,
-      needs: gic.gicNeedEntries.map(n => ({
+      needs: gic.gicNeedEntries.map((n) => ({
         id: n.id,
         category: n.category,
         description: n.description,
-        updatedAt: n.updatedAt.toISOString()
+        updatedAt: n.updatedAt.toISOString(),
       })),
     }));
 
     res.json({
       gics,
-      meta: buildPaginationMeta(total, page, limit)
+      meta: buildPaginationMeta(total, page, limit),
     });
   } catch (error) {
-    res.json({ gics: [], meta: buildPaginationMeta(0, 1, 20) });
+    next(error);
   }
 }
 

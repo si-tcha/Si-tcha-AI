@@ -41,10 +41,10 @@ router.post('/auth/logout', logout);
 router.get('/auth/me', requireAuth, me);
 
 // ==========================================
-// CATALOGUE PUBLIC
+// CATALOGUE ACHETEUR & ANNUAIRE GIC (PROTÉGÉS)
 // ==========================================
-router.get('/catalog/products', getProducts);
-router.get('/gics/public', getGicsPublic);
+router.get('/catalog/products', requireAuth, requireActive, requireRole('buyer'), getProducts);
+router.get('/gics/public', requireAuth, requireActive, requireRole('buyer'), getGicsPublic);
 router.get('/terrain', getTerrain);
 
 // ==========================================
