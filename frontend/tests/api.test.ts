@@ -10,6 +10,7 @@ import {
   clearSession,
   setUnauthorizedHandler,
   isValidStoredSession,
+  computeNativePhysicalDevice,
   _resetMemorySessionForTesting,
   UserProfile,
 } from '../src/services/api';
@@ -43,10 +44,11 @@ describe('Production API Client, Networking & Configuration Tests', () => {
   });
 
   describe('Centralized Base URL Resolution & Physical Device Detection', () => {
-    it('1. Web local en développement doit pointer sur http://localhost:4000/api', () => {
+    it('1. Web local en développement avec isDevice: true doit pointer sur http://localhost:4000/api', () => {
+      // Sur le web, expo-device renvoie toujours isDevice: true
       const url = resolveApiBaseUrl({
         platform: 'web',
-        isDevice: false,
+        isDevice: true,
         envUrl: undefined,
         isDev: true,
       });
@@ -83,7 +85,7 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       expect(url).toBe('http://192.168.1.50:4000/api');
     });
 
-    it('5. Android physique sans EXPO_PUBLIC_API_URL doit lever une erreur explicite sans tenter 10.0.2.2', () => {
+    it('5. Android ou iOS physique sans EXPO_PUBLIC_API_URL doit lever une erreur explicite sans tenter 10.0.2.2', () => {
       expect(() =>
         resolveApiBaseUrl({
           platform: 'android',
@@ -92,17 +94,48 @@ describe('Production API Client, Networking & Configuration Tests', () => {
           isDev: true,
         })
       ).toThrowError(/EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'ios',
+          isDevice: true,
+          envUrl: undefined,
+          isDev: true,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique/);
     });
 
-    it('6. Mode production sans EXPO_PUBLIC_API_URL doit lever une erreur de configuration', () => {
+    it('6. Mode production sans EXPO_PUBLIC_API_URL doit lever une erreur de configuration sur toute plateforme', () => {
       expect(() =>
         resolveApiBaseUrl({
           platform: 'web',
+          isDevice: true,
+          envUrl: undefined,
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
           isDevice: false,
           envUrl: undefined,
           isDev: false,
         })
       ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
+    });
+
+    it('7. computeNativePhysicalDevice et getApiBaseUrl doivent normaliser le Web comme non physique natif', () => {
+      // computeNativePhysicalDevice
+      expect(computeNativePhysicalDevice('web', true)).toBe(false);
+      expect(computeNativePhysicalDevice('android', true)).toBe(true);
+      expect(computeNativePhysicalDevice('ios', true)).toBe(true);
+      expect(computeNativePhysicalDevice('android', false)).toBe(false);
+
+      // getApiBaseUrl en dev sans envUrl doit retourner port 4000 valide
+      delete process.env.EXPO_PUBLIC_API_URL;
+      const baseUrl = getApiBaseUrl();
+      expect(baseUrl).toMatch(/http:\/\/(localhost|10\.0\.2\.2):4000\/api/);
     });
   });
 
@@ -160,6 +193,30 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       _resetMemorySessionForTesting();
 
       await expect(readStoredSession()).rejects.toThrow('SecurityError: Access denied to storage');
+    });
+
+    it('should NEVER grant active or phoneVerified authorization to legacy profile lacking these fields', async () => {
+      // Profil legacy sans status ni phoneVerified
+      const insecureLegacyUser = {
+        id: 'legacy-999',
+        name: 'Utilisateur Ancien',
+        phone: '+237699000000',
+        role: 'buyer',
+        // status et phoneVerified manquent volontairement
+      };
+
+      localStorage.setItem('sitcha_api_token', 'legacy-tok-999');
+      localStorage.setItem('sitcha_user_profile', JSON.stringify(insecureLegacyUser));
+
+      _resetMemorySessionForTesting();
+      const session = await readStoredSession();
+
+      // Ne doit JAMAIS créer une session v1 active ou vérifiée de manière artificielle
+      expect(session).toBeNull();
+      expect(localStorage.getItem('sitcha_session_v1')).toBeNull();
+      // Les clés legacy invalides doivent être supprimées pour exiger une reconnexion
+      expect(localStorage.getItem('sitcha_api_token')).toBeNull();
+      expect(localStorage.getItem('sitcha_user_profile')).toBeNull();
     });
   });
 

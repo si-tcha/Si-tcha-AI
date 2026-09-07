@@ -18,7 +18,26 @@ function SyncErrorListener() {
 }
 
 function NavigationRoot() {
-  const { sessionStatus, isOffline, serverError, token, restoreSession, signOut } = useAuth();
+  const { sessionStatus, isOffline, serverError, storageError, token, restoreSession, signOut } = useAuth();
+
+  // Écran bloquant en cas de panne d'accès au stockage sécurisé (SecureStore / localStorage)
+  if (sessionStatus === 'storage_error') {
+    return (
+      <View style={styles.offlineContainer}>
+        <View style={styles.iconCircle}>
+          <Ionicons name="hardware-chip-outline" size={54} color="#dc2626" />
+        </View>
+        <Text style={styles.offlineTitle}>Stockage sécurisé indisponible</Text>
+        <Text style={styles.offlineSubtitle}>
+          {storageError || 'Impossible d’accéder au stockage sécurisé de votre appareil. Vérifiez les permissions de l’application et réessayez.'}
+        </Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => restoreSession()} activeOpacity={0.8}>
+          <Ionicons name="refresh-outline" size={20} color="#ffffff" style={{ marginRight: 8 }} />
+          <Text style={styles.retryText}>Réessayer</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // Écran d'erreur serveur (5xx) sur démarrage à froid avec session locale
   if (sessionStatus === 'server_error' && token) {

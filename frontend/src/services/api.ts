@@ -105,6 +105,10 @@ export interface ApiUrlResolutionOptions {
   isDev?: boolean;
 }
 
+export function computeNativePhysicalDevice(platform: string, isDevice: boolean): boolean {
+  return (platform === 'android' || platform === 'ios') && isDevice === true;
+}
+
 export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
   const envUrl = options.envUrl?.trim();
   if (envUrl && envUrl.length > 0) {
@@ -118,8 +122,10 @@ export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
     );
   }
 
-  // Sur un appareil physique (Android ou iOS), localhost ou 10.0.2.2 ne peuvent pas atteindre la machine de dev
-  if (options.isDevice) {
+  // La notion d'appareil physique ne s'applique qu'à android et ios.
+  // Sur le Web, expo-device renvoie toujours isDevice: true, mais l'environnement utilise localhost:4000 en développement.
+  const isNativeMobile = options.platform === 'android' || options.platform === 'ios';
+  if (isNativeMobile && options.isDevice) {
     throw new Error(
       "Configuration manquante: EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique (les adresses localhost et 10.0.2.2 ne sont pas accessibles depuis un téléphone réel)."
     );
@@ -134,9 +140,11 @@ export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
 
 export function getApiBaseUrl(): string {
   const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+  const nativePhysicalDevice = computeNativePhysicalDevice(Platform.OS, isPhysicalDevice);
+
   return resolveApiBaseUrl({
     platform: Platform.OS,
-    isDevice: isPhysicalDevice,
+    isDevice: nativePhysicalDevice,
     envUrl: process.env.EXPO_PUBLIC_API_URL,
     isDev,
   });
@@ -263,13 +271,13 @@ export async function readStoredSession(): Promise<StoredSessionV1 | null> {
       version: 1,
       token: legacyToken,
       user: {
-        id: parsedUser?.id || '',
-        name: parsedUser?.name || 'Utilisateur',
-        phone: parsedUser?.phone || '',
+        id: parsedUser?.id,
+        name: parsedUser?.name,
+        phone: parsedUser?.phone,
         role: parsedUser?.role,
-        status: parsedUser?.status || 'active',
+        status: parsedUser?.status,
         statut: parsedUser?.statut,
-        phoneVerified: typeof parsedUser?.phoneVerified === 'boolean' ? parsedUser.phoneVerified : true,
+        phoneVerified: parsedUser?.phoneVerified,
         gicId: parsedUser?.gicId,
         buyerId: parsedUser?.buyerId,
         gicRole: parsedUser?.gicRole,
@@ -280,7 +288,7 @@ export async function readStoredSession(): Promise<StoredSessionV1 | null> {
     if (isValidStoredSession(candidateSession)) {
       await saveSession(candidateSession.token, candidateSession.user);
 
-      // Nettoyer les anciennes clés
+      // Nettoyer les anciennes clés après migration réussie
       if (Platform.OS === 'web') {
         for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
       } else if (SecureStore) {
@@ -291,6 +299,18 @@ export async function readStoredSession(): Promise<StoredSessionV1 | null> {
         }
       }
       return memorySession;
+    } else {
+      // Session legacy invalide ou incomplète : nettoyer sans promouvoir et forcer une reconnexion
+      if (Platform.OS === 'web') {
+        for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
+      } else if (SecureStore) {
+        for (const key of LEGACY_STORAGE_KEYS) {
+          try {
+            await SecureStore.deleteItemAsync(key);
+          } catch {}
+        }
+      }
+      return null;
     }
   }
 

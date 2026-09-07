@@ -11,7 +11,12 @@ import {
   isNetworkError,
 } from '@/services/api';
 
-import { performSessionRestore, SessionState } from '@/auth/sessionRestore';
+import {
+  performSessionRestore,
+  resolveRestoreSessionState,
+  SessionStatus,
+  AuthSessionState,
+} from '@/auth/sessionRestore';
 
 export type RefreshUserResult =
   | { type: 'success'; user: UserProfile }
@@ -25,8 +30,9 @@ export interface AuthContextType {
   loading: boolean;
   authenticated: boolean;
   isOffline: boolean;
-  sessionStatus: SessionState;
+  sessionStatus: SessionStatus;
   serverError: { status: number; message: string } | null;
+  storageError: string | null;
   restoreSession: () => Promise<void>;
   refreshUser: () => Promise<RefreshUserResult>;
   signIn: (phone: string, pin: string, role?: 'buyer' | 'seller') => Promise<SessionResponse>;
@@ -37,12 +43,13 @@ export interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isOffline, setIsOffline] = useState(false);
-  const [serverError, setServerError] = useState<{ status: number; message: string } | null>(null);
-  const [sessionStatus, setSessionStatus] = useState<SessionState>('loading');
+  // Source de vérité unique pour la session
+  const [session, setSession] = useState<AuthSessionState>({
+    status: 'loading',
+    user: null,
+    token: null,
+    error: null,
+  });
 
   const signOut = useCallback(async () => {
     try {
@@ -51,11 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
       await clearSession();
-      setUser(null);
-      setToken(null);
-      setIsOffline(false);
-      setServerError(null);
-      setSessionStatus('unauthenticated');
+      setSession({
+        status: 'unauthenticated',
+        user: null,
+        token: null,
+        error: null,
+      });
     }
   }, []);
 
@@ -63,10 +71,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await apiClient.getMe();
       if (res.user) {
-        setUser(res.user);
-        setIsOffline(false);
-        setServerError(null);
-        setSessionStatus('authenticated');
+        setSession((prev) => ({
+          ...prev,
+          user: res.user,
+          status: 'authenticated',
+          error: null,
+        }));
         const currentToken = await readToken();
         if (currentToken) {
           await saveSession(currentToken, res.user);
@@ -80,7 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { type: 'unauthenticated' };
       }
       if (isNetworkError(err)) {
-        setIsOffline(true);
+        // En cas de panne temporaire lors du refresh en arrière-plan, conserver l'accès de l'utilisateur
         return {
           type: 'network_error',
           error: err instanceof Error ? err : new Error(String(err?.message || 'Erreur réseau')),
@@ -94,47 +104,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [signOut]);
 
   const restoreSession = useCallback(async () => {
-    setLoading(true);
-    setSessionStatus('loading');
+    setSession((prev) => ({ ...prev, status: 'loading' }));
     try {
       const result = await performSessionRestore();
-      if (result.type === 'no_session' || result.type === 'invalid_token' || result.type === 'storage_error') {
-        setUser(null);
-        setToken(null);
-        setIsOffline(false);
-        setServerError(null);
-        setSessionStatus('unauthenticated');
-      } else if (result.type === 'authenticated') {
-        setToken(result.token);
-        setUser(result.user);
-        setIsOffline(false);
-        setServerError(null);
-        setSessionStatus('authenticated');
-      } else if (result.type === 'offline') {
-        // En mode hors ligne, le token et l'utilisateur sont conservés pour permettre le retry
-        setToken(result.token);
-        setUser(result.user);
-        setIsOffline(true);
-        setServerError(null);
-        setSessionStatus('offline');
-      } else if (result.type === 'server_error') {
-        // Sur erreur serveur 5xx, l'accès au dashboard DOIT être bloqué mais le profil conservé pour retry
-        setToken(result.token);
-        setUser(result.user);
-        setIsOffline(false);
-        setServerError({ status: result.status, message: result.message });
-        setSessionStatus('server_error');
-      }
-    } finally {
-      setLoading(false);
+      const nextSession = resolveRestoreSessionState(result);
+      setSession(nextSession);
+    } catch (err: any) {
+      setSession({
+        status: 'storage_error',
+        user: null,
+        token: null,
+        error: { message: err?.message || 'Erreur critique lors de la lecture du stockage' },
+      });
     }
   }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      setUser(null);
-      setToken(null);
-      setSessionStatus('unauthenticated');
+      setSession({
+        status: 'unauthenticated',
+        user: null,
+        token: null,
+        error: null,
+      });
     });
 
     restoreSession();
@@ -146,47 +138,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(
     async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {
-      const session = await apiClient.login(phone, pin, role);
-      if (session.token && session.user) {
-        setToken(session.token);
-        setUser(session.user);
-        setIsOffline(false);
-        setServerError(null);
-        setSessionStatus('authenticated');
+      const res = await apiClient.login(phone, pin, role);
+      if (res.token && res.user) {
+        setSession({
+          status: 'authenticated',
+          user: res.user,
+          token: res.token,
+          error: null,
+        });
       }
-      return session;
+      return res;
     },
     []
   );
 
   const completeOtp = useCallback(
     async (phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> => {
-      const session = await apiClient.verifyOtp(phone, code, role);
-      if (session.token && session.user) {
-        setToken(session.token);
-        setUser(session.user);
-        setIsOffline(false);
-        setServerError(null);
-        setSessionStatus('authenticated');
+      const res = await apiClient.verifyOtp(phone, code, role);
+      if (res.token && res.user) {
+        setSession({
+          status: 'authenticated',
+          user: res.user,
+          token: res.token,
+          error: null,
+        });
       }
-      return session;
+      return res;
     },
     []
   );
 
-  // Authentifié uniquement si le statut de session est explicitement 'authenticated'
-  const authenticated = sessionStatus === 'authenticated' && Boolean(token && user);
+  // Propriétés dérivées de manière stricte et prévisible
+  const loading = session.status === 'loading';
+  const authenticated = session.status === 'authenticated' && Boolean(session.token && session.user);
+  const isOffline = session.status === 'offline';
+  const serverError =
+    session.status === 'server_error' && session.error
+      ? { status: session.error.status || 500, message: session.error.message }
+      : null;
+  const storageError =
+    session.status === 'storage_error' ? session.error?.message || 'Stockage sécurisé indisponible' : null;
 
   return (
     <AuthContext.Provider
       value={{
-        user,
-        token,
+        user: session.user,
+        token: session.token,
         loading,
         authenticated,
         isOffline,
-        sessionStatus,
+        sessionStatus: session.status,
         serverError,
+        storageError,
         restoreSession,
         refreshUser,
         signIn,

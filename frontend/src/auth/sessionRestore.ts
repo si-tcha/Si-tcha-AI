@@ -9,7 +9,20 @@ import {
   StoredSessionV1,
 } from '../services/api';
 
-export type SessionState = 'loading' | 'authenticated' | 'offline' | 'server_error' | 'unauthenticated';
+export type SessionStatus =
+  | 'loading'
+  | 'authenticated'
+  | 'offline'
+  | 'server_error'
+  | 'storage_error'
+  | 'unauthenticated';
+
+export interface AuthSessionState {
+  status: SessionStatus;
+  user: UserProfile | null;
+  token: string | null;
+  error: { status?: number; message: string } | null;
+}
 
 export type RestoreSessionResult =
   | { type: 'no_session' }
@@ -34,22 +47,49 @@ const defaultDeps: SessionRestoreDeps = {
 };
 
 /**
- * Calcule de manière déterministe et pure l'état d'authentification visible.
+ * Réducteur pur transformant le résultat de restauration en état d'authentification central.
+ * Utilisé directement par AuthContext et testé de manière unitaire.
  */
-export function computeSessionState(params: {
-  loading: boolean;
-  token: string | null;
-  user: UserProfile | null;
-  isOffline: boolean;
-  hasServerError: boolean;
-  hasVerifiedSession: boolean;
-}): SessionState {
-  if (params.loading) return 'loading';
-  if (!params.token || !params.user) return 'unauthenticated';
-  if (params.hasServerError) return 'server_error';
-  if (params.isOffline) return 'offline';
-  if (params.hasVerifiedSession) return 'authenticated';
-  return 'unauthenticated';
+export function resolveRestoreSessionState(result: RestoreSessionResult): AuthSessionState {
+  switch (result.type) {
+    case 'authenticated':
+      return {
+        status: 'authenticated',
+        token: result.token,
+        user: result.user,
+        error: null,
+      };
+    case 'offline':
+      return {
+        status: 'offline',
+        token: result.token,
+        user: result.user,
+        error: { message: result.error.message },
+      };
+    case 'server_error':
+      return {
+        status: 'server_error',
+        token: result.token,
+        user: result.user,
+        error: { status: result.status, message: result.message },
+      };
+    case 'storage_error':
+      return {
+        status: 'storage_error',
+        token: null,
+        user: null,
+        error: { message: result.error.message },
+      };
+    case 'invalid_token':
+    case 'no_session':
+    default:
+      return {
+        status: 'unauthenticated',
+        token: null,
+        user: null,
+        error: null,
+      };
+  }
 }
 
 /**

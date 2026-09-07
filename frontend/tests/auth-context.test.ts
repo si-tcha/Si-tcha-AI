@@ -8,7 +8,11 @@ import {
   ApiError,
   SESSION_KEY,
 } from '../src/services/api';
-import { performSessionRestore, computeSessionState } from '../src/auth/sessionRestore';
+import {
+  performSessionRestore,
+  resolveRestoreSessionState,
+  RestoreSessionResult,
+} from '../src/auth/sessionRestore';
 
 describe('Production Session Restoration, Persistence & Lifecycle Tests', () => {
   const mockBuyer: UserProfile = {
@@ -140,87 +144,131 @@ describe('Production Session Restoration, Persistence & Lifecycle Tests', () => 
         expect(retryAttempt.user.id).toBe('101');
       }
     });
+
+    it('should return storage_error when persistent storage read fails (no silent logout)', async () => {
+      const storageError = new Error('SecureStore hardware enclave unavailable');
+      const result = await performSessionRestore({
+        readSession: vi.fn().mockRejectedValue(storageError),
+      });
+
+      expect(result.type).toBe('storage_error');
+      if (result.type === 'storage_error') {
+        expect(result.error.message).toBe('SecureStore hardware enclave unavailable');
+      }
+
+      // La réduction d'état doit être storage_error, PAS unauthenticated
+      const state = resolveRestoreSessionState(result);
+      expect(state.status).toBe('storage_error');
+      expect(state.user).toBeNull();
+      expect(state.token).toBeNull();
+      expect(state.error?.message).toBe('SecureStore hardware enclave unavailable');
+    });
+
+    it('should recover after retry once storage becomes accessible again', async () => {
+      let storageAvailable = false;
+      const deps = {
+        readSession: vi.fn().mockImplementation(async () => {
+          if (!storageAvailable) {
+            throw new Error('Keyring locked');
+          }
+          return { version: 1 as const, token: 'recovered-token', user: mockBuyer };
+        }),
+        getMe: vi.fn().mockResolvedValue({ user: mockBuyer }),
+        save: vi.fn().mockResolvedValue(undefined),
+        clear: vi.fn().mockResolvedValue(undefined),
+      };
+
+      // 1. Première tentative : échec du stockage
+      const firstResult = await performSessionRestore(deps);
+      expect(firstResult.type).toBe('storage_error');
+      const firstState = resolveRestoreSessionState(firstResult);
+      expect(firstState.status).toBe('storage_error');
+
+      // 2. Deuxième tentative (Retry) : le stockage est redevenu accessible
+      storageAvailable = true;
+      const retryResult = await performSessionRestore(deps);
+      expect(retryResult.type).toBe('authenticated');
+      const retryState = resolveRestoreSessionState(retryResult);
+      expect(retryState.status).toBe('authenticated');
+      expect(retryState.token).toBe('recovered-token');
+      expect(retryState.user?.id).toBe('101');
+    });
   });
 
-  describe('Pure computeSessionState State Machine Tests', () => {
-    it('should return loading when loading is true', () => {
-      const state = computeSessionState({
-        loading: true,
-        token: 'tok',
+  describe('Pure resolveRestoreSessionState Reducer Tests (Single Source of Truth)', () => {
+    it('should reduce authenticated result to authenticated state', () => {
+      const result: RestoreSessionResult = {
+        type: 'authenticated',
+        token: 'auth-tok',
         user: mockBuyer,
-        isOffline: false,
-        hasServerError: false,
-        hasVerifiedSession: true,
+      };
+      const state = resolveRestoreSessionState(result);
+      expect(state).toEqual({
+        status: 'authenticated',
+        token: 'auth-tok',
+        user: mockBuyer,
+        error: null,
       });
-      expect(state).toBe('loading');
     });
 
-    it('should return unauthenticated when token or user is missing', () => {
-      const state1 = computeSessionState({
-        loading: false,
+    it('should reduce offline result to offline state preserving user, token, and error', () => {
+      const result: RestoreSessionResult = {
+        type: 'offline',
+        token: 'off-tok',
+        user: mockBuyer,
+        error: new Error('Network offline'),
+      };
+      const state = resolveRestoreSessionState(result);
+      expect(state.status).toBe('offline');
+      expect(state.token).toBe('off-tok');
+      expect(state.user).toEqual(mockBuyer);
+      expect(state.error?.message).toBe('Network offline');
+    });
+
+    it('should reduce server_error result to server_error state preserving user, token, and status code', () => {
+      const result: RestoreSessionResult = {
+        type: 'server_error',
+        token: 'srv-tok',
+        user: mockBuyer,
+        status: 503,
+        message: 'Service Unavailable',
+      };
+      const state = resolveRestoreSessionState(result);
+      expect(state.status).toBe('server_error');
+      expect(state.token).toBe('srv-tok');
+      expect(state.user).toEqual(mockBuyer);
+      expect(state.error).toEqual({ status: 503, message: 'Service Unavailable' });
+    });
+
+    it('should reduce storage_error result to storage_error state WITHOUT fake unauthenticated or logout', () => {
+      const result: RestoreSessionResult = {
+        type: 'storage_error',
+        error: new Error('SecureStore disk failure'),
+      };
+      const state = resolveRestoreSessionState(result);
+      expect(state.status).toBe('storage_error');
+      expect(state.status).not.toBe('unauthenticated');
+      expect(state.token).toBeNull();
+      expect(state.user).toBeNull();
+      expect(state.error?.message).toBe('SecureStore disk failure');
+    });
+
+    it('should reduce invalid_token and no_session to unauthenticated', () => {
+      const noSessionState = resolveRestoreSessionState({ type: 'no_session' });
+      expect(noSessionState).toEqual({
+        status: 'unauthenticated',
         token: null,
-        user: mockBuyer,
-        isOffline: false,
-        hasServerError: false,
-        hasVerifiedSession: true,
-      });
-      expect(state1).toBe('unauthenticated');
-
-      const state2 = computeSessionState({
-        loading: false,
-        token: 'tok',
         user: null,
-        isOffline: false,
-        hasServerError: false,
-        hasVerifiedSession: true,
+        error: null,
       });
-      expect(state2).toBe('unauthenticated');
-    });
 
-    it('should return server_error on server error even with local session', () => {
-      const state = computeSessionState({
-        loading: false,
-        token: 'tok',
-        user: mockBuyer,
-        isOffline: false,
-        hasServerError: true,
-        hasVerifiedSession: false,
+      const invalidTokenState = resolveRestoreSessionState({ type: 'invalid_token' });
+      expect(invalidTokenState).toEqual({
+        status: 'unauthenticated',
+        token: null,
+        user: null,
+        error: null,
       });
-      expect(state).toBe('server_error');
-    });
-
-    it('should return offline when offline even with local session', () => {
-      const state = computeSessionState({
-        loading: false,
-        token: 'tok',
-        user: mockBuyer,
-        isOffline: true,
-        hasServerError: false,
-        hasVerifiedSession: false,
-      });
-      expect(state).toBe('offline');
-    });
-
-    it('should only return authenticated when session has been verified', () => {
-      const authenticated = computeSessionState({
-        loading: false,
-        token: 'tok',
-        user: mockBuyer,
-        isOffline: false,
-        hasServerError: false,
-        hasVerifiedSession: true,
-      });
-      expect(authenticated).toBe('authenticated');
-
-      const unverified = computeSessionState({
-        loading: false,
-        token: 'tok',
-        user: mockBuyer,
-        isOffline: false,
-        hasServerError: false,
-        hasVerifiedSession: false,
-      });
-      expect(unverified).toBe('unauthenticated');
     });
   });
 
