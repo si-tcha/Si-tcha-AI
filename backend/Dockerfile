@@ -10,8 +10,9 @@ RUN apk add --no-cache openssl libc6-compat
 # ─── Étape 1 : Installation des dépendances complètes et build ───
 FROM base AS build
 
-# Copie des manifestes de dépendances et du schéma Prisma
+# Copie des manifestes de dépendances et configuration Prisma
 COPY package.json package-lock.json ./
+COPY prisma.config.ts ./
 COPY prisma ./prisma/
 
 # Installation déterministe
@@ -27,15 +28,7 @@ COPY src ./src/
 # Compilation TypeScript
 RUN npm run build
 
-# ─── Étape 2 : Dépendances de production seules ───
-FROM base AS prod-deps
-
-COPY package.json package-lock.json ./
-COPY prisma ./prisma/
-
-RUN npm ci --omit=dev && npx prisma generate
-
-# ─── Étape 3 : Image finale d'exécution minimale et durcie ───
+# ─── Étape 2 : Image finale d'exécution minimale et durcie ───
 FROM base AS final
 
 ENV NODE_ENV=production
@@ -47,8 +40,9 @@ USER node
 WORKDIR /usr/src/app
 
 # Copie des artefacts indispensables avec les permissions de l'utilisateur node
-COPY --chown=node:node package.json ./
-COPY --chown=node:node --from=prod-deps /usr/src/app/node_modules ./node_modules
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node prisma.config.ts ./
+COPY --chown=node:node --from=build /usr/src/app/node_modules ./node_modules
 COPY --chown=node:node --from=build /usr/src/app/dist ./dist
 COPY --chown=node:node prisma ./prisma
 
