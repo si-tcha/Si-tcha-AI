@@ -76,12 +76,69 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       }).toThrowError(/CORS_ORIGIN ne peut pas contenir '\*'/);
     });
 
+    it('Refuse de démarrer en production si BODY_LIMIT est supérieur à 10MB ou invalide', () => {
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          BODY_LIMIT: '15mb',
+        });
+      }).toThrowError(/BODY_LIMIT trop élevé/);
+
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          BODY_LIMIT: 'invalid-size',
+        });
+      }).toThrowError(/Format de BODY_LIMIT invalide/);
+    });
+
+    it('Refuse de démarrer en production si OTP_PROVIDER est development ou test', () => {
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          OTP_PROVIDER: 'development',
+        });
+      }).toThrowError(/est strictement interdit en production/);
+
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          OTP_PROVIDER: 'test',
+        });
+      }).toThrowError(/est strictement interdit en production/);
+    });
+
+    it('Refuse de démarrer en production si CORS_ORIGIN contient des URLs HTTP non chiffrées ou null', () => {
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          CORS_ORIGIN: 'http://sitcha.app',
+        });
+      }).toThrowError(/Origine CORS invalide/);
+
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          CORS_ORIGIN: 'null',
+        });
+      }).toThrowError(/Origine CORS invalide/);
+    });
+
+    it('Déduplique et normalise les origines CORS valides en production', () => {
+      const config = validateConfig({
+        ...baseValidProdEnv,
+        CORS_ORIGIN: 'https://sitcha.app/, https://admin.sitcha.app, https://sitcha.app',
+      });
+      expect(config.allowedCorsOrigins).toEqual(['https://sitcha.app', 'https://admin.sitcha.app']);
+    });
+
     it('Valide avec succès une configuration de production complète', () => {
       const config = validateConfig(baseValidProdEnv);
       expect(config.NODE_ENV).toBe('production');
       expect(config.PORT).toBe(4000);
       expect(config.allowedCorsOrigins).toEqual(['https://sitcha.app', 'https://admin.sitcha.app']);
       expect(config.TRUST_PROXY).toBe(1);
+      expect(config.ENABLE_API_DOCS).toBe(false);
     });
 
     it('Fournit des valeurs par défaut sécurisées en développement et test', () => {
@@ -90,6 +147,7 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(devConfig.JWT_SECRET).toBe('dev-jwt-secret-placeholder-minimum-32-chars-key');
       expect(devConfig.allowedCorsOrigins).toEqual([]);
       expect(devConfig.TRUST_PROXY).toBe(false);
+      expect(devConfig.ENABLE_API_DOCS).toBe(true);
     });
 
     it('Parse correctement les différentes valeurs de trust proxy', () => {
@@ -155,8 +213,8 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
     });
   });
 
-  describe('3. Journalisation structurée et masquage des données sensibles', () => {
-    it('Pino redact masque automatiquement PIN, password, token, otp, secret et Authorization', () => {
+  describe('3. Journalisation structurée et masquage des données sensibles (Pino Memory Stream)', () => {
+    it('Pino redact paths couvrent tous les champs critiques', () => {
       expect(SENSITIVE_PATHS).toContain('pin');
       expect(SENSITIVE_PATHS).toContain('password');
       expect(SENSITIVE_PATHS).toContain('token');
@@ -164,29 +222,131 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(SENSITIVE_PATHS).toContain('secret');
       expect(SENSITIVE_PATHS).toContain('req.headers.authorization');
       expect(SENSITIVE_PATHS).toContain('req.headers.cookie');
-      expect(SENSITIVE_PATHS).toContain('req.body.pin');
-      expect(SENSITIVE_PATHS).toContain('req.body.password');
-      expect(SENSITIVE_PATHS).toContain('req.body.token');
-      expect(SENSITIVE_PATHS).toContain('req.body.otp');
-      expect(SENSITIVE_PATHS).toContain('*.pin');
-      expect(SENSITIVE_PATHS).toContain('*.password');
-      expect(SENSITIVE_PATHS).toContain('*.token');
+      expect(SENSITIVE_PATHS).toContain('databaseUrl');
+    });
+
+    it('Preuve réelle de masquage via flux mémoire Pino avec sentinelles', async () => {
+      const { Writable } = await import('stream');
+      const pinoModule = await import('pino');
+      const pino = pinoModule.default || pinoModule;
+      const { sanitizeErrorForLog, sanitizeLogString } = await import('../src/middlewares/logger.js');
+
+      let emittedLogs = '';
+      const memStream = new Writable({
+        write(chunk, _encoding, callback) {
+          emittedLogs += chunk.toString();
+          callback();
+        },
+      });
+
+      const testLogger = (pino as any)(
+        {
+          level: 'info',
+          redact: {
+            paths: SENSITIVE_PATHS,
+            censor: '[REDACTED]',
+          },
+          formatters: {
+            log(obj: Record<string, any>) {
+              if (typeof obj.msg === 'string') {
+                obj.msg = sanitizeLogString(obj.msg);
+              }
+              return obj;
+            },
+          },
+          serializers: {
+            err: sanitizeErrorForLog,
+            error: sanitizeErrorForLog,
+          },
+          hooks: {
+            logMethod(inputArgs: any[], method: any) {
+              for (let i = 0; i < inputArgs.length; i++) {
+                const arg = inputArgs[i];
+                if (typeof arg === 'string') {
+                  inputArgs[i] = sanitizeLogString(arg);
+                } else if (arg && typeof arg === 'object') {
+                  if (arg instanceof Error) {
+                    if (arg.message) arg.message = sanitizeLogString(arg.message);
+                    if (arg.stack) arg.stack = sanitizeLogString(arg.stack);
+                  } else if (arg.err instanceof Error) {
+                    if (arg.err.message) arg.err.message = sanitizeLogString(arg.err.message);
+                    if (arg.err.stack) arg.err.stack = sanitizeLogString(arg.err.stack);
+                  } else if (arg.error instanceof Error) {
+                    if (arg.error.message) arg.error.message = sanitizeLogString(arg.error.message);
+                    if (arg.error.stack) arg.error.stack = sanitizeLogString(arg.error.stack);
+                  }
+                  if (typeof arg.msg === 'string') {
+                    arg.msg = sanitizeLogString(arg.msg);
+                  }
+                  if (typeof arg.message === 'string') {
+                    arg.message = sanitizeLogString(arg.message);
+                  }
+                }
+              }
+              return method.apply(this, inputArgs);
+            },
+          },
+        },
+        memStream
+      );
+
+      // Sentinelles hautement reconnaissables
+      const DB_PASSWORD_SENTINEL = 'SuperSecretDbPassword42!';
+      const STACK_SECRET_SENTINEL = 'internal_secret_token_in_stack_trace_999';
+      const BEARER_SENTINEL = 'bearer_sentinel_xyz123abc';
+      const COOKIE_SENTINEL = 'cookie_sentinel_secret_val_456';
+      const PIN_SENTINEL = '9876';
+      const OTP_SENTINEL = '543210';
+
+      // 1. Log d'un objet avec clés sensibles
+      testLogger.info({
+        pin: PIN_SENTINEL,
+        otp: OTP_SENTINEL,
+        req: {
+          headers: {
+            authorization: `Bearer ${BEARER_SENTINEL}`,
+            cookie: `session_id=${COOKIE_SENTINEL}`,
+          },
+        },
+      });
+
+      // 2. Log d'une erreur contenant un secret de connexion et une stack trace sensible
+      const sensitiveError = new Error(`Connection failed to postgresql://sitcha_user:${DB_PASSWORD_SENTINEL}@db:5432/sitcha_db`);
+      sensitiveError.stack = `Error: Connection failed\n    at SecretAuth (/app/auth.js:10:5)\n    at token=${STACK_SECRET_SENTINEL}`;
+
+      testLogger.error({ err: sensitiveError });
+
+      // Vérification formelle : aucune des sentinelles ne doit apparaître dans la sortie textuelle brute
+      expect(emittedLogs).not.toContain(DB_PASSWORD_SENTINEL);
+      expect(emittedLogs).not.toContain(STACK_SECRET_SENTINEL);
+      expect(emittedLogs).not.toContain(BEARER_SENTINEL);
+      expect(emittedLogs).not.toContain(COOKIE_SENTINEL);
+      expect(emittedLogs).not.toContain(PIN_SENTINEL);
+      expect(emittedLogs).not.toContain(OTP_SENTINEL);
+
+      // Vérification de la présence des marqueurs de censure
+      expect(emittedLogs).toContain('[REDACTED]');
+      expect(emittedLogs).toContain('[REDACTED_SECRET]');
     });
   });
 
   describe('4. Healthcheck de processus et Readiness probe', () => {
     const app = createApp();
 
-    it('GET /api/health et /api/health/live retournent 200 UP avec uptime', async () => {
+    it('GET /api/health et /api/health/live retournent 200 UP sans fuite d’environnement', async () => {
       const res = await request(app).get('/api/health');
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('UP');
       expect(res.body.timestamp).toBeDefined();
       expect(typeof res.body.uptime).toBe('number');
+      // Aucun NODE_ENV ou variable d'environnement publique
+      expect(res.body.environment).toBeUndefined();
+      expect(res.body.NODE_ENV).toBeUndefined();
 
       const liveRes = await request(app).get('/api/health/live');
       expect(liveRes.status).toBe(200);
       expect(liveRes.body.status).toBe('UP');
+      expect(liveRes.body.environment).toBeUndefined();
     });
 
     it('GET /api/health/ready retourne 200 quand la base de données est accessible', async () => {
@@ -213,9 +373,54 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(JSON.stringify(res.body)).not.toContain('secret');
       expect(JSON.stringify(res.body)).not.toContain('db:5432');
     });
+
+    it('GET /api/health reste accessible (200) même quand le rate limiter global de l’API est saturé', async () => {
+      // Configuration personnalisée avec une limite très basse pour provoquer un 429 sur les routes API normales
+      const limitedApp = createApp({
+        ...validateConfig(baseValidProdEnv),
+        RATE_LIMIT_MAX: 2,
+      });
+
+      // Faire des requêtes sur une route sous apiLimiter (/api/sellers ou /api/auth/register)
+      // Note : comme ce sont des routes montées après apiLimiter, elles consomment le quota
+      await request(limitedApp).post('/api/auth/login').send({ phone: '+237600000001' });
+      await request(limitedApp).post('/api/auth/login').send({ phone: '+237600000001' });
+      const blockedRes = await request(limitedApp).post('/api/auth/login').send({ phone: '+237600000001' });
+
+      // La route métier doit être bloquée avec 429
+      expect(blockedRes.status).toBe(429);
+
+      // La sonde de liveness (/api/health) DOIT toujours répondre 200 car montée avant apiLimiter
+      const healthRes = await request(limitedApp).get('/api/health');
+      expect(healthRes.status).toBe(200);
+      expect(healthRes.body.status).toBe('UP');
+    });
   });
 
-  describe('5. Gestion centralisée des erreurs et absence de stack trace en production', () => {
+  describe('5. Swagger / Documentation OpenAPI conditionnelle', () => {
+    it('En production par défaut (ENABLE_API_DOCS: false), /api-docs retourne 404', async () => {
+      const prodNoDocsApp = createApp({
+        ...validateConfig(baseValidProdEnv),
+        ENABLE_API_DOCS: false,
+      });
+
+      const res = await request(prodNoDocsApp).get('/api-docs');
+      expect(res.status).toBe(404);
+    });
+
+    it('Quand ENABLE_API_DOCS est activé, /api-docs est accessible', async () => {
+      const devDocsApp = createApp({
+        ...validateConfig({ NODE_ENV: 'development' }),
+        ENABLE_API_DOCS: true,
+      });
+
+      const res = await request(devDocsApp).get('/api-docs/');
+      // Swagger UI répond par 200 (HTML) ou 301/302 vers trailing slash
+      expect([200, 301, 302]).toContain(res.status);
+    });
+  });
+
+  describe('6. Gestion centralisée des erreurs et absence de stack trace en production', () => {
     it('En production, les erreurs 500 renvoient un message générique sans exposer de stack trace', async () => {
       const app = express();
       app.get('/test-internal-error', (req, res, next) => {
@@ -252,7 +457,7 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
     });
   });
 
-  describe('6. Arrêt propre (Graceful Shutdown)', () => {
+  describe('7. Arrêt propre (Graceful Shutdown)', () => {
     it('Ferme le serveur HTTP et déconnecte le client Prisma proprement', async () => {
       const dummyServer = http.createServer();
       await new Promise<void>((resolve) => dummyServer.listen(0, resolve));

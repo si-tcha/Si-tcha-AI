@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { logger } from './logger.js';
+import { logger, sanitizeErrorForLog } from './logger.js';
 import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
 
@@ -33,7 +33,7 @@ export function errorHandler(
 
   // Gérer les erreurs de validation Zod
   if (err instanceof ZodError) {
-    logger.warn({ err }, 'Validation Error');
+    logger.warn({ err: sanitizeErrorForLog(err) }, 'Validation Error');
     return res.status(400).json({
       message: 'Erreur de validation',
       errors: err.issues.map((e: any) => ({ path: e.path.join('.'), message: e.message })),
@@ -44,7 +44,7 @@ export function errorHandler(
   if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
     const fields = (err.meta as any)?.target;
     const fieldStr = Array.isArray(fields) ? fields.join(', ') : (fields || 'unique');
-    logger.warn({ err }, 'Prisma Unique Constraint Violation');
+    logger.warn({ err: sanitizeErrorForLog(err) }, 'Prisma Unique Constraint Violation');
     return res.status(409).json({
       message: `Un enregistrement avec cette valeur pour '${fieldStr}' existe déjà.`,
     });
@@ -60,9 +60,9 @@ export function errorHandler(
   const isProd = process.env.NODE_ENV === 'production';
 
   if (statusCode >= 500) {
-    logger.error({ err, req }, 'Server Error');
+    logger.error({ err: sanitizeErrorForLog(err), req }, 'Server Error');
   } else {
-    logger.warn({ err }, 'Client Error');
+    logger.warn({ err: sanitizeErrorForLog(err) }, 'Client Error');
   }
 
   const safeMessage = isProd && statusCode >= 500

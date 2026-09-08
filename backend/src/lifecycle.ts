@@ -1,6 +1,6 @@
 import * as http from 'http';
 import prisma from './lib/prisma.js';
-import { logger } from './middlewares/logger.js';
+import { logger, sanitizeErrorForLog } from './middlewares/logger.js';
 
 export interface ShutdownOptions {
   server?: http.Server;
@@ -22,7 +22,10 @@ export async function gracefulShutdown(options: ShutdownOptions = {}): Promise<v
       server.close((err) => {
         clearTimeout(timer);
         if (err) {
-          logger.error({ err }, 'Erreur lors de la fermeture du serveur HTTP');
+          logger.error(
+            { err: sanitizeErrorForLog(err) },
+            'Erreur lors de la fermeture du serveur HTTP'
+          );
         } else {
           logger.info('Serveur HTTP fermé avec succès');
         }
@@ -36,7 +39,10 @@ export async function gracefulShutdown(options: ShutdownOptions = {}): Promise<v
     await prisma.$disconnect();
     logger.info('Client Prisma déconnecté avec succès');
   } catch (err) {
-    logger.error({ err }, 'Erreur lors de la déconnexion de Prisma');
+    logger.error(
+      { err: sanitizeErrorForLog(err) },
+      'Erreur lors de la déconnexion de Prisma'
+    );
   }
 }
 
@@ -52,7 +58,7 @@ export function registerProcessLifecycle(server: http.Server): void {
       logger.info('Arrêt propre terminé, sortie du processus');
       process.exit(0);
     } catch (err) {
-      logger.fatal({ err }, "Échec de l'arrêt propre");
+      logger.fatal({ err: sanitizeErrorForLog(err) }, "Échec de l'arrêt propre");
       process.exit(1);
     }
   };
@@ -61,12 +67,18 @@ export function registerProcessLifecycle(server: http.Server): void {
   process.on('SIGINT', () => handleSignal('SIGINT'));
 
   process.on('uncaughtException', (err: Error) => {
-    logger.fatal({ err }, 'Exception non interceptée (uncaughtException)');
+    logger.fatal(
+      { err: sanitizeErrorForLog(err) },
+      'Exception non interceptée (uncaughtException)'
+    );
     gracefulShutdown({ server, timeoutMs: 5000 }).finally(() => process.exit(1));
   });
 
   process.on('unhandledRejection', (reason: unknown) => {
-    logger.fatal({ reason }, 'Rejet de promesse non géré (unhandledRejection)');
+    logger.fatal(
+      { reason: sanitizeErrorForLog(reason) },
+      'Rejet de promesse non géré (unhandledRejection)'
+    );
     gracefulShutdown({ server, timeoutMs: 5000 }).finally(() => process.exit(1));
   });
 }

@@ -8,7 +8,7 @@ import weatherRoutes from './api/routes/weather.route.js';
 import marketRouter from './api/routes/market.route.js';
 import { setupSwagger } from './swagger.js';
 import { httpLogger } from './middlewares/logger.js';
-import { apiLimiter } from './middlewares/rateLimiter.js';
+import { createApiLimiter } from './middlewares/rateLimiter.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { securityHeaders, createCorsMiddleware } from './middlewares/security.js';
 import { getConfig, AppConfig } from './config/env.js';
@@ -28,19 +28,31 @@ export function createApp(config: AppConfig = getConfig()): Express {
     app.set('trust proxy', config.TRUST_PROXY);
   }
 
-  // Middlewares de sécurité et journalisation
+  // Middlewares de sécurité de base
   app.use(securityHeaders(config.NODE_ENV));
   app.use(httpLogger); // Logging structuré (Pino avec masquage des données sensibles)
-  app.use(apiLimiter); // Rate Limiting middleware
   app.use(createCorsMiddleware(config)); // CORS configurable par liste blanche
-  app.use(express.json({ limit: config.BODY_LIMIT })); // Taille maximale bornée du body JSON
+
+  // 1. Sondes de santé d'infrastructure (Liveness & Readiness)
+  // Montées OBLIGATOIREMENT avant le rate limiter métier pour rester toujours accessibles aux probes
+  app.use('/api/health', healthRouter);
+
+  // 2. Limiteur de requêtes global pour l'API métier
+  app.use(
+    createApiLimiter({
+      max: config.RATE_LIMIT_MAX,
+      windowMs: config.RATE_LIMIT_WINDOW_MS,
+    })
+  );
+
+  // 3. Traitement des corps de requêtes avec limite bornée
+  app.use(express.json({ limit: config.BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: config.BODY_LIMIT }));
 
-  // Documentation Swagger
-  setupSwagger(app);
+  // 4. Documentation Swagger (activée selon ENABLE_API_DOCS)
+  setupSwagger(app, config.ENABLE_API_DOCS);
 
-  // Routes de l'API
-  app.use('/api/health', healthRouter);
+  // 5. Routes de l'API métier
   app.use('/api/admin', adminRouter);
   app.use('/api/gics', gicRouter);
   app.use('/api/weather', weatherRoutes);
