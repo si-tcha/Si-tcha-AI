@@ -5,10 +5,17 @@ on:
     branches: [ "main", "master", "elsonkjimmy", "elsonkjimmy-*" ]
     paths:
       - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+      - 'scripts/**'
   pull_request:
     branches: [ "main", "master", "elsonkjimmy", "elsonkjimmy-*" ]
     paths:
       - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+      - 'scripts/**'
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
@@ -66,11 +73,14 @@ jobs:
     - name: Verify Migration Consistency & Status
       run: npx prisma migrate status
 
+    - name: Check for Prisma Schema Drift against Migrations
+      run: npx prisma migrate diff --exit-code --from-config-datasource --to-schema ./prisma/schema.prisma
+
     - name: TypeScript Compile Check
       run: npx tsc --noEmit
 
     - name: Run Tests
       run: npm test
 
-    - name: Build Application
-      run: npm run build
+    - name: Build Application (Non-destructive)
+      run: npx tsc --outDir /tmp/backend-ci-dist

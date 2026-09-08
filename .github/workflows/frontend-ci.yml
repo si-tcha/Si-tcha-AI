@@ -5,10 +5,17 @@ on:
     branches: [ "main", "master", "elsonkjimmy", "elsonkjimmy-*" ]
     paths:
       - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+      - 'scripts/**'
   pull_request:
     branches: [ "main", "master", "elsonkjimmy", "elsonkjimmy-*" ]
     paths:
       - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+      - 'scripts/**'
+
+permissions:
+  contents: read
 
 jobs:
   frontend-checks:
@@ -45,8 +52,8 @@ jobs:
       - name: Run Unit & Integration Tests
         run: npm test
 
-      - name: Export Web Bundle
-        run: npm run export:web
+      - name: Export Web Bundle (Non-destructive to temporary directory)
+        run: npx expo export --platform web --output-dir /tmp/frontend-web-dist
 
-      - name: Bundle Android Hermes
-        run: npm run export:android
+      - name: Bundle Android Hermes (Non-destructive to temporary directory)
+        run: npx expo export --platform android --output-dir /tmp/frontend-android-dist
