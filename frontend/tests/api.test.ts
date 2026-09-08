@@ -125,39 +125,157 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
     });
 
-    it('7. Mode production avec localhost ou IP locale doit lever une erreur explicite', () => {
+    it('7. Mode production avec validation stricte de l’URL API (HTTPS, non-local, credentials, etc.)', () => {
+      // Refus de HTTP au lieu de HTTPS
       expect(() =>
         resolveApiBaseUrl({
           platform: 'web',
           isDevice: true,
-          envUrl: 'http://localhost:4000/api',
+          envUrl: 'http://api.sitcha.org/api',
           isDev: false,
         })
-      ).toThrowError(/EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost/);
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      // Refus de 192.168.0.0/16
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://192.168.1.20:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
 
       expect(() =>
         resolveApiBaseUrl({
           platform: 'android',
           isDevice: true,
-          envUrl: 'http://127.0.0.1:4000/api',
+          envUrl: 'https://192.168.1.20:4000/api',
           isDev: false,
         })
-      ).toThrowError(/EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost/);
+      ).toThrowError(/réseau privé 192\.168\.0\.0\/16/);
+
+      // Refus de 172.16.0.0/12
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://172.16.0.5/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://172.16.0.5/api',
+          isDev: false,
+        })
+      ).toThrowError(/réseau privé 172\.16\.0\.0\/12/);
+
+      // Refus de 10.0.0.0/8
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: false,
+          envUrl: 'http://10.1.2.3/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
 
       expect(() =>
         resolveApiBaseUrl({
           platform: 'android',
           isDevice: false,
-          envUrl: 'http://10.0.2.2:4000/api',
+          envUrl: 'https://10.1.2.3/api',
           isDev: false,
         })
-      ).toThrowError(/EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost/);
+      ).toThrowError(/réseau privé 10\.0\.0\.0\/8/);
 
-      // Une URL HTTPS de production valide doit être acceptée
+      // Refus de localhost et loopback 127.0.0.0/8
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://127.0.0.1:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/boucle locale 127\.0\.0\.0\/8/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: 'https://localhost:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/localhost/);
+
+      // Refus de 0.0.0.0
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: 'https://0.0.0.0:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/0\.0\.0\.0/);
+
+      // Refus de link-local 169.254.0.0/16
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://169.254.1.1/api',
+          isDev: false,
+        })
+      ).toThrowError(/link-local/);
+
+      // Refus IPv6 localhost [::1]
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://[::1]:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::1]:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 locale ou réservée/);
+
+      // Refus de username/password dans l'URL
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://user:password@api.sitcha.org/api',
+          isDev: false,
+        })
+      ).toThrowError(/ne doit pas contenir d'identifiants/);
+
+      // Refus d'URL malformée
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'not-an-url',
+          isDev: false,
+        })
+      ).toThrowError(/n'est pas une URL valide/);
+
+      // Acceptation d'une URL HTTPS publique valide avec normalisation du slash final
       const validProdUrl = resolveApiBaseUrl({
         platform: 'android',
         isDevice: true,
-        envUrl: 'https://api.sitcha.org/api',
+        envUrl: 'https://api.sitcha.org/api///',
         isDev: false,
       });
       expect(validProdUrl).toBe('https://api.sitcha.org/api');
