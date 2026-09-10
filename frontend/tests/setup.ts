@@ -63,39 +63,69 @@ vi.mock('expo-sqlite', () => ({
       } else if (sql.includes('DELETE FROM kv_store')) {
         sqliteKv.delete(params[0]);
       } else if (sql.includes('INSERT INTO cart_items')) {
-        sqliteCart.set(String(params[1]), {
-          id: params[0],
-          productId: String(params[1]),
-          name: params[2],
-          price: params[3],
-          unit: params[4],
-          quantity: Number(params[5]),
-          synced: Number(params[6]),
+        // [buyerId, productId, id, name, price, unit, quantity, synced]
+        const buyerId = String(params[0]);
+        const productId = String(params[1]);
+        sqliteCart.set(`${buyerId}:${productId}`, {
+          buyerId,
+          productId,
+          id: params[2],
+          name: params[3],
+          price: params[4],
+          unit: params[5],
+          quantity: Number(params[6]),
+          synced: Number(params[7]),
         });
       } else if (sql.includes('UPDATE cart_items')) {
-        const item = sqliteCart.get(String(params[1]));
+        // UPDATE cart_items SET quantity = ?, synced = 0 WHERE buyerId = ? AND productId = ?
+        const buyerId = String(params[1]);
+        const productId = String(params[2]);
+        const item = sqliteCart.get(`${buyerId}:${productId}`);
         if (item) {
           item.quantity = Number(params[0]);
           item.synced = 0;
         }
-      } else if (sql.includes('DELETE FROM cart_items WHERE productId = ?')) {
-        sqliteCart.delete(String(params[0]));
+      } else if (sql.includes('DELETE FROM cart_items WHERE buyerId = ? AND productId = ?')) {
+        sqliteCart.delete(`${params[0]}:${params[1]}`);
+      } else if (sql.includes('DELETE FROM cart_items WHERE buyerId = ?')) {
+        for (const [k, v] of sqliteCart.entries()) {
+          if (v.buyerId === String(params[0])) {
+            sqliteCart.delete(k);
+          }
+        }
       } else if (sql.includes('DELETE FROM cart_items')) {
         sqliteCart.clear();
       } else if (sql.includes('INSERT OR REPLACE INTO orders')) {
-        sqliteOrders.set(String(params[0]), {
-          id: params[0],
-          type: params[1],
-          status: params[2],
-          productId: params[3],
-          productName: params[4],
-          quantity: Number(params[5]),
-          unit: params[6],
-          price: params[7],
-          gicName: params[8],
-          createdAt: params[9],
-          synced: Number(params[10]),
+        // [buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced]
+        const buyerId = String(params[0]);
+        const id = String(params[1]);
+        sqliteOrders.set(`${buyerId}:${id}`, {
+          buyerId,
+          id,
+          type: params[2],
+          status: params[3],
+          productId: params[4],
+          productName: params[5],
+          quantity: Number(params[6]),
+          unit: params[7],
+          price: params[8],
+          gicName: params[9],
+          createdAt: params[10],
+          synced: Number(params[11]),
         });
+      } else if (sql.includes('DELETE FROM orders WHERE buyerId = ?')) {
+        for (const [k, v] of sqliteOrders.entries()) {
+          if (v.buyerId === String(params[0])) {
+            sqliteOrders.delete(k);
+          }
+        }
+      } else if (sql.includes('UPDATE orders SET status =')) {
+        for (const v of sqliteOrders.values()) {
+          if (v.id === String(params[1])) {
+            v.status = params[0];
+            v.synced = 0;
+          }
+        }
       } else if (sql.includes('DELETE FROM orders')) {
         sqliteOrders.clear();
       }
@@ -105,11 +135,18 @@ vi.mock('expo-sqlite', () => ({
         const val = sqliteKv.get(params[0]);
         return val !== undefined ? { value: val } : null;
       }
+      if (sql.includes('FROM cart_items WHERE buyerId = ? AND productId = ?')) {
+        return sqliteCart.get(`${params[0]}:${params[1]}`) || null;
+      }
       if (sql.includes('FROM cart_items WHERE productId = ?')) {
-        return sqliteCart.get(String(params[0])) || null;
+        return sqliteCart.get(`anonymous:${params[0]}`) || null;
       }
       if (sql.includes('SUM(quantity)')) {
-        const sum = Array.from(sqliteCart.values()).reduce(
+        let items = Array.from(sqliteCart.values());
+        if (sql.includes('WHERE buyerId = ?') && params[0] !== undefined) {
+          items = items.filter(i => i.buyerId === String(params[0]));
+        }
+        const sum = items.reduce(
           (acc, curr) => acc + (Number(curr.quantity) || 0),
           0
         );
@@ -117,12 +154,20 @@ vi.mock('expo-sqlite', () => ({
       }
       return null;
     },
-    getAllSync: (sql: string) => {
+    getAllSync: (sql: string, params: any[] = []) => {
       if (sql.includes('FROM cart_items')) {
-        return Array.from(sqliteCart.values());
+        let items = Array.from(sqliteCart.values());
+        if (sql.includes('WHERE buyerId = ?') && params[0] !== undefined) {
+          items = items.filter(i => i.buyerId === String(params[0]));
+        }
+        return items;
       }
       if (sql.includes('FROM orders')) {
-        return Array.from(sqliteOrders.values());
+        let orders = Array.from(sqliteOrders.values());
+        if (sql.includes('WHERE buyerId = ?') && params[0] !== undefined) {
+          orders = orders.filter(o => o.buyerId === String(params[0]));
+        }
+        return orders;
       }
       return [];
     },

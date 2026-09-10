@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import { Alert } from 'react-native';
-import { apiClient } from './api';
+import { apiClient, isNetworkError } from './api';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -44,6 +44,7 @@ import {
   SyncResult,
   TrustRating,
   WeatherRecord,
+  getBuyerClientRequestIdKey,
   nowIso,
 } from './database.shared';
 
@@ -118,6 +119,23 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 
 class DatabaseService {
   private dbInstance: SQLite.SQLiteDatabase | null = null;
+  private activeBuyerId: string | null = null;
+
+  setActiveBuyerId(buyerId: string | null): void {
+    this.activeBuyerId = buyerId;
+  }
+
+  getActiveBuyerId(): string | null {
+    return this.activeBuyerId;
+  }
+
+  private getBuyerId(): string {
+    return this.activeBuyerId || 'anonymous';
+  }
+
+  private getClientRequestIdKey(): string {
+    return getBuyerClientRequestIdKey(this.activeBuyerId);
+  }
 
   private getDb() {
     if (!this.dbInstance) {
@@ -224,11 +242,12 @@ class DatabaseService {
         updated = true;
       }
       if (ordersRes?.orders) {
-        db.runSync('DELETE FROM orders WHERE synced = 1 OR synced IS NULL');
+        const buyerId = this.getBuyerId();
+        db.runSync('DELETE FROM orders WHERE buyerId = ? AND (synced = 1 OR synced IS NULL)', [buyerId]);
         for (const o of (ordersRes.orders as any[])) {
           db.runSync(
-            'INSERT OR REPLACE INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
           );
         }
         updated = true;
@@ -295,10 +314,30 @@ class DatabaseService {
           id TEXT PRIMARY KEY, label TEXT, amount REAL, category TEXT, synced INTEGER, updatedAt TEXT, authorRole TEXT
         );
         CREATE TABLE IF NOT EXISTS cart_items (
-          id TEXT PRIMARY KEY, productId TEXT, name TEXT, price TEXT, unit TEXT, quantity INTEGER, synced INTEGER
+          buyerId TEXT NOT NULL DEFAULT 'anonymous',
+          productId TEXT NOT NULL,
+          id TEXT,
+          name TEXT,
+          price TEXT,
+          unit TEXT,
+          quantity INTEGER,
+          synced INTEGER,
+          PRIMARY KEY (buyerId, productId)
         );
         CREATE TABLE IF NOT EXISTS orders (
-          id TEXT PRIMARY KEY, type TEXT, status TEXT, productId TEXT, productName TEXT, quantity REAL, unit TEXT, price TEXT, gicName TEXT, createdAt TEXT, synced INTEGER
+          buyerId TEXT NOT NULL DEFAULT 'anonymous',
+          id TEXT NOT NULL,
+          type TEXT,
+          status TEXT,
+          productId TEXT,
+          productName TEXT,
+          quantity REAL,
+          unit TEXT,
+          price TEXT,
+          gicName TEXT,
+          createdAt TEXT,
+          synced INTEGER,
+          PRIMARY KEY (buyerId, id)
         );
         CREATE TABLE IF NOT EXISTS gic_needs (
           id TEXT PRIMARY KEY, category TEXT, description TEXT, updatedAt TEXT, authorRole TEXT
@@ -331,6 +370,62 @@ class DatabaseService {
       this.ensureKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
       this.ensureKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
       this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
+
+      // Migration sécurisée pour cart_items (clé composite buyerId + productId)
+      try {
+        const cartInfo = db.getAllSync('PRAGMA table_info(cart_items);') as any[];
+        if (cartInfo.length > 0 && !cartInfo.some((col: any) => col.name === 'buyerId')) {
+          db.execSync(`
+            CREATE TABLE cart_items_v2 (
+              buyerId TEXT NOT NULL DEFAULT 'anonymous',
+              productId TEXT NOT NULL,
+              id TEXT,
+              name TEXT,
+              price TEXT,
+              unit TEXT,
+              quantity INTEGER,
+              synced INTEGER,
+              PRIMARY KEY (buyerId, productId)
+            );
+            INSERT OR IGNORE INTO cart_items_v2 (buyerId, productId, id, name, price, unit, quantity, synced)
+            SELECT 'anonymous', productId, id, name, price, unit, quantity, synced FROM cart_items;
+            DROP TABLE cart_items;
+            ALTER TABLE cart_items_v2 RENAME TO cart_items;
+          `);
+        }
+      } catch (e) {
+        console.warn('Erreur migration cart_items SQLite:', e);
+      }
+
+      // Migration sécurisée pour orders (clé composite buyerId + id)
+      try {
+        const ordersInfo = db.getAllSync('PRAGMA table_info(orders);') as any[];
+        if (ordersInfo.length > 0 && !ordersInfo.some((col: any) => col.name === 'buyerId')) {
+          db.execSync(`
+            CREATE TABLE orders_v2 (
+              buyerId TEXT NOT NULL DEFAULT 'anonymous',
+              id TEXT NOT NULL,
+              type TEXT,
+              status TEXT,
+              productId TEXT,
+              productName TEXT,
+              quantity REAL,
+              unit TEXT,
+              price TEXT,
+              gicName TEXT,
+              createdAt TEXT,
+              synced INTEGER,
+              PRIMARY KEY (buyerId, id)
+            );
+            INSERT OR IGNORE INTO orders_v2 (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced)
+            SELECT 'anonymous', id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced FROM orders;
+            DROP TABLE orders;
+            ALTER TABLE orders_v2 RENAME TO orders;
+          `);
+        }
+      } catch (e) {
+        console.warn('Erreur migration orders SQLite:', e);
+      }
 
       // Migrations pour s'assurer que les colonnes 'synced' existent dans les tables préexistantes
       try {
@@ -412,12 +507,14 @@ class DatabaseService {
   }
 
   async getCart(): Promise<CartItemRecord[]> {
-    const rows = this.getDb().getAllSync('SELECT * FROM cart_items ORDER BY rowid ASC') as any[];
+    const buyerId = this.getBuyerId();
+    const rows = this.getDb().getAllSync('SELECT * FROM cart_items WHERE buyerId = ? ORDER BY rowid ASC', [buyerId]) as any[];
     return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
   async getCartCount(): Promise<number> {
-    const row = this.getDb().getFirstSync('SELECT SUM(quantity) as count FROM cart_items') as { count: number | null };
+    const buyerId = this.getBuyerId();
+    const row = this.getDb().getFirstSync('SELECT SUM(quantity) as count FROM cart_items WHERE buyerId = ?', [buyerId]) as { count: number | null };
     return Number(row?.count) || 0;
   }
 
@@ -427,14 +524,14 @@ class DatabaseService {
   }
 
   async getCartClientRequestId(): Promise<string | null> {
-    return this.readKv<string | null>(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, null);
+    return this.readKv<string | null>(this.getClientRequestIdKey(), null);
   }
 
   async getOrCreateCartClientRequestId(): Promise<string> {
     let key = await this.getCartClientRequestId();
     if (!key) {
       key = generateClientRequestId();
-      this.writeKv(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, key);
+      this.writeKv(this.getClientRequestIdKey(), key);
     }
     return key;
   }
@@ -442,12 +539,13 @@ class DatabaseService {
   async invalidateCartClientRequestId(): Promise<void> {
     try {
       const db = this.getDb();
-      db.runSync('DELETE FROM kv_store WHERE key = ?;', [STORAGE_KEYS.CART_CLIENT_REQUEST_ID]);
+      db.runSync('DELETE FROM kv_store WHERE key = ?;', [this.getClientRequestIdKey()]);
     } catch {}
   }
 
   async clearCart(): Promise<void> {
-    this.getDb().runSync('DELETE FROM cart_items');
+    const buyerId = this.getBuyerId();
+    this.getDb().runSync('DELETE FROM cart_items WHERE buyerId = ?', [buyerId]);
     await this.invalidateCartClientRequestId();
   }
 
@@ -455,6 +553,7 @@ class DatabaseService {
     product: { productId: string; name: string; price: string; unit: string },
     maxStock?: number
   ): Promise<CartItemRecord> {
+    const buyerId = this.getBuyerId();
     const targetId = String(product.productId);
     const db = this.getDb();
 
@@ -462,7 +561,7 @@ class DatabaseService {
       throw new Error(`Stock indisponible pour ${product.name}.`);
     }
 
-    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
+    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]) as any;
 
     if (existing) {
       const currentQty = Number(existing.quantity);
@@ -470,24 +569,25 @@ class DatabaseService {
         throw new Error(`Stock maximum atteint (${maxStock} ${product.unit}).`);
       }
       const newQuantity = currentQty + 1;
-      db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+      db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE buyerId = ? AND productId = ?', [newQuantity, buyerId, targetId]);
       await this.invalidateCartClientRequestId();
       return { ...existing, quantity: newQuantity, synced: false };
     }
 
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     db.runSync(
-      'INSERT INTO cart_items (id, productId, name, price, unit, quantity, synced) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, targetId, product.name, product.price, product.unit, 1, 0]
+      'INSERT INTO cart_items (buyerId, productId, id, name, price, unit, quantity, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [buyerId, targetId, id, product.name, product.price, product.unit, 1, 0]
     );
     await this.invalidateCartClientRequestId();
-    return { id, productId: targetId, name: product.name, price: product.price, unit: product.unit, quantity: 1, synced: false };
+    return { id, productId: targetId, name: product.name, price: product.price, unit: product.unit, quantity: 1, buyerId, synced: false };
   }
 
   async incrementCartItem(productId: string, maxStock?: number): Promise<CartItemRecord | null> {
+    const buyerId = this.getBuyerId();
     const targetId = String(productId);
     const db = this.getDb();
-    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
+    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]) as any;
     if (!existing) return null;
 
     const currentQty = Number(existing.quantity);
@@ -496,15 +596,16 @@ class DatabaseService {
     }
 
     const newQuantity = currentQty + 1;
-    db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+    db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE buyerId = ? AND productId = ?', [newQuantity, buyerId, targetId]);
     await this.invalidateCartClientRequestId();
     return { ...existing, quantity: newQuantity, synced: false };
   }
 
   async decrementCartItem(productId: string): Promise<CartItemRecord | null> {
+    const buyerId = this.getBuyerId();
     const targetId = String(productId);
     const db = this.getDb();
-    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE productId = ?', [targetId]) as any;
+    const existing = db.getFirstSync('SELECT * FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]) as any;
     if (!existing) return null;
 
     const currentQty = Number(existing.quantity);
@@ -514,14 +615,15 @@ class DatabaseService {
     }
 
     const newQuantity = currentQty - 1;
-    db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE productId = ?', [newQuantity, targetId]);
+    db.runSync('UPDATE cart_items SET quantity = ?, synced = 0 WHERE buyerId = ? AND productId = ?', [newQuantity, buyerId, targetId]);
     await this.invalidateCartClientRequestId();
     return { ...existing, quantity: newQuantity, synced: false };
   }
 
   async removeFromCart(productId: string): Promise<void> {
+    const buyerId = this.getBuyerId();
     const targetId = String(productId);
-    this.getDb().runSync('DELETE FROM cart_items WHERE productId = ?', [targetId]);
+    this.getDb().runSync('DELETE FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]);
     await this.invalidateCartClientRequestId();
   }
 
@@ -586,28 +688,32 @@ class DatabaseService {
   }
 
   async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
+    const buyerId = this.getBuyerId();
     const db = this.getDb();
 
     if (syncWithServer) {
       try {
         const res = await apiClient.getOrders();
         if (Array.isArray(res?.orders)) {
-          db.runSync('DELETE FROM orders');
+          db.runSync('DELETE FROM orders WHERE buyerId = ?', [buyerId]);
           for (const o of (res.orders as any[])) {
             db.runSync(
-              'INSERT OR REPLACE INTO orders (id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+              'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
             );
           }
           this.lastOrdersSyncSuccessful = true;
         }
       } catch (err) {
-        console.warn('Erreur lors de la synchronisation des commandes avec le serveur:', err);
         this.lastOrdersSyncSuccessful = false;
+        if (!isNetworkError(err)) {
+          throw err;
+        }
+        console.warn('Erreur réseau lors de la synchronisation des commandes avec le serveur:', err);
       }
     }
 
-    const rows = db.getAllSync('SELECT * FROM orders ORDER BY createdAt DESC, id DESC') as any[];
+    const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [buyerId]) as any[];
     return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 

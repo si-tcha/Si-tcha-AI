@@ -27,6 +27,7 @@ export interface CartItemRecord {
   price: string;
   unit: string;
   quantity: number;
+  buyerId?: string;
   synced?: boolean;
 }
 
@@ -179,6 +180,18 @@ export const STORAGE_KEYS = {
   TRUST_RATINGS: 'sitcha_trust_ratings',
   CART_CLIENT_REQUEST_ID: 'sitcha_cart_client_request_id',
 } as const;
+
+export function getBuyerCartKey(buyerId?: string | null): string {
+  return buyerId ? `sitcha_buyer_cart_${buyerId}` : 'sitcha_cart_db';
+}
+
+export function getBuyerOrdersKey(buyerId?: string | null): string {
+  return buyerId ? `sitcha_buyer_orders_${buyerId}` : 'sitcha_orders';
+}
+
+export function getBuyerClientRequestIdKey(buyerId?: string | null): string {
+  return buyerId ? `sitcha_cart_client_request_id_${buyerId}` : 'sitcha_cart_client_request_id';
+}
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [];
 

@@ -98,6 +98,19 @@ class CartStore {
     this.initialized = true;
     this.notify();
   }
+
+  async setBuyerId(buyerId: string | null) {
+    dbService.setActiveBuyerId(buyerId);
+    this.cart = [];
+    this.initialized = false;
+    await this.refresh();
+  }
+
+  reset() {
+    this.cart = [];
+    this.initialized = false;
+    this.notify();
+  }
 }
 
 export const cartStore = new CartStore();

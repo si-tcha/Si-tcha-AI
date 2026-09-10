@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { apiClient } from './api';
+import { apiClient, isNetworkError } from './api';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -42,6 +42,9 @@ import {
   SyncResult,
   TrustRating,
   WeatherRecord,
+  getBuyerCartKey,
+  getBuyerOrdersKey,
+  getBuyerClientRequestIdKey,
   nowIso,
 } from './database.shared';
 
@@ -110,6 +113,28 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 }
 
 class DatabaseService {
+  private activeBuyerId: string | null = null;
+
+  setActiveBuyerId(buyerId: string | null): void {
+    this.activeBuyerId = buyerId;
+  }
+
+  getActiveBuyerId(): string | null {
+    return this.activeBuyerId;
+  }
+
+  getCartKey(): string {
+    return getBuyerCartKey(this.activeBuyerId);
+  }
+
+  getOrdersKey(): string {
+    return getBuyerOrdersKey(this.activeBuyerId);
+  }
+
+  getClientRequestIdKey(): string {
+    return getBuyerClientRequestIdKey(this.activeBuyerId);
+  }
+
   async syncRemoteData(): Promise<boolean> {
     try {
       const [productsRes, gicsRes, terrainRes, ordersRes] = await Promise.all([
@@ -136,7 +161,7 @@ class DatabaseService {
         updated = true;
       }
       if (Array.isArray(ordersRes?.orders)) {
-        writeJson(STORAGE_KEYS.ORDERS, ordersRes.orders);
+        writeJson(this.getOrdersKey(), ordersRes.orders);
         updated = true;
       }
       return updated;
@@ -149,7 +174,7 @@ class DatabaseService {
     if (typeof localStorage === 'undefined') return;
     ensure(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
     ensure(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
-    ensure(STORAGE_KEYS.CART, DEFAULT_CART);
+    ensure(this.getCartKey(), DEFAULT_CART);
     ensure(STORAGE_KEYS.GIC_PROFILE, DEFAULT_GIC_PROFILE);
     ensure(STORAGE_KEYS.GIC_MEMBERS, DEFAULT_GIC_MEMBERS);
     ensure(STORAGE_KEYS.GIC_NEEDS, DEFAULT_GIC_NEEDS);
@@ -159,7 +184,7 @@ class DatabaseService {
     ensure(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
     ensure(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
     ensure(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
-    ensure(STORAGE_KEYS.ORDERS, []);
+    ensure(this.getOrdersKey(), []);
     ensure(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
     ensure(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
     ensure(STORAGE_KEYS.LOCAL_ROLE, 'leader');
@@ -233,7 +258,7 @@ class DatabaseService {
   }
 
   async getCart(): Promise<CartItemRecord[]> {
-    return readJson(STORAGE_KEYS.CART, DEFAULT_CART);
+    return readJson(this.getCartKey(), DEFAULT_CART);
   }
 
   async getCartCount(): Promise<number> {
@@ -247,25 +272,25 @@ class DatabaseService {
   }
 
   async getCartClientRequestId(): Promise<string | null> {
-    return readJson<string | null>(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, null);
+    return readJson<string | null>(this.getClientRequestIdKey(), null);
   }
 
   async getOrCreateCartClientRequestId(): Promise<string> {
     let key = await this.getCartClientRequestId();
     if (!key) {
       key = generateClientRequestId();
-      writeJson(STORAGE_KEYS.CART_CLIENT_REQUEST_ID, key);
+      writeJson(this.getClientRequestIdKey(), key);
     }
     return key;
   }
 
   async invalidateCartClientRequestId(): Promise<void> {
     if (typeof localStorage === 'undefined') return;
-    localStorage.removeItem(STORAGE_KEYS.CART_CLIENT_REQUEST_ID);
+    localStorage.removeItem(this.getClientRequestIdKey());
   }
 
   async clearCart(): Promise<void> {
-    writeJson(STORAGE_KEYS.CART, []);
+    writeJson(this.getCartKey(), []);
     await this.invalidateCartClientRequestId();
   }
 
@@ -296,7 +321,7 @@ class DatabaseService {
         synced: false,
       };
       const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-      writeJson(STORAGE_KEYS.CART, updatedCart);
+      writeJson(this.getCartKey(), updatedCart);
       await this.invalidateCartClientRequestId();
       return updatedItem;
     }
@@ -308,9 +333,10 @@ class DatabaseService {
       price: product.price,
       unit: product.unit,
       quantity: 1,
+      buyerId: this.activeBuyerId || undefined,
       synced: false,
     };
-    writeJson(STORAGE_KEYS.CART, [...cart, newItem]);
+    writeJson(this.getCartKey(), [...cart, newItem]);
     await this.invalidateCartClientRequestId();
     return newItem;
   }
@@ -331,7 +357,7 @@ class DatabaseService {
       synced: false,
     };
     const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-    writeJson(STORAGE_KEYS.CART, updatedCart);
+    writeJson(this.getCartKey(), updatedCart);
     await this.invalidateCartClientRequestId();
     return updatedItem;
   }
@@ -353,7 +379,7 @@ class DatabaseService {
       synced: false,
     };
     const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-    writeJson(STORAGE_KEYS.CART, updatedCart);
+    writeJson(this.getCartKey(), updatedCart);
     await this.invalidateCartClientRequestId();
     return updatedItem;
   }
@@ -362,7 +388,7 @@ class DatabaseService {
     const targetId = String(productId);
     const cart = await this.getCart();
     const updatedCart = cart.filter((item) => String(item.productId) !== targetId);
-    writeJson(STORAGE_KEYS.CART, updatedCart);
+    writeJson(this.getCartKey(), updatedCart);
     await this.invalidateCartClientRequestId();
   }
 
@@ -454,15 +480,18 @@ class DatabaseService {
       try {
         const res = await apiClient.getOrders();
         if (Array.isArray(res?.orders)) {
-          writeJson(STORAGE_KEYS.ORDERS, res.orders);
+          writeJson(this.getOrdersKey(), res.orders);
           this.lastOrdersSyncSuccessful = true;
         }
       } catch (err) {
-        console.warn('Erreur lors de la synchronisation des commandes avec le serveur:', err);
         this.lastOrdersSyncSuccessful = false;
+        if (!isNetworkError(err)) {
+          throw err;
+        }
+        console.warn('Erreur réseau lors de la synchronisation des commandes, repli sur le cache local:', err);
       }
     }
-    return readJson(STORAGE_KEYS.ORDERS, []);
+    return readJson(this.getOrdersKey(), []);
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {

@@ -17,6 +17,8 @@ import {
   SessionStatus,
   AuthSessionState,
 } from '@/auth/sessionRestore';
+import { dbService } from '@/services/database';
+import { cartStore } from '@/services/cart-store';
 
 export type RefreshUserResult =
   | { type: 'success'; user: UserProfile }
@@ -58,6 +60,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
       await clearSession();
+      cartStore.reset();
+      dbService.setActiveBuyerId(null);
       setSession({
         status: 'unauthenticated',
         user: null,
@@ -121,6 +125,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      cartStore.reset();
+      dbService.setActiveBuyerId(null);
       setSession({
         status: 'unauthenticated',
         user: null,
@@ -135,6 +141,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUnauthorizedHandler(null);
     };
   }, [restoreSession]);
+
+  useEffect(() => {
+    if (session.status === 'authenticated' && session.user) {
+      const buyerId = (session.user.role === 'buyer' ? (session.user.buyerId || session.user.id) : null) || null;
+      cartStore.setBuyerId(buyerId);
+    } else if (session.status === 'unauthenticated') {
+      cartStore.reset();
+      dbService.setActiveBuyerId(null);
+    }
+  }, [session.status, session.user]);
 
   const signIn = useCallback(
     async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {

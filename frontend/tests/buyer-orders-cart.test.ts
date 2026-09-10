@@ -379,6 +379,15 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       const rawStored = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
       expect(rawStored).toHaveLength(1);
     });
+
+    it('propage l’erreur sans masquer en mode hors-ligne lors d’une erreur serveur (500 ou 401)', async () => {
+      vi.spyOn(apiClient, 'getOrders').mockRejectedValueOnce(
+        new ApiError('Erreur interne serveur', 500)
+      );
+
+      await expect(webDbService.getOrders(true)).rejects.toThrow('Erreur interne serveur');
+      expect(webDbService.isLastOrdersSyncSuccessful()).toBe(false);
+    });
   });
 
   describe('6. Synchronisation réactive via cartStore', () => {
@@ -406,6 +415,30 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
 
       unsubscribe();
       expect(notificationCount).toBeGreaterThanOrEqual(4);
+    });
+
+    it('isole et réinitialise les données via setBuyerId et reset', async () => {
+      webDbService.setActiveBuyerId('buyer-alpha');
+      await cartStore.setBuyerId('buyer-alpha');
+      await cartStore.addToCart(sampleProduct1);
+      expect(cartStore.getCount()).toBe(1);
+
+      // Changement de session vers buyer-beta
+      webDbService.setActiveBuyerId('buyer-beta');
+      await cartStore.setBuyerId('buyer-beta');
+      expect(cartStore.getCount()).toBe(0);
+      expect(cartStore.getCart()).toHaveLength(0);
+
+      // Reconnexion de buyer-alpha
+      webDbService.setActiveBuyerId('buyer-alpha');
+      await cartStore.setBuyerId('buyer-alpha');
+      expect(cartStore.getCount()).toBe(1);
+      expect(cartStore.getCart()[0].productId).toBe('101');
+
+      // Déconnexion avec reset()
+      cartStore.reset();
+      expect(cartStore.getCount()).toBe(0);
+      expect(cartStore.getCart()).toHaveLength(0);
     });
   });
 
@@ -464,6 +497,108 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
 
       // Aucune commande factice
       expect(await nativeDbService.getOrders(false)).toHaveLength(0);
+    });
+  });
+
+  describe('8. Isolation stricte multi-utilisateurs par buyerId', () => {
+    it('isole strictement les paniers entre deux acheteurs différents sur le Web', async () => {
+      // Acheteur 1
+      webDbService.setActiveBuyerId('buyer-1');
+      await webDbService.clearCart();
+      await webDbService.addToCart(sampleProduct1);
+      const reqId1 = await webDbService.getOrCreateCartClientRequestId();
+      expect(await webDbService.getCartCount()).toBe(1);
+
+      // Acheteur 2
+      webDbService.setActiveBuyerId('buyer-2');
+      await webDbService.clearCart();
+      expect(await webDbService.getCartCount()).toBe(0);
+      expect(await webDbService.getCart()).toHaveLength(0);
+      expect(await webDbService.getCartClientRequestId()).toBeNull();
+
+      await webDbService.addToCart(sampleProduct2);
+      const reqId2 = await webDbService.getOrCreateCartClientRequestId();
+      expect(await webDbService.getCartCount()).toBe(1);
+      expect(reqId2).not.toBe(reqId1);
+
+      // Retour à Acheteur 1
+      webDbService.setActiveBuyerId('buyer-1');
+      const cart1 = await webDbService.getCart();
+      expect(cart1).toHaveLength(1);
+      expect(cart1[0].productId).toBe(sampleProduct1.productId);
+      expect(await webDbService.getCartClientRequestId()).toBe(reqId1);
+
+      // Vidage Acheteur 1 ne touche pas Acheteur 2
+      await webDbService.clearCart();
+      expect(await webDbService.getCartCount()).toBe(0);
+
+      webDbService.setActiveBuyerId('buyer-2');
+      const cart2 = await webDbService.getCart();
+      expect(cart2).toHaveLength(1);
+      expect(cart2[0].productId).toBe(sampleProduct2.productId);
+      expect(await webDbService.getCartClientRequestId()).toBe(reqId2);
+    });
+
+    it('isole strictement le cache des commandes entre deux acheteurs sur le Web', async () => {
+      webDbService.setActiveBuyerId('buyer-1');
+      vi.spyOn(apiClient, 'getOrders').mockResolvedValueOnce({
+        orders: [
+          {
+            id: 'ord-b1',
+            type: 'commande_ferme',
+            status: 'en_attente',
+            productId: '101',
+            productName: 'Plantain',
+            quantity: 2,
+            unit: 'régime',
+            price: '3500',
+            gicName: 'GIC 1',
+            createdAt: '2026-09-07T05:00:00.000Z',
+          },
+        ],
+        meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+      });
+      const orders1 = await webDbService.getOrders(true);
+      expect(orders1).toHaveLength(1);
+      expect(orders1[0].id).toBe('ord-b1');
+
+      // Acheteur 2 en mode hors-ligne ne doit voir aucune commande
+      webDbService.setActiveBuyerId('buyer-2');
+      const orders2 = await webDbService.getOrders(false);
+      expect(orders2).toHaveLength(0);
+    });
+
+    it('isole strictement les paniers et commandes en SQLite natif', async () => {
+      // @ts-ignore
+      const mod = await import('../src/services/database.ts');
+      const native = mod.dbService;
+
+      native.setActiveBuyerId('native-buyer-1');
+      await native.clearCart();
+      await native.addToCart(sampleProduct1);
+      const reqId1 = await native.getOrCreateCartClientRequestId();
+
+      native.setActiveBuyerId('native-buyer-2');
+      await native.clearCart();
+      expect(await native.getCart()).toHaveLength(0);
+      expect(await native.getCartClientRequestId()).toBeNull();
+
+      await native.addToCart(sampleProduct2);
+      expect(await native.getCartCount()).toBe(1);
+
+      // Retour buyer 1
+      native.setActiveBuyerId('native-buyer-1');
+      const cart1 = await native.getCart();
+      expect(cart1).toHaveLength(1);
+      expect(cart1[0].productId).toBe('101');
+      expect(await native.getCartClientRequestId()).toBe(reqId1);
+
+      // Nettoyage buyer 1
+      await native.clearCart();
+      expect(await native.getCartCount()).toBe(0);
+
+      native.setActiveBuyerId('native-buyer-2');
+      expect(await native.getCartCount()).toBe(1);
     });
   });
 });

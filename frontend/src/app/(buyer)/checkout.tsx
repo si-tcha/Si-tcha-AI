@@ -279,7 +279,7 @@ export default function BuyerCheckoutScreen() {
                 <Text style={styles.cashNoticeBody}>
                   Le règlement de cette commande s'effectue intégralement en espèces lors de la remise physique
                   des produits par le transporteur ou auprès du magasinier du GIC. Vous recevrez un bordereau
-                  et un reçu QR pour vérifier vos récoltes à la livraison.
+                  de commande QR pour vérifier vos récoltes à la livraison (le QR code sert au retrait physique et ne constitue pas une preuve de paiement).
                 </Text>
               </View>
 

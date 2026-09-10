@@ -19,6 +19,7 @@ import { Spacing } from '@/constants/theme';
 import { dbService, OrderRecord } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ApiError, isNetworkError } from '@/services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -53,7 +54,7 @@ const STATUS_CONFIG: Record<
     badgeBg: '#eff6ff',
     badgeBorder: '#bfdbfe',
     badgeColor: '#1d4ed8',
-    note: 'Réceptionnée · Règlement en espèces effectué',
+    note: 'Produits réceptionnés · Modalités en espèces selon entente physique',
   },
   annulee: {
     label: 'ANNULÉE',
@@ -65,10 +66,10 @@ const STATUS_CONFIG: Record<
 };
 
 function formatOrderDate(dateStr?: string): string {
-  if (!dateStr) return 'Date inconnue';
+  if (!dateStr || dateStr === 'date_inconnue' || dateStr === 'date_invalide') return 'Date inconnue';
   try {
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
+    if (isNaN(d.getTime())) return 'Date inconnue';
     return d.toLocaleString('fr-FR', {
       day: '2-digit',
       month: 'short',
@@ -77,7 +78,7 @@ function formatOrderDate(dateStr?: string): string {
       minute: '2-digit',
     });
   } catch {
-    return dateStr;
+    return 'Date inconnue';
   }
 }
 
@@ -88,6 +89,7 @@ export default function BuyerOrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   // Rating state
   const [ratingOrder, setRatingOrder] = useState<OrderRecord | null>(null);
@@ -97,19 +99,33 @@ export default function BuyerOrdersScreen() {
 
   const loadOrders = useCallback(async () => {
     setIsLoading(true);
+    setServerError(null);
     try {
       await dbService.initDatabase();
       const loaded = await dbService.getOrders(true);
       setOrders(loaded);
       setIsOffline(!dbService.isLastOrdersSyncSuccessful());
-    } catch {
-      const cached = await dbService.getOrders(false);
-      setOrders(cached);
-      setIsOffline(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        showToast({ message: 'Session expirée. Veuillez vous reconnecter.', type: 'error' });
+        router.replace('/(auth)/login');
+        return;
+      }
+      if (isNetworkError(err)) {
+        const cached = await dbService.getOrders(false);
+        setOrders(cached);
+        setIsOffline(true);
+      } else {
+        const message =
+          err instanceof Error ? err.message : 'Erreur serveur lors de la récupération des commandes';
+        setServerError(message);
+        showToast({ message, type: 'error' });
+        setIsOffline(false);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [router, showToast]);
 
   useFocusEffect(
     useCallback(() => {
@@ -167,6 +183,17 @@ export default function BuyerOrdersScreen() {
             <Text style={styles.offlineBannerText}>
               Mode hors-ligne : affichage des commandes enregistrées en cache local.
             </Text>
+            <TouchableOpacity style={styles.refreshBtn} onPress={loadOrders}>
+              <Text style={styles.refreshBtnText}>Réessayer</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Bannière Erreur Serveur */}
+        {serverError && (
+          <View style={styles.errorBanner}>
+            <Feather name="alert-circle" size={14} color="#dc2626" />
+            <Text style={styles.errorBannerText}>{serverError}</Text>
             <TouchableOpacity style={styles.refreshBtn} onPress={loadOrders}>
               <Text style={styles.refreshBtnText}>Réessayer</Text>
             </TouchableOpacity>
@@ -279,7 +306,7 @@ export default function BuyerOrdersScreen() {
                       )}
                       <TouchableOpacity style={styles.receiptBtn} onPress={() => setSelectedOrder(o)}>
                         <Feather name="grid" size={13} color="#101e0f" />
-                        <Text style={styles.receiptBtnText}>Reçu QR</Text>
+                        <Text style={styles.receiptBtnText}>Bordereau QR</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -289,12 +316,12 @@ export default function BuyerOrdersScreen() {
           )}
         </ScrollView>
 
-        {/* Modal Reçu QR */}
+        {/* Modal Bordereau QR */}
         <Modal visible={!!selectedOrder} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Bordereau & Reçu QR</Text>
+                <Text style={styles.modalTitle}>Bordereau de commande QR</Text>
                 <TouchableOpacity onPress={() => setSelectedOrder(null)}>
                   <Feather name="x" size={22} color="#101e0f" />
                 </TouchableOpacity>
@@ -328,8 +355,7 @@ export default function BuyerOrdersScreen() {
                     FCFA
                   </Text>
                   <Text style={styles.receiptHint}>
-                    Règlement intégral en espèces à la remise physique · Présentez ce reçu ou cette
-                    référence au transporteur ou au magasinier du GIC.
+                    Bordereau de commande logistique · Règlement intégral en espèces à la remise physique · Ce QR code sert à l'identification de la commande et ne constitue pas une preuve de paiement électronique.
                   </Text>
                 </View>
               )}
@@ -452,6 +478,23 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 11,
     color: '#c2410c',
+    fontWeight: '600',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fef2f2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fecaca',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#b91c1c',
     fontWeight: '600',
   },
   refreshBtn: {

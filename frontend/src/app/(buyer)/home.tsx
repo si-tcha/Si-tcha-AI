@@ -316,7 +316,7 @@ export default function BuyerHomeScreen() {
               <Text style={styles.floatingCartText}>Voir mon panier</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.floatingCartAction}>Payer MoMo / OM</Text>
+              <Text style={styles.floatingCartAction}>Commander</Text>
               <Feather name="arrow-right" size={16} color="#ffffff" />
             </View>
           </TouchableOpacity>
@@ -429,7 +429,7 @@ export default function BuyerHomeScreen() {
                       }}
                       style={styles.modalBuyNowBtn}
                     >
-                      <Text style={styles.modalBuyNowText}>Acheter / MoMo</Text>
+                      <Text style={styles.modalBuyNowText}>Commander</Text>
                     </TouchableOpacity>
                   </View>
                 </>
