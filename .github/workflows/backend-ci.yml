@@ -84,3 +84,11 @@ jobs:
 
     - name: Build Application (Non-destructive)
       run: npx tsc --outDir /tmp/backend-ci-dist
+
+    - name: Validate Docker Compose Configurations
+      run: |
+        docker compose -f compose.dev.yaml config
+        POSTGRES_PASSWORD=ci_password JWT_SECRET=ci_jwt_secret_min_32_chars_long CORS_ORIGIN=https://sitcha.app docker compose -f compose.yaml config
+
+    - name: Validate Dockerfile Structure
+      run: docker build --check .
