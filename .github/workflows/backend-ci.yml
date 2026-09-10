@@ -92,3 +92,10 @@ jobs:
 
     - name: Validate Dockerfile Structure
       run: docker build --check .
+
+    - name: Build & Verify Final Production Docker Image
+      run: |
+        docker build -t sitcha-backend:ci-verify .
+        docker run --rm sitcha-backend:ci-verify node --version
+        docker run --rm sitcha-backend:ci-verify ./node_modules/.bin/prisma --version
+        docker run --rm sitcha-backend:ci-verify node -e "import('@prisma/client').then(() => console.log('Prisma Client OK'))"
