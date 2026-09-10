@@ -12,8 +12,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-sitcha_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire en production}
       POSTGRES_DB: ${POSTGRES_DB:-sitcha_db}
-    ports:
-      - "${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -51,7 +49,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sitcha_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire en production}@postgres:5432/${POSTGRES_DB:-sitcha_db}?schema=public
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET est obligatoire en production (min. 32 car., générer avec openssl rand -base64 32)}
       CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN est obligatoire en production (liste blanche d origines HTTPS séparées par virgules)}
-      TRUST_PROXY: "${TRUST_PROXY:-1}"
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       OTP_PROVIDER: "${OTP_PROVIDER:-disabled}"
       ENABLE_API_DOCS: "${ENABLE_API_DOCS:-false}"
