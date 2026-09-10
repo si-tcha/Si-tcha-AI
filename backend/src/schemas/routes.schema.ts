@@ -133,10 +133,14 @@ export const createParcelSchema = z.object({
         }),
       estimatedVolumeKg: z
         .number({ message: 'Le volume estimé est requis' })
-        .positive('Le volume estimé doit être strictement supérieur à 0 kg'),
+        .finite('Le volume estimé doit être un nombre fini')
+        .positive('Le volume estimé doit être strictement supérieur à 0 kg')
+        .max(1_000_000, 'Le volume estimé ne peut pas dépasser 1 000 000 kg'),
       actualHarvestVolumeKg: z
         .number({ message: 'Le volume réel récolté doit être un nombre valide' })
+        .finite('Le volume réel récolté doit être un nombre fini')
         .min(0, 'Le volume réel récolté doit être supérieur ou égal à 0 kg')
+        .max(1_000_000, 'Le volume réel récolté ne peut pas dépasser 1 000 000 kg')
         .nullable()
         .optional(),
       actualHarvestDate: z
@@ -160,6 +164,31 @@ export const createParcelSchema = z.object({
       {
         message: 'La date de récolte réelle ne peut pas être antérieure à la date de semis',
         path: ['actualHarvestDate'],
+      }
+    )
+    .refine(
+      (data) => {
+        const hasVol = data.actualHarvestVolumeKg !== null && data.actualHarvestVolumeKg !== undefined;
+        const hasDate = data.actualHarvestDate !== null && data.actualHarvestDate !== undefined && data.actualHarvestDate.length > 0;
+        return hasVol === hasDate;
+      },
+      {
+        message: 'Le volume réel récolté et la date de récolte réelle doivent être fournis ensemble ou tous deux omis',
+        path: ['actualHarvestVolumeKg'],
+      }
+    )
+    .refine(
+      (data) => {
+        if (data.stage === 'Récolté') {
+          const hasVol = data.actualHarvestVolumeKg !== null && data.actualHarvestVolumeKg !== undefined;
+          const hasDate = data.actualHarvestDate !== null && data.actualHarvestDate !== undefined && data.actualHarvestDate.length > 0;
+          return hasVol && hasDate;
+        }
+        return true;
+      },
+      {
+        message: "L'étape 'Récolté' exige de renseigner le volume réel et la date réelle de récolte",
+        path: ['stage'],
       }
     ),
 });
@@ -201,11 +230,15 @@ export const updateParcelSchema = z.object({
         .optional(),
       estimatedVolumeKg: z
         .number({ message: 'Le volume estimé doit être un nombre valide' })
+        .finite('Le volume estimé doit être un nombre fini')
         .positive('Le volume estimé doit être strictement supérieur à 0 kg')
+        .max(1_000_000, 'Le volume estimé ne peut pas dépasser 1 000 000 kg')
         .optional(),
       actualHarvestVolumeKg: z
         .number({ message: 'Le volume réel récolté doit être un nombre valide' })
+        .finite('Le volume réel récolté doit être un nombre fini')
         .min(0, 'Le volume réel récolté doit être supérieur ou égal à 0 kg')
+        .max(1_000_000, 'Le volume réel récolté ne peut pas dépasser 1 000 000 kg')
         .nullable()
         .optional(),
       actualHarvestDate: z
@@ -217,6 +250,12 @@ export const updateParcelSchema = z.object({
         .nullable()
         .optional(),
     })
+    .refine(
+      (data) => Object.keys(data).length > 0,
+      {
+        message: 'Au moins un champ doit être fourni pour la mise à jour',
+      }
+    )
     .refine(
       (data) => {
         if (data.sowingDate && data.estimatedHarvestDate) {
@@ -239,6 +278,22 @@ export const updateParcelSchema = z.object({
       {
         message: 'La date de récolte réelle ne peut pas être antérieure à la date de semis',
         path: ['actualHarvestDate'],
+      }
+    )
+    .refine(
+      (data) => {
+        const hasVol = data.actualHarvestVolumeKg !== undefined;
+        const hasDate = data.actualHarvestDate !== undefined;
+        if (hasVol && hasDate) {
+          const volIsNull = data.actualHarvestVolumeKg === null;
+          const dateIsNull = !data.actualHarvestDate || data.actualHarvestDate.length === 0;
+          return volIsNull === dateIsNull;
+        }
+        return true;
+      },
+      {
+        message: 'Le volume réel récolté et la date de récolte réelle doivent être modifiés ensemble',
+        path: ['actualHarvestVolumeKg'],
       }
     ),
 });

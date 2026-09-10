@@ -18,8 +18,10 @@ vi.mock('../src/lib/prisma', () => {
       parcelEntry: {
         findMany: vi.fn(),
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
       },
     },
   };
@@ -214,19 +216,7 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
     });
 
     it('should refuse (404) when modifying a parcel belonging to another GIC', async () => {
-      vi.mocked(prisma.parcelEntry.findUnique).mockResolvedValue({
-        id: 'uuid-foreign',
-        parcelName: 'Parcelle GIC 1',
-        crop: 'Tomates',
-        sowingDate: '2026-03-01',
-        stage: 'Semis',
-        estimatedHarvestDate: '2026-06-15',
-        estimatedVolumeKg: 2000,
-        actualHarvestVolumeKg: null,
-        actualHarvestDate: null,
-        updatedAt: new Date(),
-        gicId: BigInt(1), // Belongs to GIC 1
-      } as any);
+      vi.mocked(prisma.parcelEntry.findFirst).mockResolvedValue(null);
 
       // Seller 2 attempts to modify Seller 1's parcel
       const res = await request(app)
@@ -238,7 +228,7 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
 
       expect(res.status).toBe(404);
       expect(res.body.message).toMatch(/Parcelle introuvable/i);
-      expect(prisma.parcelEntry.update).not.toHaveBeenCalled();
+      expect(prisma.parcelEntry.updateMany).not.toHaveBeenCalled();
     });
   });
 
@@ -391,7 +381,7 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
 
   describe('6. Mise à jour de parcelle (étape de croissance, récolte réelle)', () => {
     it('should successfully update parcel stage and harvest volume', async () => {
-      vi.mocked(prisma.parcelEntry.findUnique).mockResolvedValue({
+      vi.mocked(prisma.parcelEntry.findFirst).mockResolvedValue({
         id: 'uuid-1',
         parcelName: 'Parcelle 1',
         crop: 'Tomates',
@@ -405,7 +395,9 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
         gicId: BigInt(1),
       } as any);
 
-      vi.mocked(prisma.parcelEntry.update).mockResolvedValue({
+      vi.mocked(prisma.parcelEntry.updateMany).mockResolvedValue({ count: 1 } as any);
+
+      vi.mocked(prisma.parcelEntry.findUnique).mockResolvedValue({
         id: 'uuid-1',
         parcelName: 'Parcelle 1',
         crop: 'Tomates',
@@ -433,6 +425,109 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
       expect(res.body.parcel.actualHarvestVolumeKg).toBe(1600);
       expect(res.body.parcel.yieldDropPercent).toBe(20);
       expect(res.body.parcel.yieldDropAlert).toBe(true);
+    });
+
+    it('should reject empty body with 400', async () => {
+      const res = await request(app)
+        .put('/api/gic/parcels/uuid-1')
+        .set('Authorization', `Bearer ${activeSellerGic1Token}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject when actualHarvestVolumeKg is set without actualHarvestDate', async () => {
+      vi.mocked(prisma.parcelEntry.findFirst).mockResolvedValue({
+        id: 'uuid-1',
+        parcelName: 'Parcelle 1',
+        crop: 'Tomates',
+        sowingDate: '2026-04-01',
+        stage: 'Maturation',
+        estimatedHarvestDate: '2026-07-01',
+        estimatedVolumeKg: 2000,
+        actualHarvestVolumeKg: null,
+        actualHarvestDate: null,
+        updatedAt: new Date('2026-04-01'),
+        gicId: BigInt(1),
+      } as any);
+
+      const res = await request(app)
+        .put('/api/gic/parcels/uuid-1')
+        .set('Authorization', `Bearer ${activeSellerGic1Token}`)
+        .send({
+          actualHarvestVolumeKg: 500,
+          // actualHarvestDate missing!
+        });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject stage Récolté when actual volume and date are not provided', async () => {
+      vi.mocked(prisma.parcelEntry.findFirst).mockResolvedValue({
+        id: 'uuid-1',
+        parcelName: 'Parcelle 1',
+        crop: 'Tomates',
+        sowingDate: '2026-04-01',
+        stage: 'Maturation',
+        estimatedHarvestDate: '2026-07-01',
+        estimatedVolumeKg: 2000,
+        actualHarvestVolumeKg: null,
+        actualHarvestDate: null,
+        updatedAt: new Date('2026-04-01'),
+        gicId: BigInt(1),
+      } as any);
+
+      const res = await request(app)
+        .put('/api/gic/parcels/uuid-1')
+        .set('Authorization', `Bearer ${activeSellerGic1Token}`)
+        .send({
+          stage: 'Récolté',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/Récolté/i);
+    });
+
+    it('should return 404 if updateMany affects 0 rows', async () => {
+      vi.mocked(prisma.parcelEntry.findFirst).mockResolvedValue({
+        id: 'uuid-1',
+        parcelName: 'Parcelle 1',
+        crop: 'Tomates',
+        sowingDate: '2026-04-01',
+        stage: 'Maturation',
+        estimatedHarvestDate: '2026-07-01',
+        estimatedVolumeKg: 2000,
+        actualHarvestVolumeKg: null,
+        actualHarvestDate: null,
+        updatedAt: new Date('2026-04-01'),
+        gicId: BigInt(1),
+      } as any);
+
+      vi.mocked(prisma.parcelEntry.updateMany).mockResolvedValue({ count: 0 } as any);
+
+      const res = await request(app)
+        .put('/api/gic/parcels/uuid-1')
+        .set('Authorization', `Bearer ${activeSellerGic1Token}`)
+        .send({
+          stage: 'Floraison',
+        });
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should reject volume exceeding 1 000 000 kg', async () => {
+      const res = await request(app)
+        .post('/api/gic/parcels')
+        .set('Authorization', `Bearer ${activeSellerGic1Token}`)
+        .send({
+          parcelName: 'Champ Géant',
+          crop: 'Maïs',
+          sowingDate: '2026-05-01',
+          estimatedHarvestDate: '2026-09-01',
+          estimatedVolumeKg: 2_000_000,
+        });
+
+      expect(res.status).toBe(400);
     });
   });
 

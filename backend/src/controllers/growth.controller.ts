@@ -2,6 +2,7 @@ import { Response } from 'express';
 import crypto from 'node:crypto';
 import prisma from '../lib/prisma.js';
 import { AuthRequest } from './auth.controller.js';
+import { logger } from '../middlewares/logger.js';
 import { calculateYieldDrop } from '../utils/growthUtils.js';
 
 function formatParcel(p: any) {
@@ -36,11 +37,12 @@ export async function getParcels(req: AuthRequest, res: Response) {
       where: { gicId: BigInt(req.user.gicId) },
       orderBy: { updatedAt: 'desc' },
     });
-    return res.json({
-      parcels: parcels.map(formatParcel),
-    });
-  } catch (err) {
-    console.error('Erreur getParcels:', err);
+    return res.json({ parcels: parcels.map(formatParcel) });
+  } catch (err: any) {
+    (req.log ?? logger).error(
+      { gicId: req.user.gicId, errorName: err?.name, errorCode: err?.code },
+      'Erreur getParcels'
+    );
     return res.status(500).json({ message: 'Erreur serveur.' });
   }
 }
@@ -71,6 +73,21 @@ export async function createParcel(req: AuthRequest, res: Response) {
     actualHarvestDate?: string | null;
   };
 
+  const hasVol = actualHarvestVolumeKg !== undefined && actualHarvestVolumeKg !== null;
+  const hasDate = actualHarvestDate !== undefined && actualHarvestDate !== null && actualHarvestDate.trim().length > 0;
+  if (hasVol !== hasDate) {
+    return res.status(400).json({
+      message: 'Le volume réel récolté et la date de récolte réelle doivent être fournis ensemble ou tous deux omis.',
+    });
+  }
+
+  const finalStage = stage ?? 'Semis';
+  if (finalStage === 'Récolté' && (!hasVol || !hasDate)) {
+    return res.status(400).json({
+      message: "L'étape 'Récolté' exige de renseigner le volume réel et la date réelle de récolte.",
+    });
+  }
+
   try {
     const id = crypto.randomUUID();
     const parcel = await prisma.parcelEntry.create({
@@ -79,7 +96,7 @@ export async function createParcel(req: AuthRequest, res: Response) {
         parcelName: parcelName.trim(),
         crop: crop.trim(),
         sowingDate: sowingDate.trim(),
-        stage: stage ?? 'Semis',
+        stage: finalStage,
         estimatedHarvestDate: estimatedHarvestDate.trim(),
         estimatedVolumeKg,
         actualHarvestVolumeKg: actualHarvestVolumeKg !== undefined ? actualHarvestVolumeKg : null,
@@ -88,11 +105,12 @@ export async function createParcel(req: AuthRequest, res: Response) {
       },
     });
 
-    return res.status(201).json({
-      parcel: formatParcel(parcel),
-    });
-  } catch (err) {
-    console.error('Erreur createParcel:', err);
+    return res.status(201).json({ parcel: formatParcel(parcel) });
+  } catch (err: any) {
+    (req.log ?? logger).error(
+      { gicId: req.user.gicId, errorName: err?.name, errorCode: err?.code },
+      'Erreur createParcel'
+    );
     return res.status(500).json({ message: 'Erreur serveur.' });
   }
 }
@@ -108,13 +126,18 @@ export async function updateParcel(req: AuthRequest, res: Response) {
     return res.status(400).json({ message: 'Identifiant de parcelle requis.' });
   }
 
+  if (!req.body || typeof req.body !== 'object' || Object.keys(req.body).length === 0) {
+    return res.status(400).json({ message: 'Au moins un champ doit être fourni pour la mise à jour.' });
+  }
+
   try {
-    const existing = await prisma.parcelEntry.findUnique({
-      where: { id },
+    // Conditionné sur id AND gicId
+    const existing = await prisma.parcelEntry.findFirst({
+      where: { id, gicId: BigInt(req.user.gicId) },
     });
 
-    // Isolation stricte entre GIC : 404 si la parcelle n'existe pas ou appartient à un autre GIC
-    if (!existing || existing.gicId !== BigInt(req.user.gicId)) {
+    // Isolation stricte entre GIC : 404 si la parcelle n'appartient pas au GIC de l'utilisateur
+    if (!existing) {
       return res.status(404).json({ message: 'Parcelle introuvable.' });
     }
 
@@ -136,6 +159,23 @@ export async function updateParcel(req: AuthRequest, res: Response) {
       actualHarvestDate !== undefined
         ? (actualHarvestDate ? actualHarvestDate.trim() : null)
         : existing.actualHarvestDate;
+    const finalActualHarvestVolumeKg =
+      actualHarvestVolumeKg !== undefined ? actualHarvestVolumeKg : existing.actualHarvestVolumeKg;
+    const finalStage = stage !== undefined ? stage : existing.stage;
+
+    const hasVol = finalActualHarvestVolumeKg !== null && finalActualHarvestVolumeKg !== undefined;
+    const hasDate = finalActualHarvestDate !== null && finalActualHarvestDate !== undefined && finalActualHarvestDate.length > 0;
+    if (hasVol !== hasDate) {
+      return res.status(400).json({
+        message: 'Le volume réel récolté et la date de récolte réelle doivent être fournis ensemble ou tous deux null.',
+      });
+    }
+
+    if (finalStage === 'Récolté' && (!hasVol || !hasDate)) {
+      return res.status(400).json({
+        message: "L'étape 'Récolté' exige de renseigner le volume réel et la date réelle de récolte.",
+      });
+    }
 
     if (finalEstimatedHarvestDate < finalSowingDate) {
       return res.status(400).json({
@@ -149,13 +189,14 @@ export async function updateParcel(req: AuthRequest, res: Response) {
       });
     }
 
-    const updated = await prisma.parcelEntry.update({
-      where: { id },
+    // Mise à jour conditionnée sur id AND gicId
+    const updateResult = await prisma.parcelEntry.updateMany({
+      where: { id, gicId: BigInt(req.user.gicId) },
       data: {
         ...(parcelName !== undefined ? { parcelName: parcelName.trim() } : {}),
         ...(crop !== undefined ? { crop: crop.trim() } : {}),
         ...(sowingDate !== undefined ? { sowingDate: finalSowingDate } : {}),
-        ...(stage !== undefined ? { stage } : {}),
+        ...(stage !== undefined ? { stage: finalStage } : {}),
         ...(estimatedHarvestDate !== undefined ? { estimatedHarvestDate: finalEstimatedHarvestDate } : {}),
         ...(estimatedVolumeKg !== undefined ? { estimatedVolumeKg } : {}),
         ...(actualHarvestVolumeKg !== undefined ? { actualHarvestVolumeKg } : {}),
@@ -164,11 +205,18 @@ export async function updateParcel(req: AuthRequest, res: Response) {
       },
     });
 
-    return res.json({
-      parcel: formatParcel(updated),
-    });
-  } catch (err) {
-    console.error('Erreur updateParcel:', err);
+    if (updateResult.count === 0) {
+      return res.status(404).json({ message: 'Parcelle introuvable ou non autorisée.' });
+    }
+
+    const updated = await prisma.parcelEntry.findUnique({ where: { id } });
+
+    return res.json({ parcel: formatParcel(updated) });
+  } catch (err: any) {
+    (req.log ?? logger).error(
+      { gicId: req.user.gicId, parcelId: id, errorName: err?.name, errorCode: err?.code },
+      'Erreur updateParcel'
+    );
     return res.status(500).json({ message: 'Erreur serveur.' });
   }
 }
