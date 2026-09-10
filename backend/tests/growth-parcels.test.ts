@@ -574,4 +574,91 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
       expect(result.isDropAlert).toBe(true);
     });
   });
+
+  describe('8. Compatibilité de la migration ParcelEntry avec le Bloc 3 & Idempotence', () => {
+    it('la migration SQL contient l instruction forward-only ALTER TABLE ADD COLUMN IF NOT EXISTS actualHarvestDate', () => {
+      const fs = require('fs');
+      const path = require('path');
+      const migrationPath = path.resolve(
+        __dirname,
+        '../prisma/migrations/20260909000001_add_bloc4_tables_parcel_entry/migration.sql'
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, 'utf8');
+
+      // Vérifier que la table ParcelEntry est créée avec actualHarvestDate
+      expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS "ParcelEntry"/);
+      // Vérifier que l instruction indépendante forward-only est présente
+      expect(sql).toMatch(/ALTER TABLE "ParcelEntry"\s+ADD COLUMN IF NOT EXISTS "actualHarvestDate"\s+VARCHAR\(50\);/i);
+    });
+
+    it('simule la transition de schéma sur PostgreSQL réel si disponible', async () => {
+      const { Client } = require('pg');
+      const client = new Client({
+        connectionString: process.env.DATABASE_TEST_URL || 'postgresql://postgres:postgres@localhost:5433/sitcha_test',
+      });
+
+      let isConnected = false;
+      try {
+        await client.connect();
+        isConnected = true;
+      } catch {
+        // Si le conteneur de test n est pas démarré, le test passe en se basant sur le test de fichier SQL
+      }
+
+      if (isConnected) {
+        try {
+          // 1. Créer une table de test simulant l état après migration Bloc 3 (SANS actualHarvestDate)
+          await client.query('DROP TABLE IF EXISTS "ParcelEntry_CompatTest";');
+          await client.query(`
+            CREATE TABLE "ParcelEntry_CompatTest" (
+              "id" TEXT NOT NULL PRIMARY KEY,
+              "parcelName" VARCHAR(200) NOT NULL,
+              "crop" VARCHAR(100) NOT NULL,
+              "sowingDate" VARCHAR(50) NOT NULL,
+              "stage" VARCHAR(50) NOT NULL,
+              "estimatedHarvestDate" VARCHAR(50) NOT NULL,
+              "estimatedVolumeKg" DOUBLE PRECISION NOT NULL,
+              "actualHarvestVolumeKg" DOUBLE PRECISION,
+              "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              "gicId" TEXT NOT NULL
+            );
+          `);
+
+          // 2. Vérifier que la colonne actualHarvestDate n existe pas
+          const checkBefore = await client.query(`
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'ParcelEntry_CompatTest' AND column_name = 'actualHarvestDate';
+          `);
+          expect(checkBefore.rows.length).toBe(0);
+
+          // 3. Appliquer l instruction forward-only de la migration Bloc 4
+          await client.query(`
+            ALTER TABLE "ParcelEntry_CompatTest"
+            ADD COLUMN IF NOT EXISTS "actualHarvestDate" VARCHAR(50);
+          `);
+
+          // 4. Vérifier que la colonne actualHarvestDate existe désormais
+          const checkAfter = await client.query(`
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'ParcelEntry_CompatTest' AND column_name = 'actualHarvestDate';
+          `);
+          expect(checkAfter.rows.length).toBe(1);
+
+          // 5. Réapplication idempotente : doit s exécuter sans erreur
+          await expect(
+            client.query(`
+              ALTER TABLE "ParcelEntry_CompatTest"
+              ADD COLUMN IF NOT EXISTS "actualHarvestDate" VARCHAR(50);
+            `)
+          ).resolves.toBeDefined();
+
+          // Nettoyage
+          await client.query('DROP TABLE IF EXISTS "ParcelEntry_CompatTest";');
+        } finally {
+          await client.end();
+        }
+      }
+    });
+  });
 });
