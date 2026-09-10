@@ -73,8 +73,29 @@ docker run -d \
   -p "$POSTGRES_PORT:5432" \
   postgres:16-alpine >/dev/null
 
-echo "➤ Attente de la disponibilité de PostgreSQL..."
-docker exec "$POSTGRES_CONTAINER" sh -c 'until pg_isready -U sitcha_val_user -d sitcha_val_db; do sleep 0.5; done'
+echo "➤ Attente bornée de la disponibilité de PostgreSQL (max 30s)..."
+MAX_ATTEMPTS=30
+ATTEMPT=1
+PG_READY=false
+
+while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+  if docker exec "$POSTGRES_CONTAINER" pg_isready -U sitcha_val_user -d sitcha_val_db >/dev/null 2>&1; then
+    PG_READY=true
+    break
+  fi
+  sleep 1
+  ATTEMPT=$((ATTEMPT + 1))
+done
+
+if [ "$PG_READY" != "true" ]; then
+  echo ""
+  echo "❌ ERREUR TECHNIQUE: PostgreSQL n'est pas devenu disponible après ${MAX_ATTEMPTS} secondes."
+  echo "--- Logs du conteneur PostgreSQL ($POSTGRES_CONTAINER) ---"
+  docker logs "$POSTGRES_CONTAINER" || true
+  echo "---------------------------------------------------------"
+  exit 3
+fi
+echo "✓ PostgreSQL prêt et opérationnel (tentative $ATTEMPT/$MAX_ATTEMPTS)."
 
 VAL_DB_URL="postgresql://sitcha_val_user:sitcha_val_password@localhost:$POSTGRES_PORT/sitcha_val_db?schema=public"
 
@@ -85,13 +106,23 @@ echo "➤ Vérification de l'état des migrations (prisma migrate status)..."
 DATABASE_URL="$VAL_DB_URL" npx prisma migrate status
 
 echo "➤ Contrôle strict de dérive de schéma (drift) via prisma migrate diff --exit-code..."
-if ! DATABASE_URL="$VAL_DB_URL" npx prisma migrate diff --exit-code --from-config-datasource --to-schema ./prisma/schema.prisma; then
+set +e
+DATABASE_URL="$VAL_DB_URL" npx prisma migrate diff --exit-code --from-config-datasource --to-schema ./prisma/schema.prisma
+DIFF_EXIT_CODE=$?
+set -e
+
+if [ "$DIFF_EXIT_CODE" -eq 2 ]; then
   echo ""
   echo "❌ ÉCHEC DU CONTRÔLE DE DRIFT PRISMA (code de sortie 2) :"
   echo "Une divergence (drift) existe entre les migrations déployées et prisma/schema.prisma."
-  echo "Ce blocage est hérité du schéma non réconcilié du Bloc 3."
+  echo "Il s'agit d'un drift historique de la branche de base, dont la réconciliation est prise en charge dans le chantier correctif du Bloc 3."
   echo "Conformément aux directives, le Bloc 5 ne modifie pas le schéma métier et s'arrête en échec."
   exit 2
+elif [ "$DIFF_EXIT_CODE" -ne 0 ]; then
+  echo ""
+  echo "❌ ERREUR TECHNIQUE LORS DU DIFF PRISMA (code de sortie $DIFF_EXIT_CODE) :"
+  echo "Une erreur d'outil, de connexion ou de configuration est survenue lors de l'exécution de prisma migrate diff."
+  exit "$DIFF_EXIT_CODE"
 fi
 
 echo "✅ Schéma Prisma parfaitement synchronisé sans dérive !"
