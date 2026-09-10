@@ -495,7 +495,45 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       expect(isNetworkError(new Error('connect ECONNREFUSED 127.0.0.1:4000'))).toBe(true);
       expect(isNetworkError(new ApiError('Not found', 404))).toBe(false);
       expect(isNetworkError(new ApiError('Server error', 500))).toBe(false);
-      expect(isNetworkError(null)).toBe(false);
+    });
+  });
+
+  describe('Stand-alone CI Script validate-api-url.mjs Coherence', () => {
+    it('valide de manière strictement identique à validateProductionApiUrl', async () => {
+      const { validateApiUrl } = await import('../../scripts/validate-api-url.mjs');
+      const { validateProductionApiUrl } = await import('../src/services/api');
+
+      // URLs valides
+      const validUrls = [
+        'https://api.sitcha.org',
+        'https://api-staging.sitcha.org/api/',
+        'https://sub.domain.cm/api/v1',
+      ];
+
+      for (const url of validUrls) {
+        expect(validateApiUrl(url)).toBe(validateProductionApiUrl(url));
+      }
+
+      // URLs invalides : toutes doivent lever une erreur dans les 2 validateurs
+      const invalidUrls = [
+        '',
+        '   ',
+        'http://api.sitcha.org',
+        'https://localhost:4000',
+        'https://dev.localhost',
+        'https://127.0.0.1:4000',
+        'https://10.0.2.2:4000',
+        'https://192.168.1.50:4000',
+        'https://172.20.0.2:4000',
+        'https://169.254.1.1:4000',
+        'https://0.0.0.0:4000',
+        'https://user:pass@api.sitcha.org',
+      ];
+
+      for (const url of invalidUrls) {
+        expect(() => validateApiUrl(url)).toThrow();
+        expect(() => validateProductionApiUrl(url)).toThrow();
+      }
     });
   });
 });

@@ -146,6 +146,9 @@ npm run doctor
 echo "➤ Exécution des tests automatisés Frontend..."
 npm test
 
+echo "➤ Validation de l'URL API via scripts/validate-api-url.mjs..."
+node "$ROOT_DIR/scripts/validate-api-url.mjs" "https://api.sitcha.org" >/dev/null
+
 echo "➤ Test d'exportation Web (vers dossier temporaire)..."
 mkdir -p "$TMP_DIR/web-dist"
 npx expo export --platform web --output-dir "$TMP_DIR/web-dist"
