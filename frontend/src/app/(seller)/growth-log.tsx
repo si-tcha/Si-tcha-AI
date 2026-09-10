@@ -12,16 +12,17 @@ import {
   View,
   KeyboardAvoidingView,
 } from 'react-native';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { ParcelGrowthRecord, ParcelStage } from '@/services/database.shared';
-import { growthService } from '@/services/growthService';
+import { growthService, UserCacheContext } from '@/services/growthService';
 import { calculateYieldDrop, isValidIsoDate } from '@/utils/growthUtils';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -39,6 +40,14 @@ export const STAGES: ParcelStage[] = [
 export default function GrowthLogScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { user } = useAuth();
+
+  // Contexte d'isolation du cache — jamais de données sensibles dans la clé
+  const userCtx: UserCacheContext = useMemo(() => ({
+    role: user?.role ?? 'seller',
+    userId: user?.id ?? 'anonymous',
+    gicId: user?.gicId ?? '0',
+  }), [user?.role, user?.id, user?.gicId]);
 
   const [parcels, setParcels] = useState<ParcelGrowthRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,7 +79,7 @@ export default function GrowthLogScreen() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await growthService.loadParcels();
+      const res = await growthService.loadParcels(userCtx);
       setParcels(res.parcels);
       setIsOfflineMode(res.isOffline);
       if (res.error) {
@@ -81,7 +90,7 @@ export default function GrowthLogScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userCtx]);
 
   useEffect(() => {
     loadParcels();
@@ -157,7 +166,7 @@ export default function GrowthLogScreen() {
     // 2. Envoi au serveur (confirmation requise)
     setIsSubmitting(true);
     try {
-      const created = await growthService.createParcel({
+      const created = await growthService.createParcel(userCtx, {
         parcelName: parcelName.trim(),
         crop: crop.trim(),
         sowingDate: sowingDate.trim(),
@@ -243,11 +252,16 @@ export default function GrowthLogScreen() {
 
     setIsUpdating(true);
     try {
-      const updated = await growthService.updateParcel(editingParcel.id, {
-        stage: editStage,
-        actualHarvestVolumeKg: actVol,
-        actualHarvestDate: editActualDate.trim() || null,
-      });
+      const updated = await growthService.updateParcel(
+        userCtx,
+        editingParcel.id,
+        {
+          stage: editStage,
+          actualHarvestVolumeKg: actVol,
+          actualHarvestDate: editActualDate.trim() || null,
+        },
+        editingParcel.sowingDate
+      );
 
       setParcels((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
       setEditingParcel(null);

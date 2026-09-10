@@ -2,6 +2,15 @@ import { apiClient, isNetworkError } from './api';
 import { dbService } from './database';
 import { ParcelGrowthRecord, ParcelStage } from './database.shared';
 import { calculateYieldDrop, isValidIsoDate } from '../utils/growthUtils';
+import { parcelCacheKey, agronomistCacheKey } from '../utils/cacheKey';
+
+// --- Types --------------------------------------------------------------
+
+export interface UserCacheContext {
+  role: string;
+  userId: string | number;
+  gicId: string | number;
+}
 
 export interface CreateParcelInput {
   parcelName: string;
@@ -10,6 +19,7 @@ export interface CreateParcelInput {
   stage?: ParcelStage;
   estimatedHarvestDate: string;
   estimatedVolumeKg: number;
+  /** actualHarvestVolumeKg et actualHarvestDate doivent être fournis ensemble ou tous deux null */
   actualHarvestVolumeKg?: number | null;
   actualHarvestDate?: string | null;
 }
@@ -21,6 +31,7 @@ export interface UpdateParcelInput {
   stage?: ParcelStage;
   estimatedHarvestDate?: string;
   estimatedVolumeKg?: number;
+  /** actualHarvestVolumeKg et actualHarvestDate doivent être fournis ensemble ou tous deux null */
   actualHarvestVolumeKg?: number | null;
   actualHarvestDate?: string | null;
 }
@@ -30,6 +41,18 @@ export interface FetchParcelsResult {
   isOffline: boolean;
   error?: string;
 }
+
+export interface AgronomistHistoryEntry {
+  id: string;
+  crop: string;
+  category: string;
+  question: string;
+  answer: string;
+  disclaimer: string;
+  askedAt: string;
+}
+
+// --- Helpers internes ---------------------------------------------------
 
 function enrichParcel(p: ParcelGrowthRecord): ParcelGrowthRecord {
   const { dropPercent, isDropAlert } = calculateYieldDrop(
@@ -43,45 +66,91 @@ function enrichParcel(p: ParcelGrowthRecord): ParcelGrowthRecord {
   };
 }
 
+/**
+ * Retourne le cache de parcelles pour un contexte utilisateur précis.
+ * Clé = sitcha_parcels_{role}_{userId}_{gicId}
+ * Les anciennes données sans contexte utilisateur ne sont jamais retournées.
+ */
+async function getCachedParcels(ctx: UserCacheContext): Promise<ParcelGrowthRecord[]> {
+  return dbService.getParcels(parcelCacheKey(ctx.role, ctx.userId, ctx.gicId));
+}
+
+async function setCachedParcels(ctx: UserCacheContext, parcels: ParcelGrowthRecord[]): Promise<void> {
+  return dbService.saveParcels(parcels, parcelCacheKey(ctx.role, ctx.userId, ctx.gicId));
+}
+
+// --- Service principal --------------------------------------------------
+
 export const growthService = {
   /**
    * Charge les parcelles du GIC authentifié.
-   * Le backend est l'autorité : s'il est joignable, les données serveur font foi et le cache est mis à jour.
-   * En cas de panne de réseau, les parcelles sont lues depuis le cache hors-ligne local.
+   *
+   * Stratégie stricte :
+   * - Si le serveur répond → données serveur font foi, cache mis à jour.
+   * - Si erreur réseau (status 0) → cache hors-ligne retourné.
+   * - Si 401 → session invalide, pas de cache, erreur propagée.
+   * - Si 403 → accès refusé, pas de cache.
+   * - Si 4xx/5xx autre → erreur affichée, pas de bascule silencieuse.
+   * - Si réponse malformée → erreur, pas de cache.
    */
-  async loadParcels(): Promise<FetchParcelsResult> {
+  async loadParcels(ctx: UserCacheContext): Promise<FetchParcelsResult> {
     try {
       await dbService.initDatabase();
       const res = await apiClient.getParcels();
-      if (Array.isArray(res?.parcels)) {
-        const enriched = res.parcels.map(enrichParcel);
-        await dbService.saveParcels(enriched);
-        return { parcels: enriched, isOffline: false };
+
+      // Réponse malformée → erreur explicite, pas de bascule silencieuse sur cache
+      if (!res || !Array.isArray(res?.parcels)) {
+        return {
+          parcels: [],
+          isOffline: false,
+          error: 'Réponse serveur invalide pour les parcelles.',
+        };
       }
+
+      const enriched = res.parcels.map(enrichParcel);
+      await setCachedParcels(ctx, enriched);
+      return { parcels: enriched, isOffline: false };
     } catch (err: any) {
+      // Panne réseau (fetch échoue, status 0, TypeError: network)
       if (isNetworkError(err)) {
-        // Mode hors ligne : lecture depuis le cache
-        const cached = (await dbService.getParcels()) || [];
+        const cached = await getCachedParcels(ctx);
         return { parcels: cached.map(enrichParcel), isOffline: true };
       }
-      // Autre erreur (ex: 401, 403, 500)
-      const cached = (await dbService.getParcels()) || [];
+
+      const status = err?.status ?? err?.statusCode;
+
+      // 401 → session invalide : invalider le cache, propager l'erreur sans cache
+      if (status === 401) {
+        return {
+          parcels: [],
+          isOffline: false,
+          error: 'Session expirée. Veuillez vous reconnecter.',
+        };
+      }
+
+      // 403 → accès refusé : pas de cache, propager
+      if (status === 403) {
+        return {
+          parcels: [],
+          isOffline: false,
+          error: 'Accès refusé.',
+        };
+      }
+
+      // Toute autre erreur serveur (400, 404, 409, 500, 503) → afficher l'erreur, pas de cache
       return {
-        parcels: cached.map(enrichParcel),
-        isOffline: true,
+        parcels: [],
+        isOffline: false,
         error: err?.message || 'Erreur lors du chargement des parcelles.',
       };
     }
-
-    const cached = (await dbService.getParcels()) || [];
-    return { parcels: cached.map(enrichParcel), isOffline: true };
   },
 
   /**
    * Crée une parcelle sur le serveur.
-   * Exige une confirmation serveur : ne prétend jamais qu'une donnée locale existe sur le serveur.
+   * Exige une confirmation serveur : ne prétend jamais qu'une donnée locale existe côté serveur.
    */
-  async createParcel(input: CreateParcelInput): Promise<ParcelGrowthRecord> {
+  async createParcel(ctx: UserCacheContext, input: CreateParcelInput): Promise<ParcelGrowthRecord> {
     if (!input.parcelName?.trim()) {
       throw new Error('Le nom de la parcelle est requis.');
     }
@@ -97,6 +166,14 @@ export const growthService = {
     if (input.estimatedHarvestDate < input.sowingDate) {
       throw new Error('La date de récolte estimée ne peut pas être antérieure à la date de semis.');
     }
+
+    // actualHarvestVolumeKg et actualHarvestDate : ensemble ou tous deux null
+    const hasVol = input.actualHarvestVolumeKg !== null && input.actualHarvestVolumeKg !== undefined;
+    const hasDate = !!input.actualHarvestDate;
+    if (hasVol !== hasDate) {
+      throw new Error('Le volume récolté et la date de récolte réelle doivent être fournis ensemble ou tous deux omis.');
+    }
+
     if (input.actualHarvestDate) {
       if (!isValidIsoDate(input.actualHarvestDate)) {
         throw new Error('Date de récolte réelle invalide (format YYYY-MM-DD attendu).');
@@ -105,15 +182,15 @@ export const growthService = {
         throw new Error('La date de récolte réelle ne peut pas être antérieure à la date de semis.');
       }
     }
-    if (typeof input.estimatedVolumeKg !== 'number' || isNaN(input.estimatedVolumeKg) || input.estimatedVolumeKg <= 0) {
-      throw new Error('Le volume estimé doit être strictement supérieur à 0 kg.');
+    if (typeof input.estimatedVolumeKg !== 'number' || isNaN(input.estimatedVolumeKg) || !isFinite(input.estimatedVolumeKg) || input.estimatedVolumeKg <= 0 || input.estimatedVolumeKg > 1_000_000) {
+      throw new Error('Le volume estimé doit être un nombre fini strictement positif (max 1 000 000 kg).');
     }
     if (
       input.actualHarvestVolumeKg !== null &&
       input.actualHarvestVolumeKg !== undefined &&
-      (typeof input.actualHarvestVolumeKg !== 'number' || isNaN(input.actualHarvestVolumeKg) || input.actualHarvestVolumeKg < 0)
+      (typeof input.actualHarvestVolumeKg !== 'number' || isNaN(input.actualHarvestVolumeKg) || !isFinite(input.actualHarvestVolumeKg) || input.actualHarvestVolumeKg < 0 || input.actualHarvestVolumeKg > 1_000_000)
     ) {
-      throw new Error('Le volume réel récolté doit être supérieur ou égal à 0 kg.');
+      throw new Error('Le volume réel récolté doit être un nombre fini >= 0 (max 1 000 000 kg).');
     }
 
     const res = await apiClient.createParcel(input);
@@ -122,18 +199,18 @@ export const growthService = {
     }
 
     const enriched = enrichParcel(res.parcel);
-    // Mise à jour du cache local
-    const current = await dbService.getParcels();
-    await dbService.saveParcels([enriched, ...current.filter((p) => p.id !== enriched.id)]);
+    const current = await getCachedParcels(ctx);
+    await setCachedParcels(ctx, [enriched, ...current.filter((p) => p.id !== enriched.id)]);
 
     return enriched;
   },
 
   /**
-   * Met à jour une parcelle sur le serveur (étape de croissance, récolte réelle, etc.).
+   * Met à jour une parcelle sur le serveur.
    * Exige une confirmation serveur.
    */
   async updateParcel(
+    ctx: UserCacheContext,
     id: string,
     input: UpdateParcelInput,
     sowingDate?: string
@@ -151,6 +228,7 @@ export const growthService = {
     if (input.actualHarvestDate && !isValidIsoDate(input.actualHarvestDate)) {
       throw new Error('Date de récolte réelle invalide (format YYYY-MM-DD attendu).');
     }
+
     const effectiveSowing = input.sowingDate || sowingDate;
     if (effectiveSowing && input.estimatedHarvestDate && input.estimatedHarvestDate < effectiveSowing) {
       throw new Error('La date de récolte estimée ne peut pas être antérieure à la date de semis.');
@@ -158,18 +236,26 @@ export const growthService = {
     if (effectiveSowing && input.actualHarvestDate && input.actualHarvestDate < effectiveSowing) {
       throw new Error('La date de récolte réelle ne peut pas être antérieure à la date de semis.');
     }
+
+    // actualHarvestVolumeKg et actualHarvestDate doivent être fournis ensemble si l'un est présent
+    const hasVol = input.actualHarvestVolumeKg !== null && input.actualHarvestVolumeKg !== undefined;
+    const hasDate = input.actualHarvestDate !== null && input.actualHarvestDate !== undefined;
+    if (hasVol !== hasDate) {
+      throw new Error('Le volume récolté et la date de récolte réelle doivent être modifiés ensemble.');
+    }
+
     if (
       input.estimatedVolumeKg !== undefined &&
-      (typeof input.estimatedVolumeKg !== 'number' || isNaN(input.estimatedVolumeKg) || input.estimatedVolumeKg <= 0)
+      (typeof input.estimatedVolumeKg !== 'number' || isNaN(input.estimatedVolumeKg) || !isFinite(input.estimatedVolumeKg) || input.estimatedVolumeKg <= 0 || input.estimatedVolumeKg > 1_000_000)
     ) {
-      throw new Error('Le volume estimé doit être strictement supérieur à 0 kg.');
+      throw new Error('Le volume estimé doit être un nombre fini strictement positif (max 1 000 000 kg).');
     }
     if (
       input.actualHarvestVolumeKg !== null &&
       input.actualHarvestVolumeKg !== undefined &&
-      (typeof input.actualHarvestVolumeKg !== 'number' || isNaN(input.actualHarvestVolumeKg) || input.actualHarvestVolumeKg < 0)
+      (typeof input.actualHarvestVolumeKg !== 'number' || isNaN(input.actualHarvestVolumeKg) || !isFinite(input.actualHarvestVolumeKg) || input.actualHarvestVolumeKg < 0 || input.actualHarvestVolumeKg > 1_000_000)
     ) {
-      throw new Error('Le volume réel récolté doit être supérieur ou égal à 0 kg.');
+      throw new Error('Le volume réel récolté doit être un nombre fini >= 0 (max 1 000 000 kg).');
     }
 
     const res = await apiClient.updateParcel(id, input);
@@ -178,11 +264,48 @@ export const growthService = {
     }
 
     const enriched = enrichParcel(res.parcel);
-    // Mise à jour du cache local
-    const current = await dbService.getParcels();
-    await dbService.saveParcels(current.map((p) => (p.id === id ? enriched : p)));
+    const current = await getCachedParcels(ctx);
+    await setCachedParcels(ctx, current.map((p) => (p.id === id ? enriched : p)));
 
     return enriched;
+  },
+
+  /**
+   * Persiste une consultation agronomique dans le cache user/GIC après réponse serveur.
+   * La modale reste ouverte et la question est préservée en cas d'erreur.
+   *
+   * @returns la consultation persistée ou null si l'enregistrement échoue
+   */
+  async persistAgronomistConsultation(
+    ctx: UserCacheContext,
+    entry: Omit<AgronomistHistoryEntry, 'id'>
+  ): Promise<AgronomistHistoryEntry | null> {
+    try {
+      const key = agronomistCacheKey(ctx.role, ctx.userId, ctx.gicId);
+      const existing: AgronomistHistoryEntry[] = await dbService.getAgronomistHistory(key);
+      const newEntry: AgronomistHistoryEntry = {
+        id: `agro-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        ...entry,
+      };
+      const updated = [newEntry, ...existing].slice(0, 50); // max 50 entrées
+      await dbService.saveAgronomistHistory(key, updated);
+      return newEntry;
+    } catch {
+      // Échec de persistance : ne pas affecter l'expérience utilisateur
+      return null;
+    }
+  },
+
+  /**
+   * Charge l'historique agronome depuis le cache isolé user/GIC.
+   */
+  async loadAgronomistHistory(ctx: UserCacheContext): Promise<AgronomistHistoryEntry[]> {
+    try {
+      const key = agronomistCacheKey(ctx.role, ctx.userId, ctx.gicId);
+      return await dbService.getAgronomistHistory(key);
+    } catch {
+      return [];
+    }
   },
 
   calculateYieldDrop,

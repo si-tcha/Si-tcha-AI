@@ -1,3 +1,4 @@
+import { apiClient } from './api';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -85,8 +86,6 @@ function ensure(key: string, fallback: unknown) {
     localStorage.setItem(key, JSON.stringify(fallback));
   }
 }
-
-import { apiClient } from './api';
 
 let syncErrorHandler: ((message?: string) => void) | null = null;
 export function setSyncErrorHandler(handler: (message?: string) => void) {
@@ -556,54 +555,40 @@ class DatabaseService {
   }
 
   // --- Journal de Croissance & Alertes Rendement (Lot D) ---
-  async getParcels(): Promise<ParcelGrowthRecord[]> {
-    return readJson(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
+
+  /**
+   * Lit les parcelles depuis le localStorage.
+   * @param cacheKey - Clé isolée par (role, userId, gicId). Utiliser parcelCacheKey() de cacheKey.ts.
+   *   Si omis, utilise STORAGE_KEYS.PARCELS (usage legacy interne uniquement).
+   */
+  async getParcels(cacheKey?: string): Promise<ParcelGrowthRecord[]> {
+    return readJson<ParcelGrowthRecord[]>(cacheKey ?? STORAGE_KEYS.PARCELS, []);
   }
 
-  async saveParcels(parcels: ParcelGrowthRecord[]): Promise<void> {
-    writeJson(STORAGE_KEYS.PARCELS, parcels);
+  /**
+   * Sauvegarde les parcelles confirmées par le serveur dans le localStorage.
+   * JAMAIS appelé directement par l'UI : passe exclusivement par growthService.
+   * @param cacheKey - Clé isolée via parcelCacheKey() de cacheKey.ts.
+   */
+  async saveParcels(parcels: ParcelGrowthRecord[], cacheKey?: string): Promise<void> {
+    writeJson(cacheKey ?? STORAGE_KEYS.PARCELS, parcels);
   }
 
-  async addParcel(
-    parcelName: string,
-    crop: string,
-    sowingDate: string,
-    stage: ParcelGrowthRecord['stage'],
-    estimatedHarvestDate: string,
-    estimatedVolumeKg: number,
-    actualHarvestVolumeKg?: number | null,
-    actualHarvestDate?: string | null
-  ): Promise<ParcelGrowthRecord> {
-    const list = await this.getParcels();
-    const newParcel: ParcelGrowthRecord = {
-      id: Date.now().toString(),
-      parcelName,
-      crop,
-      sowingDate,
-      stage,
-      estimatedHarvestDate,
-      estimatedVolumeKg,
-      actualHarvestVolumeKg: actualHarvestVolumeKg ?? null,
-      actualHarvestDate: actualHarvestDate ?? null,
-      updatedAt: nowIso(),
-      synced: false,
-    };
-    list.unshift(newParcel);
-    writeJson(STORAGE_KEYS.PARCELS, list);
-    return newParcel;
+  // addParcel et updateParcelHarvest sont intentionnellement supprimés.
+  // Ces méthodes créaient des enregistrements locaux avec id=Date.now() et synced=false,
+  // permettant à l'UI de présenter des parcelles non confirmées par le serveur.
+  // Toute création/modification passe exclusivement par growthService → apiClient → serveur.
+
+  // --- Historique agronome — Persistance par utilisateur (Lot D) ---
+
+  /** Lit l'historique agronome depuis localStorage (clé isolée par user). */
+  async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
+    return readJson<T[]>(cacheKey, []);
   }
 
-  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number, actualHarvestDate?: string): Promise<void> {
-    const list = await this.getParcels();
-    const idx = list.findIndex(p => p.id === id);
-    if (idx !== -1) {
-      list[idx].actualHarvestVolumeKg = actualHarvestVolumeKg;
-      if (actualHarvestDate) {
-        list[idx].actualHarvestDate = actualHarvestDate;
-      }
-      list[idx].updatedAt = nowIso();
-      writeJson(STORAGE_KEYS.PARCELS, list);
-    }
+  /** Persiste l'historique agronome dans localStorage (clé isolée par user). */
+  async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
+    writeJson(cacheKey, entries);
   }
 
 

@@ -12,15 +12,17 @@ import {
   View,
   KeyboardAvoidingView,
 } from 'react-native';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { AgronomistQuestion, dbService } from '@/services/database';
+import { dbService } from '@/services/database';
 import { apiClient, isNetworkError } from '@/services/api';
+import { growthService, UserCacheContext, AgronomistHistoryEntry } from '@/services/growthService';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -37,13 +39,21 @@ export const QUICK_PROMPTS = [
 ];
 
 export const TERRAIN_DISCLAIMER =
-  'Ce conseil est une aide à la décision fournie par Dr. TCHA (IA) et ne remplace pas un diagnostic de terrain par un agronome professionnel.';
+  'Ce conseil est fourni à titre indicatif par Dr. TCHA (IA). Il ne remplace pas un diagnostic de terrain par un agronome professionnel qualifié.';
 
 export default function AgronomistScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { user } = useAuth();
 
-  const [questions, setQuestions] = useState<AgronomistQuestion[]>([]);
+  // Contexte d'isolation de cache par (role, userId, gicId)
+  const userCtx: UserCacheContext = useMemo(() => ({
+    role: user?.role ?? 'seller',
+    userId: user?.id ?? 'anonymous',
+    gicId: user?.gicId ?? '0',
+  }), [user?.role, user?.id, user?.gicId]);
+
+  const [questions, setQuestions] = useState<AgronomistHistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
@@ -56,14 +66,14 @@ export default function AgronomistScreen() {
   const loadQuestions = useCallback(async () => {
     try {
       await dbService.initDatabase();
-      const list = await dbService.getAgronomistQuestions();
-      setQuestions(list);
+      const history = await growthService.loadAgronomistHistory(userCtx);
+      setQuestions(history);
     } catch {
       // Ignorer l'erreur silencieusement en lecture locale
     } finally {
       setLoadingHistory(false);
     }
-  }, []);
+  }, [userCtx]);
 
   useEffect(() => {
     loadQuestions();
@@ -93,25 +103,34 @@ export default function AgronomistScreen() {
         throw new Error('Réponse vide du service agronomique.');
       }
 
-      // 2. Sauvegarde de la consultation répondue dans l'historique local
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const answeredItem: AgronomistQuestion = {
-        id,
+      // 2. Persistance dans le cache utilisateur/GIC isolé
+      const disclaimer = res.disclaimer || TERRAIN_DISCLAIMER;
+      const persisted = await growthService.persistAgronomistConsultation(userCtx, {
         crop: selectedCrop,
         category: selectedCategory,
         question: trimmedQuestion,
-        status: 'repondu',
         answer: res.answer,
-        createdAt: new Date().toISOString(),
-        synced: true,
+        disclaimer,
+        askedAt: new Date().toISOString(),
+      });
+
+      const newEntry: AgronomistHistoryEntry = persisted ?? {
+        id: `agro-${Date.now()}`,
+        crop: selectedCrop,
+        category: selectedCategory,
+        question: trimmedQuestion,
+        answer: res.answer,
+        disclaimer,
+        askedAt: new Date().toISOString(),
       };
 
-      setQuestions((prev) => [answeredItem, ...prev]);
+      setQuestions((prev) => [newEntry, ...prev]);
       setQuestionText('');
       setModalVisible(false);
       showToast({ message: 'Ordonnance agronomique générée !', type: 'success' });
     } catch (err: any) {
-      // Gestion honnête des erreurs fournisseur et réseau
+      // En cas d'erreur : la modale RESTE OUVERTE, la question est PRÉSERVÉE dans l'input,
+      // et AUCUNE fausse consultation "en attente" n'est ajoutée.
       let failureReason = 'Service indisponible pour le moment.';
 
       if (isNetworkError(err)) {
@@ -123,21 +142,6 @@ export default function AgronomistScreen() {
       }
 
       showToast({ message: failureReason, type: 'error' });
-
-      // Enregistrement comme question en attente
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const pendingItem: AgronomistQuestion = {
-        id,
-        crop: selectedCrop,
-        category: selectedCategory,
-        question: trimmedQuestion,
-        status: 'en_attente',
-        answer: undefined,
-        createdAt: new Date().toISOString(),
-        synced: false,
-      };
-      setQuestions((prev) => [pendingItem, ...prev]);
-      setModalVisible(false);
     } finally {
       setIsAsking(false);
     }
@@ -251,19 +255,9 @@ export default function AgronomistScreen() {
                       <Text style={styles.categoryBadgeText}>{q.category}</Text>
                     </View>
                   </View>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      q.status === 'repondu' ? styles.statusBadgeSuccess : styles.statusBadgePending,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.statusBadgeText,
-                        q.status === 'repondu' ? styles.statusTextSuccess : styles.statusTextPending,
-                      ]}
-                    >
-                      {q.status === 'repondu' ? '✓ Ordonnance Fournie' : '⌛ Question en attente'}
+                  <View style={[styles.statusBadge, styles.statusBadgeSuccess]}>
+                    <Text style={[styles.statusBadgeText, styles.statusTextSuccess]}>
+                      ✓ Ordonnance Fournie
                     </Text>
                   </View>
                 </View>
@@ -271,7 +265,7 @@ export default function AgronomistScreen() {
                 <Text style={styles.questionText}>{q.question}</Text>
 
                 {/* Réponse de l'agronome */}
-                {q.status === 'repondu' && q.answer ? (
+                {q.answer ? (
                   <View style={styles.answerBox}>
                     <View style={styles.answerHeader}>
                       <Feather name="check-circle" size={16} color="#15803d" style={{ marginRight: 6 }} />
@@ -282,17 +276,10 @@ export default function AgronomistScreen() {
                     {/* Disclaimer professionnel obligatoire */}
                     <View style={styles.disclaimerBox}>
                       <Feather name="info" size={12} color="#854d0e" style={{ marginRight: 4 }} />
-                      <Text style={styles.disclaimerText}>{TERRAIN_DISCLAIMER}</Text>
+                      <Text style={styles.disclaimerText}>{q.disclaimer || TERRAIN_DISCLAIMER}</Text>
                     </View>
                   </View>
-                ) : (
-                  <View style={styles.pendingBox}>
-                    <Feather name="clock" size={14} color="#b45309" style={{ marginRight: 6 }} />
-                    <Text style={styles.pendingHint}>
-                      Question en attente · Le service agronomique était indisponible lors de l’envoi.
-                    </Text>
-                  </View>
-                )}
+                ) : null}
               </View>
             ))
           )}

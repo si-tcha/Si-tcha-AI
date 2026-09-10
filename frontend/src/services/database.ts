@@ -641,11 +641,30 @@ class DatabaseService {
   }
 
   // --- Journal de Croissance & Alertes Rendement (Lot D) ---
-  async getParcels(): Promise<ParcelGrowthRecord[]> {
+
+  /**
+   * Lit les parcelles depuis le cache SQLite.
+   * @param cacheKey - Clé isolée par (role, userId, gicId). Utiliser parcelCacheKey() de cacheKey.ts.
+   *   Si omis, retourne toutes les lignes de la table parcels (usage interne syncRemoteData uniquement).
+   */
+  async getParcels(cacheKey?: string): Promise<ParcelGrowthRecord[]> {
+    if (cacheKey) {
+      return this.readKv<ParcelGrowthRecord[]>(cacheKey, []);
+    }
     return this.getDb().getAllSync('SELECT * FROM parcels ORDER BY updatedAt DESC') as any[];
   }
 
-  async saveParcels(parcels: ParcelGrowthRecord[]): Promise<void> {
+  /**
+   * Sauvegarde les parcelles confirmées par le serveur.
+   * JAMAIS appelé directement par l'UI : passe exclusivement par growthService.
+   * @param cacheKey - Clé isolée via parcelCacheKey() de cacheKey.ts.
+   *   Si omis, utilise le stockage legacy (table parcels directe).
+   */
+  async saveParcels(parcels: ParcelGrowthRecord[], cacheKey?: string): Promise<void> {
+    if (cacheKey) {
+      this.writeKv(cacheKey, parcels);
+      return;
+    }
     const db = this.getDb();
     db.runSync('DELETE FROM parcels WHERE synced = 1 OR synced IS NULL');
     for (const p of parcels) {
@@ -668,58 +687,21 @@ class DatabaseService {
     }
   }
 
-  async addParcel(
-    parcelName: string,
-    crop: string,
-    sowingDate: string,
-    stage: ParcelGrowthRecord['stage'],
-    estimatedHarvestDate: string,
-    estimatedVolumeKg: number,
-    actualHarvestVolumeKg?: number | null,
-    actualHarvestDate?: string | null
-  ): Promise<ParcelGrowthRecord> {
-    const id = Date.now().toString();
-    const updatedAt = nowIso();
-    const db = this.getDb();
-    db.runSync(
-      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, actualHarvestDate, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        id,
-        parcelName,
-        crop,
-        sowingDate,
-        stage,
-        estimatedHarvestDate,
-        estimatedVolumeKg,
-        actualHarvestVolumeKg ?? null,
-        actualHarvestDate ?? null,
-        updatedAt,
-        0,
-      ]
-    );
+  // addParcel et updateParcelHarvest sont intentionnellement supprimés.
+  // Ces méthodes créaient des enregistrements locaux avec id=Date.now() et synced=false,
+  // permettant à l'UI de présenter des parcelles non confirmées par le serveur.
+  // Toute création/modification passe exclusivement par growthService → apiClient → serveur.
 
-    return {
-      id,
-      parcelName,
-      crop,
-      sowingDate,
-      stage,
-      estimatedHarvestDate,
-      estimatedVolumeKg,
-      actualHarvestVolumeKg: actualHarvestVolumeKg ?? null,
-      actualHarvestDate: actualHarvestDate ?? null,
-      updatedAt,
-      synced: false,
-    };
+  // --- Historique agronome — Persistance par utilisateur (Lot D) ---
+
+  /** Lit l'historique agronome depuis le cache kv_store (clé isolée par user). */
+  async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
+    return this.readKv<T[]>(cacheKey, []);
   }
 
-  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number, actualHarvestDate?: string): Promise<void> {
-    const db = this.getDb();
-    const updatedAt = nowIso();
-    db.runSync(
-      'UPDATE parcels SET actualHarvestVolumeKg = ?, actualHarvestDate = COALESCE(?, actualHarvestDate), updatedAt = ?, synced = 0 WHERE id = ?',
-      [actualHarvestVolumeKg, actualHarvestDate ?? null, updatedAt, id]
-    );
+  /** Persiste l'historique agronome dans le cache kv_store (clé isolée par user). */
+  async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
+    this.writeKv(cacheKey, entries);
   }
 
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { calculateYieldDrop, isValidIsoDate } from '../src/utils/growthUtils';
 import { ParcelGrowthRecord } from '../src/services/database.shared';
+import { parcelCacheKey, agronomistCacheKey } from '../src/utils/cacheKey';
 
 vi.mock('../src/services/database', () => {
   return {
@@ -8,14 +9,19 @@ vi.mock('../src/services/database', () => {
       initDatabase: vi.fn().mockResolvedValue(undefined),
       getParcels: vi.fn().mockResolvedValue([]),
       saveParcels: vi.fn().mockResolvedValue(undefined),
-      updateParcelHarvest: vi.fn().mockResolvedValue(undefined),
+      getAgronomistHistory: vi.fn().mockResolvedValue([]),
+      saveAgronomistHistory: vi.fn().mockResolvedValue(undefined),
     },
   };
 });
 
-import { growthService } from '../src/services/growthService';
+import { growthService, UserCacheContext } from '../src/services/growthService';
 import { apiClient, ApiError, isNetworkError } from '../src/services/api';
 import { dbService } from '../src/services/database';
+
+// Contexte utilisateur de test
+const TEST_CTX: UserCacheContext = { role: 'seller', userId: '301', gicId: '1' };
+const TEST_CTX_2: UserCacheContext = { role: 'seller', userId: '302', gicId: '2' };
 
 describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
   const originalEnv = process.env.EXPO_PUBLIC_API_URL;
@@ -65,14 +71,12 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
     });
 
     it('gère exactement le seuil critique de 15.0% sans alerte (strictement > 15%)', () => {
-      // 100 kg prévu, 85 kg récolté = 15.000% de perte
       const res = calculateYieldDrop(100, 85);
       expect(res.dropPercent).toBe(15);
       expect(res.isDropAlert).toBe(false); // 15% exact ne doit PAS déclencher l'alerte
     });
 
     it('déclenche l alerte dès 15.01% de perte', () => {
-      // 100 kg prévu, 84.99 kg récolté = 15.01% de perte
       const res = calculateYieldDrop(100, 84.99);
       expect(res.dropPercent).toBe(15.01);
       expect(res.isDropAlert).toBe(true);
@@ -103,7 +107,34 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
     });
   });
 
-  describe('3. Growth Service — Online & Offline Data Authority', () => {
+  describe('3. Cache Key Isolation', () => {
+    it('génère des clés distinctes pour deux utilisateurs différents', () => {
+      const key1 = parcelCacheKey('seller', '301', '1');
+      const key2 = parcelCacheKey('seller', '302', '2');
+      expect(key1).not.toBe(key2);
+      expect(key1).toContain('301');
+      expect(key1).toContain('1');
+      expect(key2).toContain('302');
+    });
+
+    it('ne contient jamais de données sensibles dans la clé', () => {
+      const key = parcelCacheKey('seller', '301', '1');
+      expect(key).not.toContain('password');
+      expect(key).not.toContain('token');
+      expect(key).not.toContain('phone');
+      expect(key).not.toContain('pin');
+      expect(key).toMatch(/^sitcha_parcels_/);
+    });
+
+    it('génère des clés agronome distinctes par utilisateur', () => {
+      const key1 = agronomistCacheKey('seller', '301', '1');
+      const key2 = agronomistCacheKey('seller', '302', '2');
+      expect(key1).not.toBe(key2);
+      expect(key1).toMatch(/^sitcha_agro_history_/);
+    });
+  });
+
+  describe('4. Growth Service — Online & Offline Data Authority', () => {
     const mockRemoteParcels: ParcelGrowthRecord[] = [
       {
         id: 'parcel-uuid-1',
@@ -119,22 +150,25 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
       },
     ];
 
-    it('en mode connecté : charge depuis l API, met à jour le cache SQLite et enrichit l alerte de rendement', async () => {
+    it('en mode connecté : charge depuis l API, met à jour le cache isolé et enrichit l alerte de rendement', async () => {
       const getParcelsSpy = vi.spyOn(apiClient, 'getParcels').mockResolvedValueOnce({ parcels: mockRemoteParcels });
-      const saveParcelsSpy = vi.spyOn(dbService, 'saveParcels').mockResolvedValueOnce();
+      const saveParcelsSpy = vi.spyOn(dbService, 'saveParcels').mockResolvedValueOnce(undefined as any);
 
-      const result = await growthService.loadParcels();
+      const result = await growthService.loadParcels(TEST_CTX);
 
       expect(getParcelsSpy).toHaveBeenCalledTimes(1);
-      expect(saveParcelsSpy).toHaveBeenCalledWith(result.parcels);
+      // saveParcels doit être appelée avec la clé isolée
+      const expectedKey = parcelCacheKey(TEST_CTX.role, TEST_CTX.userId, TEST_CTX.gicId);
+      expect(saveParcelsSpy).toHaveBeenCalledWith(result.parcels, expectedKey);
       expect(result.isOffline).toBe(false);
       expect(result.parcels).toHaveLength(1);
       expect(result.parcels[0].yieldDropAlert).toBe(true);
       expect(result.parcels[0].yieldDropPercent).toBe(20);
     });
 
-    it('en mode déconnecté (erreur réseau 0) : bascule en consultation transparente du cache local', async () => {
+    it('en mode déconnecté (erreur réseau) : bascule sur le cache isolé de cet utilisateur uniquement', async () => {
       vi.spyOn(apiClient, 'getParcels').mockRejectedValueOnce(new ApiError('Impossible de joindre le serveur', 0));
+      // getParcels avec clé isolée retourne les données de l'utilisateur 301
       vi.spyOn(dbService, 'getParcels').mockResolvedValueOnce([
         {
           id: 'cached-parcel-1',
@@ -150,7 +184,7 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
         },
       ]);
 
-      const result = await growthService.loadParcels();
+      const result = await growthService.loadParcels(TEST_CTX);
 
       expect(result.isOffline).toBe(true);
       expect(result.parcels).toHaveLength(1);
@@ -158,12 +192,58 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
       expect(result.parcels[0].yieldDropAlert).toBe(false);
     });
 
-    it('rejette l écriture si hors-ligne : la création nécessite une connexion et ne simule pas de succès fictif', async () => {
+    it('401 → invalide la session, retourne parcelles vides sans consulter le cache', async () => {
+      vi.spyOn(apiClient, 'getParcels').mockRejectedValueOnce(new ApiError('Unauthorized', 401));
+      const getParcelsSpy = vi.spyOn(dbService, 'getParcels');
+
+      const result = await growthService.loadParcels(TEST_CTX);
+
+      // Aucune consultation du cache ne doit avoir lieu
+      expect(getParcelsSpy).not.toHaveBeenCalled();
+      expect(result.parcels).toHaveLength(0);
+      expect(result.isOffline).toBe(false);
+      expect(result.error).toMatch(/Session expirée/i);
+    });
+
+    it('403 → accès refusé, retourne parcelles vides sans consulter le cache', async () => {
+      vi.spyOn(apiClient, 'getParcels').mockRejectedValueOnce(new ApiError('Forbidden', 403));
+      const getParcelsSpy = vi.spyOn(dbService, 'getParcels');
+
+      const result = await growthService.loadParcels(TEST_CTX);
+
+      expect(getParcelsSpy).not.toHaveBeenCalled();
+      expect(result.parcels).toHaveLength(0);
+      expect(result.error).toMatch(/Accès refusé/i);
+    });
+
+    it('500 → erreur serveur visible, pas de bascule silencieuse sur cache', async () => {
+      vi.spyOn(apiClient, 'getParcels').mockRejectedValueOnce(new ApiError('Internal Server Error', 500));
+      const getParcelsSpy = vi.spyOn(dbService, 'getParcels');
+
+      const result = await growthService.loadParcels(TEST_CTX);
+
+      expect(getParcelsSpy).not.toHaveBeenCalled();
+      expect(result.parcels).toHaveLength(0);
+      expect(result.isOffline).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('réponse malformée → erreur explicite, pas de bascule silencieuse', async () => {
+      vi.spyOn(apiClient, 'getParcels').mockResolvedValueOnce({ parcels: 'not-an-array' } as any);
+
+      const result = await growthService.loadParcels(TEST_CTX);
+
+      expect(result.parcels).toHaveLength(0);
+      expect(result.isOffline).toBe(false);
+      expect(result.error).toMatch(/Réponse serveur invalide/i);
+    });
+
+    it('rejette la création si hors-ligne (pas de succès fictif côté local)', async () => {
       vi.spyOn(apiClient, 'createParcel').mockRejectedValueOnce(new ApiError('Connexion requise', 0));
       const dbSaveSpy = vi.spyOn(dbService, 'saveParcels');
 
       await expect(
-        growthService.createParcel({
+        growthService.createParcel(TEST_CTX, {
           parcelName: 'Nouveau Champ',
           crop: 'Soja',
           sowingDate: '2025-02-01',
@@ -177,22 +257,59 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
 
     it('rejette la création avec des dates incohérentes (récolte avant semis)', async () => {
       await expect(
-        growthService.createParcel({
+        growthService.createParcel(TEST_CTX, {
           parcelName: 'Champ Invalide',
           crop: 'Manioc',
           sowingDate: '2025-06-01',
-          estimatedHarvestDate: '2025-05-01', // Antérieur au semis
+          estimatedHarvestDate: '2025-05-01',
           estimatedVolumeKg: 300,
         })
       ).rejects.toThrow('La date de récolte estimée ne peut pas être antérieure');
     });
 
+    it('rejette la création si volume estimé est infini ou trop grand', async () => {
+      await expect(
+        growthService.createParcel(TEST_CTX, {
+          parcelName: 'Champ Test',
+          crop: 'Maïs',
+          sowingDate: '2025-01-01',
+          estimatedHarvestDate: '2025-06-01',
+          estimatedVolumeKg: Infinity,
+        })
+      ).rejects.toThrow('fini');
+
+      await expect(
+        growthService.createParcel(TEST_CTX, {
+          parcelName: 'Champ Test',
+          crop: 'Maïs',
+          sowingDate: '2025-01-01',
+          estimatedHarvestDate: '2025-06-01',
+          estimatedVolumeKg: 2_000_000,
+        })
+      ).rejects.toThrow('max 1 000 000');
+    });
+
+    it('rejette la création si vol récolté fourni sans date récolte (contrainte couple)', async () => {
+      await expect(
+        growthService.createParcel(TEST_CTX, {
+          parcelName: 'Champ Test',
+          crop: 'Maïs',
+          sowingDate: '2025-01-01',
+          estimatedHarvestDate: '2025-06-01',
+          estimatedVolumeKg: 500,
+          actualHarvestVolumeKg: 400,
+          // actualHarvestDate manquante
+        })
+      ).rejects.toThrow('ensemble');
+    });
+
     it('rejette la mise à jour de récolte si la date réelle est antérieure au semis', async () => {
       await expect(
         growthService.updateParcel(
+          TEST_CTX,
           'parcel-uuid-1',
           {
-            actualHarvestDate: '2025-01-01', // Semis est le 2025-01-10
+            actualHarvestDate: '2025-01-01',
             actualHarvestVolumeKg: 400,
           },
           '2025-01-10'
@@ -200,7 +317,7 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
       ).rejects.toThrow('La date de récolte réelle ne peut pas être antérieure');
     });
 
-    it('met à jour une parcelle en ligne et actualise le cache local avec le recalcul du rendement', async () => {
+    it('met à jour une parcelle en ligne et actualise le cache isolé avec le recalcul du rendement', async () => {
       const updatedRemoteParcel: ParcelGrowthRecord = {
         id: 'parcel-uuid-1',
         parcelName: 'Champ Ouest Maïs',
@@ -216,9 +333,10 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
 
       vi.spyOn(apiClient, 'updateParcel').mockResolvedValueOnce({ parcel: updatedRemoteParcel });
       vi.spyOn(dbService, 'getParcels').mockResolvedValueOnce([updatedRemoteParcel]);
-      const saveParcelsSpy = vi.spyOn(dbService, 'saveParcels').mockResolvedValueOnce();
+      const saveParcelsSpy = vi.spyOn(dbService, 'saveParcels').mockResolvedValueOnce(undefined as any);
 
       const result = await growthService.updateParcel(
+        TEST_CTX,
         'parcel-uuid-1',
         {
           actualHarvestVolumeKg: 700,
@@ -228,13 +346,50 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
         '2025-01-10'
       );
 
-      expect(saveParcelsSpy).toHaveBeenCalledTimes(1);
+      // Vérifier que saveParcels est appelé avec la clé isolée de l'utilisateur
+      const expectedKey = parcelCacheKey(TEST_CTX.role, TEST_CTX.userId, TEST_CTX.gicId);
+      expect(saveParcelsSpy).toHaveBeenCalledWith(expect.any(Array), expectedKey);
       expect(result.yieldDropAlert).toBe(true);
       expect(result.yieldDropPercent).toBe(30);
     });
   });
 
-  describe('4. Agronomist Client Interaction & Security Requirements', () => {
+  describe('5. Persistance Historique Agronome', () => {
+    it('persiste une consultation dans le cache isolé par user après réponse serveur', async () => {
+      const saveHistSpy = vi.spyOn(dbService, 'saveAgronomistHistory').mockResolvedValueOnce(undefined as any);
+
+      const entry = await growthService.persistAgronomistConsultation(TEST_CTX, {
+        crop: 'Tomates',
+        category: 'Maladie',
+        question: 'Feuilles jaunes ?',
+        answer: 'Probable mildiou.',
+        disclaimer: 'Consulter un agronome.',
+        askedAt: new Date().toISOString(),
+      });
+
+      const expectedKey = agronomistCacheKey(TEST_CTX.role, TEST_CTX.userId, TEST_CTX.gicId);
+      expect(saveHistSpy).toHaveBeenCalledWith(expectedKey, expect.arrayContaining([
+        expect.objectContaining({ crop: 'Tomates', answer: 'Probable mildiou.' })
+      ]));
+      expect(entry).not.toBeNull();
+      expect(entry?.id).toMatch(/^agro-/);
+    });
+
+    it('ne partage jamais l historique entre deux utilisateurs différents', async () => {
+      const key1 = agronomistCacheKey(TEST_CTX.role, TEST_CTX.userId, TEST_CTX.gicId);
+      const key2 = agronomistCacheKey(TEST_CTX_2.role, TEST_CTX_2.userId, TEST_CTX_2.gicId);
+
+      expect(key1).not.toBe(key2);
+    });
+
+    it('retourne [] si l historique est vide pour un nouvel utilisateur', async () => {
+      vi.spyOn(dbService, 'getAgronomistHistory').mockResolvedValueOnce([]);
+      const result = await growthService.loadAgronomistHistory(TEST_CTX);
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('6. Agronomist Client Interaction & Security Requirements', () => {
     it('valide la taille maximale de 1000 caractères et rejette les questions vides', async () => {
       await expect(apiClient.askAgronomist('Maïs', 'Maladie', '')).rejects.toThrow('La question ne peut pas être vide');
       await expect(apiClient.askAgronomist('Maïs', 'Maladie', '   ')).rejects.toThrow('La question ne peut pas être vide');
@@ -277,7 +432,7 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
       );
     });
 
-    it('gère l indisponibilité temporaire (timeout ou quota 503/504) sans prétendre être une IA locale autonome', async () => {
+    it('gère l indisponibilité temporaire (503) sans prétendre être une IA locale autonome', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
         ok: false,
         status: 503,
