@@ -141,7 +141,7 @@ class DatabaseService {
 
   async syncRemoteData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, ordersRes, b2bRes, parcelsRes, prefinRes, trustRes] = await Promise.all([
+      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, ordersRes, b2bRes, prefinRes, trustRes] = await Promise.all([
         apiClient.getProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
@@ -150,7 +150,6 @@ class DatabaseService {
         apiClient.getGicProfile().catch(() => null),
         apiClient.getOrders().catch(() => null),
         apiClient.getB2BOffers().catch(() => null),
-        apiClient.getParcels().catch(() => null),
         apiClient.getPrefinancingDeals().catch(() => null),
         apiClient.getTrustRatings().catch(() => null),
       ]);
@@ -223,16 +222,6 @@ class DatabaseService {
           db.runSync(
             'INSERT OR REPLACE INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [o.id, o.title, o.type, o.category, o.priceOrExchange, o.gicName, o.location, o.contact, o.createdAt, 1]
-          );
-        }
-        updated = true;
-      }
-      if (Array.isArray(parcelsRes?.parcels)) {
-        db.runSync('DELETE FROM parcels WHERE synced = 1 OR synced IS NULL');
-        for (const p of (parcelsRes.parcels as any[])) {
-          db.runSync(
-            'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [p.id, p.parcelName, p.crop, p.sowingDate, p.stage, p.estimatedHarvestDate, p.estimatedVolumeKg, p.actualHarvestVolumeKg || null, p.updatedAt, 1]
           );
         }
         updated = true;
@@ -643,48 +632,27 @@ class DatabaseService {
   // --- Journal de Croissance & Alertes Rendement (Lot D) ---
 
   /**
-   * Lit les parcelles depuis le cache SQLite.
-   * @param cacheKey - Clé isolée par (role, userId, gicId). Utiliser parcelCacheKey() de cacheKey.ts.
-   *   Si omis, retourne toutes les lignes de la table parcels (usage interne syncRemoteData uniquement).
+   * Lit les parcelles privées depuis le cache SQLite sous une clé utilisateur isolée.
+   * @param cacheKey - Clé obligatoire isolée par (role, userId, gicId) via parcelCacheKey().
    */
-  async getParcels(cacheKey?: string): Promise<ParcelGrowthRecord[]> {
-    if (cacheKey) {
-      return this.readKv<ParcelGrowthRecord[]>(cacheKey, []);
+  async getParcels(cacheKey: string): Promise<ParcelGrowthRecord[]> {
+    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+      throw new Error('Clé de cache privée obligatoire et valide requise pour accéder aux parcelles.');
     }
-    return this.getDb().getAllSync('SELECT * FROM parcels ORDER BY updatedAt DESC') as any[];
+    return this.readKv<ParcelGrowthRecord[]>(cacheKey, []);
   }
 
   /**
-   * Sauvegarde les parcelles confirmées par le serveur.
+   * Sauvegarde les parcelles privées confirmées par le serveur dans le cache SQLite sous clé isolée.
    * JAMAIS appelé directement par l'UI : passe exclusivement par growthService.
-   * @param cacheKey - Clé isolée via parcelCacheKey() de cacheKey.ts.
-   *   Si omis, utilise le stockage legacy (table parcels directe).
+   * @param parcels - Parcelles confirmées.
+   * @param cacheKey - Clé obligatoire isolée via parcelCacheKey().
    */
-  async saveParcels(parcels: ParcelGrowthRecord[], cacheKey?: string): Promise<void> {
-    if (cacheKey) {
-      this.writeKv(cacheKey, parcels);
-      return;
+  async saveParcels(parcels: ParcelGrowthRecord[], cacheKey: string): Promise<void> {
+    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+      throw new Error('Clé de cache privée obligatoire et valide requise pour sauvegarder les parcelles.');
     }
-    const db = this.getDb();
-    db.runSync('DELETE FROM parcels WHERE synced = 1 OR synced IS NULL');
-    for (const p of parcels) {
-      db.runSync(
-        'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, actualHarvestDate, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          p.id,
-          p.parcelName,
-          p.crop,
-          p.sowingDate,
-          p.stage,
-          p.estimatedHarvestDate,
-          p.estimatedVolumeKg,
-          p.actualHarvestVolumeKg ?? null,
-          p.actualHarvestDate ?? null,
-          p.updatedAt,
-          1,
-        ]
-      );
-    }
+    this.writeKv(cacheKey, parcels);
   }
 
   // addParcel et updateParcelHarvest sont intentionnellement supprimés.
@@ -696,11 +664,17 @@ class DatabaseService {
 
   /** Lit l'historique agronome depuis le cache kv_store (clé isolée par user). */
   async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
+    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+      throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+    }
     return this.readKv<T[]>(cacheKey, []);
   }
 
   /** Persiste l'historique agronome dans le cache kv_store (clé isolée par user). */
   async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
+    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+      throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+    }
     this.writeKv(cacheKey, entries);
   }
 

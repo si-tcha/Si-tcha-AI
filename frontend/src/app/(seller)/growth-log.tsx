@@ -24,6 +24,8 @@ import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
 
+import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
@@ -40,14 +42,22 @@ export const STAGES: ParcelStage[] = [
 export default function GrowthLogScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
-  // Contexte d'isolation du cache — jamais de données sensibles dans la clé
-  const userCtx: UserCacheContext = useMemo(() => ({
-    role: user?.role ?? 'seller',
-    userId: user?.id ?? 'anonymous',
-    gicId: user?.gicId ?? '0',
-  }), [user?.role, user?.id, user?.gicId]);
+  // Contexte d'isolation strict — interdiction absolue de fallbacks anonymous ou gicId=0
+  const sellerCtx = useMemo<ValidSellerContext | null>(() => {
+    if (user?.role === 'seller' && user.id && user.gicId) {
+      const candidate = {
+        role: 'seller' as const,
+        userId: String(user.id).trim(),
+        gicId: String(user.gicId).trim(),
+      };
+      if (isValidSellerContext(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [user]);
 
   const [parcels, setParcels] = useState<ParcelGrowthRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,10 +86,24 @@ export default function GrowthLogScreen() {
   const [isUpdating, setIsUpdating] = useState(false);
 
   const loadParcels = useCallback(async () => {
+    // Pendant l'hydratation de l'authentification : ne pas appeler l'API ni lire/écrire de cache
+    if (authLoading) {
+      setLoading(true);
+      return;
+    }
+
+    // Si contexte invalide ou non disponible : vider les données privées et afficher l'erreur
+    if (!sellerCtx) {
+      setParcels([]);
+      setLoading(false);
+      setLoadError('Authentification vendeur requise pour afficher le journal de croissance.');
+      return;
+    }
+
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await growthService.loadParcels(userCtx);
+      const res = await growthService.loadParcels(sellerCtx);
       setParcels(res.parcels);
       setIsOfflineMode(res.isOffline);
       if (res.error) {
@@ -90,7 +114,7 @@ export default function GrowthLogScreen() {
     } finally {
       setLoading(false);
     }
-  }, [userCtx]);
+  }, [authLoading, sellerCtx]);
 
   useEffect(() => {
     loadParcels();
@@ -164,9 +188,14 @@ export default function GrowthLogScreen() {
     }
 
     // 2. Envoi au serveur (confirmation requise)
+    if (!sellerCtx) {
+      showToast({ message: 'Session vendeur requise pour enregistrer une parcelle.', type: 'error' });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const created = await growthService.createParcel(userCtx, {
+      const created = await growthService.createParcel(sellerCtx, {
         parcelName: parcelName.trim(),
         crop: crop.trim(),
         sowingDate: sowingDate.trim(),
@@ -250,10 +279,15 @@ export default function GrowthLogScreen() {
       }
     }
 
+    if (!sellerCtx) {
+      showToast({ message: 'Session vendeur requise pour mettre à jour une parcelle.', type: 'error' });
+      return;
+    }
+
     setIsUpdating(true);
     try {
       const updated = await growthService.updateParcel(
-        userCtx,
+        sellerCtx,
         editingParcel.id,
         {
           stage: editStage,

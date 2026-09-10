@@ -1,5 +1,5 @@
 import { Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -13,6 +13,9 @@ import {
   ParcelGrowthRecord,
 } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
+import { useAuth } from '@/context/AuthContext';
+import { growthService } from '@/services/growthService';
+import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -39,6 +42,23 @@ const weatherIcon = (desc?: string): keyof typeof Feather.glyphMap => {
 
 export default function SellerTerrainScreen() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+
+  // Contexte d'isolation strict — jamais de données privées sans contexte seller valide
+  const sellerCtx = useMemo<ValidSellerContext | null>(() => {
+    if (user?.role === 'seller' && user.id && user.gicId) {
+      const candidate = {
+        role: 'seller' as const,
+        userId: String(user.id).trim(),
+        gicId: String(user.gicId).trim(),
+      };
+      if (isValidSellerContext(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [user]);
+
   const [tab, setTab] = useState<TabKey>('parcelles');
   const [weather, setWeather] = useState<WeatherRecord[]>([]);
   const [market, setMarket] = useState<MarketPriceRecord[]>([]);
@@ -49,23 +69,33 @@ export default function SellerTerrainScreen() {
   const loadTerrainData = useCallback(async () => {
     try {
       await dbService.initDatabase();
-      await dbService.syncRemoteData().catch(() => {});
-      const [w, m, p, ph, par] = await Promise.all([
+
+      // 1. Données publiques du terrain (météo, marché, aides GIC, alertes phyto)
+      const [w, m, p, ph] = await Promise.all([
         dbService.getWeather(),
         dbService.getMarketPrices(),
         dbService.getAgriPrograms(),
         dbService.getPhytoAlerts(),
-        dbService.getParcels(),
       ]);
       setWeather(w);
       setMarket(m);
       setPrograms(p);
       setPhyto(ph);
-      setParcels(par);
+
+      // 2. Données privées de parcelles : chargement exclusif via growthService avec contexte valide
+      if (authLoading) {
+        return;
+      }
+      if (!sellerCtx) {
+        setParcels([]);
+        return;
+      }
+      const growthRes = await growthService.loadParcels(sellerCtx);
+      setParcels(growthRes.parcels);
     } catch (err) {
       console.warn('Erreur chargement terrain:', err);
     }
-  }, []);
+  }, [authLoading, sellerCtx]);
 
   useFocusEffect(
     useCallback(() => {

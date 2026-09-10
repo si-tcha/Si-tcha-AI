@@ -2,15 +2,16 @@ import { apiClient, isNetworkError } from './api';
 import { dbService } from './database';
 import { ParcelGrowthRecord, ParcelStage } from './database.shared';
 import { calculateYieldDrop, isValidIsoDate } from '../utils/growthUtils';
-import { parcelCacheKey, agronomistCacheKey } from '../utils/cacheKey';
+import {
+  parcelCacheKey,
+  agronomistCacheKey,
+  ValidSellerContext,
+  assertValidSellerContext,
+} from '../utils/cacheKey';
 
 // --- Types --------------------------------------------------------------
 
-export interface UserCacheContext {
-  role: string;
-  userId: string | number;
-  gicId: string | number;
-}
+export type UserCacheContext = ValidSellerContext;
 
 export interface CreateParcelInput {
   parcelName: string;
@@ -50,6 +51,7 @@ export interface AgronomistHistoryEntry {
   answer: string;
   disclaimer: string;
   askedAt: string;
+  notSavedLocally?: boolean;
 }
 
 // --- Helpers internes ---------------------------------------------------
@@ -69,13 +71,15 @@ function enrichParcel(p: ParcelGrowthRecord): ParcelGrowthRecord {
 /**
  * Retourne le cache de parcelles pour un contexte utilisateur précis.
  * Clé = sitcha_parcels_{role}_{userId}_{gicId}
- * Les anciennes données sans contexte utilisateur ne sont jamais retournées.
+ * Les contextes invalides ou incomplets sont rejetés.
  */
 async function getCachedParcels(ctx: UserCacheContext): Promise<ParcelGrowthRecord[]> {
+  assertValidSellerContext(ctx);
   return dbService.getParcels(parcelCacheKey(ctx.role, ctx.userId, ctx.gicId));
 }
 
 async function setCachedParcels(ctx: UserCacheContext, parcels: ParcelGrowthRecord[]): Promise<void> {
+  assertValidSellerContext(ctx);
   return dbService.saveParcels(parcels, parcelCacheKey(ctx.role, ctx.userId, ctx.gicId));
 }
 
@@ -86,14 +90,16 @@ export const growthService = {
    * Charge les parcelles du GIC authentifié.
    *
    * Stratégie stricte :
+   * - Rejette tout contexte non authentifié ou incomplet.
    * - Si le serveur répond → données serveur font foi, cache mis à jour.
-   * - Si erreur réseau (status 0) → cache hors-ligne retourné.
+   * - Si erreur réseau (status 0) → cache hors-ligne de cet utilisateur retourné.
    * - Si 401 → session invalide, pas de cache, erreur propagée.
    * - Si 403 → accès refusé, pas de cache.
    * - Si 4xx/5xx autre → erreur affichée, pas de bascule silencieuse.
    * - Si réponse malformée → erreur, pas de cache.
    */
   async loadParcels(ctx: UserCacheContext): Promise<FetchParcelsResult> {
+    assertValidSellerContext(ctx);
     try {
       await dbService.initDatabase();
       const res = await apiClient.getParcels();
@@ -151,6 +157,8 @@ export const growthService = {
    * Exige une confirmation serveur : ne prétend jamais qu'une donnée locale existe côté serveur.
    */
   async createParcel(ctx: UserCacheContext, input: CreateParcelInput): Promise<ParcelGrowthRecord> {
+    assertValidSellerContext(ctx);
+
     if (!input.parcelName?.trim()) {
       throw new Error('Le nom de la parcelle est requis.');
     }
@@ -215,6 +223,8 @@ export const growthService = {
     input: UpdateParcelInput,
     sowingDate?: string
   ): Promise<ParcelGrowthRecord> {
+    assertValidSellerContext(ctx);
+
     if (!id) {
       throw new Error('Identifiant de parcelle manquant.');
     }
@@ -272,40 +282,32 @@ export const growthService = {
 
   /**
    * Persiste une consultation agronomique dans le cache user/GIC après réponse serveur.
-   * La modale reste ouverte et la question est préservée en cas d'erreur.
-   *
-   * @returns la consultation persistée ou null si l'enregistrement échoue
+   * Lève une exception si l'écriture locale échoue pour permettre à l'appelant de signaler
+   * honnêtement l'échec tout en conservant la réponse en mémoire.
    */
   async persistAgronomistConsultation(
     ctx: UserCacheContext,
     entry: Omit<AgronomistHistoryEntry, 'id'>
-  ): Promise<AgronomistHistoryEntry | null> {
-    try {
-      const key = agronomistCacheKey(ctx.role, ctx.userId, ctx.gicId);
-      const existing: AgronomistHistoryEntry[] = await dbService.getAgronomistHistory(key);
-      const newEntry: AgronomistHistoryEntry = {
-        id: `agro-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        ...entry,
-      };
-      const updated = [newEntry, ...existing].slice(0, 50); // max 50 entrées
-      await dbService.saveAgronomistHistory(key, updated);
-      return newEntry;
-    } catch {
-      // Échec de persistance : ne pas affecter l'expérience utilisateur
-      return null;
-    }
+  ): Promise<AgronomistHistoryEntry> {
+    assertValidSellerContext(ctx);
+    const key = agronomistCacheKey(ctx.role, ctx.userId, ctx.gicId);
+    const existing: AgronomistHistoryEntry[] = await dbService.getAgronomistHistory(key);
+    const newEntry: AgronomistHistoryEntry = {
+      id: `agro-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ...entry,
+    };
+    const updated = [newEntry, ...existing].slice(0, 50); // max 50 entrées
+    await dbService.saveAgronomistHistory(key, updated);
+    return newEntry;
   },
 
   /**
    * Charge l'historique agronome depuis le cache isolé user/GIC.
    */
   async loadAgronomistHistory(ctx: UserCacheContext): Promise<AgronomistHistoryEntry[]> {
-    try {
-      const key = agronomistCacheKey(ctx.role, ctx.userId, ctx.gicId);
-      return await dbService.getAgronomistHistory(key);
-    } catch {
-      return [];
-    }
+    assertValidSellerContext(ctx);
+    const key = agronomistCacheKey(ctx.role, ctx.userId, ctx.gicId);
+    return await dbService.getAgronomistHistory(key);
   },
 
   calculateYieldDrop,

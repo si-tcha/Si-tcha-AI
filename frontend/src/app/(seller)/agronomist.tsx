@@ -24,6 +24,8 @@ import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
 
+import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
@@ -44,14 +46,22 @@ export const TERRAIN_DISCLAIMER =
 export default function AgronomistScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
-  // Contexte d'isolation de cache par (role, userId, gicId)
-  const userCtx: UserCacheContext = useMemo(() => ({
-    role: user?.role ?? 'seller',
-    userId: user?.id ?? 'anonymous',
-    gicId: user?.gicId ?? '0',
-  }), [user?.role, user?.id, user?.gicId]);
+  // Contexte d'isolation strict — interdiction absolue de fallbacks anonymous ou gicId=0
+  const sellerCtx = useMemo<ValidSellerContext | null>(() => {
+    if (user?.role === 'seller' && user.id && user.gicId) {
+      const candidate = {
+        role: 'seller' as const,
+        userId: String(user.id).trim(),
+        gicId: String(user.gicId).trim(),
+      };
+      if (isValidSellerContext(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [user]);
 
   const [questions, setQuestions] = useState<AgronomistHistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
@@ -64,22 +74,39 @@ export default function AgronomistScreen() {
   const [questionText, setQuestionText] = useState('');
 
   const loadQuestions = useCallback(async () => {
+    // Pendant l'hydratation auth : ne pas lire de cache privé
+    if (authLoading) {
+      setLoadingHistory(true);
+      return;
+    }
+
+    if (!sellerCtx) {
+      setQuestions([]);
+      setLoadingHistory(false);
+      return;
+    }
+
     try {
       await dbService.initDatabase();
-      const history = await growthService.loadAgronomistHistory(userCtx);
+      const history = await growthService.loadAgronomistHistory(sellerCtx);
       setQuestions(history);
     } catch {
-      // Ignorer l'erreur silencieusement en lecture locale
+      setQuestions([]);
     } finally {
       setLoadingHistory(false);
     }
-  }, [userCtx]);
+  }, [authLoading, sellerCtx]);
 
   useEffect(() => {
     loadQuestions();
   }, [loadQuestions]);
 
   const handleCreateQuestion = async () => {
+    if (!sellerCtx) {
+      showToast({ message: 'Session vendeur requise pour consulter l’agronome.', type: 'error' });
+      return;
+    }
+
     const trimmedQuestion = questionText.trim();
     if (!trimmedQuestion) {
       showToast({ message: 'Veuillez décrire votre question ou symptôme.', type: 'warning' });
@@ -103,33 +130,52 @@ export default function AgronomistScreen() {
         throw new Error('Réponse vide du service agronomique.');
       }
 
-      // 2. Persistance dans le cache utilisateur/GIC isolé
       const disclaimer = res.disclaimer || TERRAIN_DISCLAIMER;
-      const persisted = await growthService.persistAgronomistConsultation(userCtx, {
-        crop: selectedCrop,
-        category: selectedCategory,
-        question: trimmedQuestion,
-        answer: res.answer,
-        disclaimer,
-        askedAt: new Date().toISOString(),
-      });
+      let persistedSuccessfully = false;
+      let entryToDisplay: AgronomistHistoryEntry;
 
-      const newEntry: AgronomistHistoryEntry = persisted ?? {
-        id: `agro-${Date.now()}`,
-        crop: selectedCrop,
-        category: selectedCategory,
-        question: trimmedQuestion,
-        answer: res.answer,
-        disclaimer,
-        askedAt: new Date().toISOString(),
-      };
+      // 2. Persistance dans le cache utilisateur/GIC isolé
+      try {
+        const persisted = await growthService.persistAgronomistConsultation(sellerCtx, {
+          crop: selectedCrop,
+          category: selectedCategory,
+          question: trimmedQuestion,
+          answer: res.answer,
+          disclaimer,
+          askedAt: new Date().toISOString(),
+        });
+        entryToDisplay = persisted;
+        persistedSuccessfully = true;
+      } catch (saveErr) {
+        // En cas d'échec d'écriture locale :
+        // La réponse réelle du serveur reste visible en mémoire pour lecture/copie,
+        // mais on marque explicitement notSavedLocally: true.
+        entryToDisplay = {
+          id: `agro-volatile-${Date.now()}`,
+          crop: selectedCrop,
+          category: selectedCategory,
+          question: trimmedQuestion,
+          answer: res.answer,
+          disclaimer,
+          askedAt: new Date().toISOString(),
+          notSavedLocally: true,
+        };
+      }
 
-      setQuestions((prev) => [newEntry, ...prev]);
+      setQuestions((prev) => [entryToDisplay, ...prev]);
       setQuestionText('');
       setModalVisible(false);
-      showToast({ message: 'Ordonnance agronomique générée !', type: 'success' });
+
+      if (persistedSuccessfully) {
+        showToast({ message: 'Ordonnance agronomique générée et enregistrée !', type: 'success' });
+      } else {
+        showToast({
+          message: 'Ordonnance reçue mais non sauvegardée dans l’historique local. Elle reste consultable ci-dessous.',
+          type: 'warning',
+        });
+      }
     } catch (err: any) {
-      // En cas d'erreur : la modale RESTE OUVERTE, la question est PRÉSERVÉE dans l'input,
+      // En cas d'erreur serveur ou réseau : la modale RESTE OUVERTE, la question est PRÉSERVÉE dans l'input,
       // et AUCUNE fausse consultation "en attente" n'est ajoutée.
       let failureReason = 'Service indisponible pour le moment.';
 
@@ -255,11 +301,19 @@ export default function AgronomistScreen() {
                       <Text style={styles.categoryBadgeText}>{q.category}</Text>
                     </View>
                   </View>
-                  <View style={[styles.statusBadge, styles.statusBadgeSuccess]}>
-                    <Text style={[styles.statusBadgeText, styles.statusTextSuccess]}>
-                      ✓ Ordonnance Fournie
-                    </Text>
-                  </View>
+                  {q.notSavedLocally ? (
+                    <View style={[styles.statusBadge, { backgroundColor: '#fef3c7' }]}>
+                      <Text style={[styles.statusBadgeText, { color: '#b45309' }]}>
+                        ⚠️ En mémoire seule
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.statusBadge, styles.statusBadgeSuccess]}>
+                      <Text style={[styles.statusBadgeText, styles.statusTextSuccess]}>
+                        ✓ Ordonnance Fournie
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 <Text style={styles.questionText}>{q.question}</Text>
@@ -271,7 +325,16 @@ export default function AgronomistScreen() {
                       <Feather name="check-circle" size={16} color="#15803d" style={{ marginRight: 6 }} />
                       <Text style={styles.answerTitle}>Ordonnance & Recommandations :</Text>
                     </View>
-                    <Text style={styles.answerText}>{q.answer}</Text>
+                    <Text style={styles.answerText} selectable>{q.answer}</Text>
+
+                    {q.notSavedLocally && (
+                      <View style={{ backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', borderRadius: 8, padding: 8, marginTop: 8, flexDirection: 'row', alignItems: 'center' }}>
+                        <Feather name="alert-triangle" size={14} color="#b45309" style={{ marginRight: 6 }} />
+                        <Text style={{ fontSize: 11, color: '#92400e', flex: 1 }}>
+                          Consultation conservée en mémoire vive pour cette session mais non enregistrée dans l’historique local suite à une erreur d’écriture. Vous pouvez la lire ou la recopier librement.
+                        </Text>
+                      </View>
+                    )}
 
                     {/* Disclaimer professionnel obligatoire */}
                     <View style={styles.disclaimerBox}>
