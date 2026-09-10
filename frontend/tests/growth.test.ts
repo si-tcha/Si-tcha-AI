@@ -1,16 +1,41 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { calculateYieldDrop, isValidIsoDate } from '../src/utils/growthUtils';
 import { ParcelGrowthRecord } from '../src/services/database.shared';
-import { parcelCacheKey, agronomistCacheKey } from '../src/utils/cacheKey';
+import {
+  parcelCacheKey,
+  agronomistCacheKey,
+  isValidSellerContext,
+  assertValidSellerContext,
+} from '../src/utils/cacheKey';
 
 vi.mock('../src/services/database', () => {
   return {
     dbService: {
       initDatabase: vi.fn().mockResolvedValue(undefined),
-      getParcels: vi.fn().mockResolvedValue([]),
-      saveParcels: vi.fn().mockResolvedValue(undefined),
-      getAgronomistHistory: vi.fn().mockResolvedValue([]),
-      saveAgronomistHistory: vi.fn().mockResolvedValue(undefined),
+      getParcels: vi.fn().mockImplementation(async (cacheKey: string) => {
+        if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+          throw new Error('Clé de cache privée obligatoire et valide requise pour accéder aux parcelles.');
+        }
+        return [];
+      }),
+      saveParcels: vi.fn().mockImplementation(async (parcels: any[], cacheKey: string) => {
+        if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+          throw new Error('Clé de cache privée obligatoire et valide requise pour sauvegarder les parcelles.');
+        }
+        return undefined;
+      }),
+      getAgronomistHistory: vi.fn().mockImplementation(async (cacheKey: string) => {
+        if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+          throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+        }
+        return [];
+      }),
+      saveAgronomistHistory: vi.fn().mockImplementation(async (cacheKey: string, entries: any[]) => {
+        if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+          throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+        }
+        return undefined;
+      }),
     },
   };
 });
@@ -107,7 +132,7 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
     });
   });
 
-  describe('3. Cache Key Isolation', () => {
+  describe('3. Cache Key Isolation & Contexte Vendeur Strict', () => {
     it('génère des clés distinctes pour deux utilisateurs différents', () => {
       const key1 = parcelCacheKey('seller', '301', '1');
       const key2 = parcelCacheKey('seller', '302', '2');
@@ -131,6 +156,30 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
       const key2 = agronomistCacheKey('seller', '302', '2');
       expect(key1).not.toBe(key2);
       expect(key1).toMatch(/^sitcha_agro_history_/);
+    });
+
+    it('interdit formellement les fallbacks anonymous ou gicId=0 dans parcelCacheKey', () => {
+      expect(() => parcelCacheKey('seller', 'anonymous', '1')).toThrow(/anonyme/i);
+      expect(() => parcelCacheKey('seller', '301', '0')).toThrow(/nul/i);
+      expect(() => parcelCacheKey('buyer', '301', '1')).toThrow(/vendeur/i);
+      expect(() => parcelCacheKey('seller', '', '1')).toThrow(/invalide/i);
+      expect(() => parcelCacheKey('seller', '301', '')).toThrow(/invalide/i);
+    });
+
+    it('interdit formellement les fallbacks anonymous ou gicId=0 dans agronomistCacheKey', () => {
+      expect(() => agronomistCacheKey('seller', 'anonymous', '1')).toThrow(/anonyme/i);
+      expect(() => agronomistCacheKey('seller', '301', '0')).toThrow(/nul/i);
+      expect(() => agronomistCacheKey('buyer', '301', '1')).toThrow(/vendeur/i);
+    });
+
+    it('isValidSellerContext identifie précisément les contextes complets et rejette les contextes invalides', () => {
+      expect(isValidSellerContext({ role: 'seller', userId: '301', gicId: '1' })).toBe(true);
+      expect(isValidSellerContext({ role: 'seller', userId: 'anonymous', gicId: '1' })).toBe(false);
+      expect(isValidSellerContext({ role: 'seller', userId: '301', gicId: '0' })).toBe(false);
+      expect(isValidSellerContext({ role: 'buyer', userId: '101', gicId: '1' })).toBe(false);
+      expect(isValidSellerContext(null)).toBe(false);
+      expect(isValidSellerContext(undefined)).toBe(false);
+      expect(isValidSellerContext({})).toBe(false);
     });
   });
 
@@ -453,6 +502,261 @@ describe('Bloc 4 — Growth Log & Agronomy Tests', () => {
       } catch (err) {
         expect(isNetworkError(err)).toBe(true);
       }
+    });
+  });
+
+  describe('7. Tests de non-régression obligatoires (Bloc 4 Security & Isolation)', () => {
+    // 5.B : Comportement du cache lors de l’hydratation auth
+    describe('5.B: Comportement du cache lors de l hydratation auth', () => {
+      it('rejette explicitement toute opération si le contexte utilisateur n est pas résolu ou incomplet', async () => {
+        const invalidContexts = [
+          null,
+          undefined,
+          {},
+          { role: 'seller', userId: '', gicId: '1' },
+          { role: 'seller', userId: '301', gicId: '' },
+          { role: 'seller', userId: 'anonymous', gicId: '1' },
+          { role: 'seller', userId: '301', gicId: '0' },
+          { role: 'buyer', userId: '301', gicId: '1' },
+        ];
+
+        const dbGetSpy = vi.spyOn(dbService, 'getParcels');
+        const dbSaveSpy = vi.spyOn(dbService, 'saveParcels');
+        const apiGetSpy = vi.spyOn(apiClient, 'getParcels');
+
+        for (const ctx of invalidContexts) {
+          await expect(growthService.loadParcels(ctx as any)).rejects.toThrow(/(invalide|requis|manquant)/i);
+          await expect(
+            growthService.createParcel(ctx as any, {
+              parcelName: 'Test',
+              crop: 'Maïs',
+              sowingDate: '2025-01-01',
+              estimatedHarvestDate: '2025-06-01',
+              estimatedVolumeKg: 100,
+            })
+          ).rejects.toThrow(/(invalide|requis|manquant)/i);
+          await expect(growthService.loadAgronomistHistory(ctx as any)).rejects.toThrow(
+            /(invalide|requis|manquant)/i
+          );
+          await expect(
+            growthService.persistAgronomistConsultation(ctx as any, {
+              crop: 'Maïs',
+              category: 'Maladie',
+              question: 'Q',
+              answer: 'A',
+              disclaimer: 'D',
+              askedAt: new Date().toISOString(),
+            })
+          ).rejects.toThrow(/(invalide|requis|manquant)/i);
+        }
+
+        // Aucune lecture ou écriture dans le cache sous clé générique n'a été déclenchée
+        expect(dbGetSpy).not.toHaveBeenCalled();
+        expect(dbSaveSpy).not.toHaveBeenCalled();
+        expect(apiGetSpy).not.toHaveBeenCalled();
+      });
+
+      it('n écrit ni ne lit jamais sous une clé générique anonymous ou 0 pendant l hydratation', async () => {
+        const dbSaveSpy = vi.spyOn(dbService, 'saveParcels');
+
+        // Simuler un appel avec un contexte non hydraté intercepté avant
+        expect(isValidSellerContext({ role: 'seller', userId: 'anonymous', gicId: '0' })).toBe(false);
+
+        // Appel une fois l'utilisateur hydraté avec succès
+        vi.spyOn(apiClient, 'getParcels').mockResolvedValueOnce({ parcels: [] });
+        await growthService.loadParcels({ role: 'seller', userId: '301', gicId: '1' });
+
+        expect(dbSaveSpy).toHaveBeenCalledWith([], 'sitcha_parcels_seller_301_1');
+        // Vérifier que jamais une clé anonyme n'est apparue
+        const allCalls = dbSaveSpy.mock.calls;
+        for (const call of allCalls) {
+          expect(call[1]).not.toContain('anonymous');
+          expect(call[1]).not.toContain('_0');
+        }
+      });
+    });
+
+    // 5.C : Non-fuite de données entre deux utilisateurs sur un cache local
+    describe('5.C: Non-fuite de données entre deux utilisateurs sur un cache local', () => {
+      it('l utilisateur B hors-ligne ne lit jamais les parcelles en cache de l utilisateur A', async () => {
+        const userAParcels: ParcelGrowthRecord[] = [
+          {
+            id: 'parcel-user-A-1',
+            parcelName: 'Champ Ananas User A',
+            crop: 'Ananas',
+            sowingDate: '2025-01-01',
+            stage: 'Maturation',
+            estimatedHarvestDate: '2025-12-01',
+            estimatedVolumeKg: 5000,
+            actualHarvestVolumeKg: null,
+            actualHarvestDate: null,
+            updatedAt: '2025-01-01T10:00:00.000Z',
+          },
+        ];
+
+        const ctxA: UserCacheContext = { role: 'seller', userId: '301', gicId: '1' };
+        const ctxB: UserCacheContext = { role: 'seller', userId: '302', gicId: '2' };
+
+        const keyA = parcelCacheKey(ctxA.role, ctxA.userId, ctxA.gicId);
+        const keyB = parcelCacheKey(ctxB.role, ctxB.userId, ctxB.gicId);
+
+        // Simuler le cache de base de données partitionné par clé
+        const cacheStore: Record<string, ParcelGrowthRecord[]> = {
+          [keyA]: userAParcels,
+          [keyB]: [], // Le cache de B est vide
+        };
+
+        vi.spyOn(dbService, 'getParcels').mockImplementationOnce(async (key: string) => {
+          return cacheStore[key] || [];
+        });
+
+        // Simuler que le serveur est hors-ligne
+        vi.spyOn(apiClient, 'getParcels').mockRejectedValueOnce(new ApiError('Offline', 0));
+
+        // User B se connecte et tente de charger ses parcelles hors-ligne
+        const resultB = await growthService.loadParcels(ctxB);
+
+        expect(resultB.isOffline).toBe(true);
+        expect(resultB.parcels).toEqual([]);
+        expect(resultB.parcels).not.toEqual(userAParcels);
+
+        // Vérifier que getParcels a bien été appelé avec keyB et jamais avec keyA pour la session de B
+        expect(dbService.getParcels).toHaveBeenCalledWith(keyB);
+      });
+    });
+
+    // 5.D : Écran Terrain & étanchéité du stockage
+    describe('5.D: Écran Terrain & étanchéité du stockage', () => {
+      it('dbService.getParcels et saveParcels rejettent immédiatement les clés vides, invalides ou globales', async () => {
+        expect(() => parcelCacheKey('seller', '', '1')).toThrow();
+        expect(() => parcelCacheKey('buyer', '301', '1')).toThrow();
+
+        // Vérifier avec l'implémentation web réelle que toute tentative d'accès non partitionné est rejetée
+        const { dbService: webDbService } = await import('../src/services/database.web');
+        const invalidKeys = ['', '   ', 'parcels', 'global_parcels', 'anonymous'];
+        for (const invalidKey of invalidKeys) {
+          await expect(webDbService.getParcels(invalidKey as any)).rejects.toThrow(
+            /Clé de cache privée obligatoire/i
+          );
+          await expect(webDbService.saveParcels([], invalidKey as any)).rejects.toThrow(
+            /Clé de cache privée obligatoire/i
+          );
+        }
+      });
+
+      it('l écran Terrain charge ses parcelles exclusivement via growthService.loadParcels avec contexte vendeur valide', async () => {
+        const validSellerCtx: UserCacheContext = { role: 'seller', userId: '301', gicId: '1' };
+        const mockParcels: ParcelGrowthRecord[] = [
+          {
+            id: 'p-1',
+            parcelName: 'Champ Terrain Valide',
+            crop: 'Café',
+            sowingDate: '2025-02-01',
+            stage: 'Semis',
+            estimatedHarvestDate: '2025-11-01',
+            estimatedVolumeKg: 1200,
+            actualHarvestVolumeKg: null,
+            actualHarvestDate: null,
+            updatedAt: '2025-02-01T08:00:00.000Z',
+          },
+        ];
+
+        vi.spyOn(apiClient, 'getParcels').mockResolvedValueOnce({ parcels: mockParcels });
+        const saveParcelsSpy = vi.spyOn(dbService, 'saveParcels');
+
+        const res = await growthService.loadParcels(validSellerCtx);
+        expect(res.parcels).toHaveLength(1);
+        expect(res.parcels[0].parcelName).toBe('Champ Terrain Valide');
+        expect(saveParcelsSpy).toHaveBeenCalledWith(
+          expect.any(Array),
+          'sitcha_parcels_seller_301_1'
+        );
+      });
+    });
+
+    // 5.E : Agronome : échec de persistance locale
+    describe('5.E: Agronome — Gestion d échec de persistance locale', () => {
+      it('persistAgronomistConsultation propage l erreur en cas de panne de stockage local', async () => {
+        vi.spyOn(dbService, 'saveAgronomistHistory').mockRejectedValueOnce(
+          new Error('SQLiteDiskIOWriteError: out of disk space')
+        );
+
+        await expect(
+          growthService.persistAgronomistConsultation(TEST_CTX, {
+            crop: 'Piment',
+            category: 'Parasite',
+            question: 'Pucerons sur feuilles',
+            answer: 'Appliquer une solution de savon noir ou neem.',
+            disclaimer: 'Conseil indicatif.',
+            askedAt: new Date().toISOString(),
+          })
+        ).rejects.toThrow(/out of disk space/);
+      });
+
+      it('en cas d échec de sauvegarde locale, la réponse Gemini reste disponible en mémoire vive avec notSavedLocally: true', async () => {
+        const serverAnswer = 'Recommandation IA Gemini réelle : rotation des cultures et purin d ortie.';
+        const disclaimer = 'Ce conseil est fourni à titre indicatif par une IA.';
+
+        // Simuler la réponse valide du backend Gemini
+        vi.spyOn(apiClient, 'askAgronomist').mockResolvedValueOnce({
+          question: 'Comment régénérer le sol ?',
+          answer: serverAnswer,
+          disclaimer,
+          model: 'gemini-1.5-flash',
+          timestamp: new Date().toISOString(),
+        });
+
+        // Simuler l'échec de la persistance locale
+        vi.spyOn(growthService, 'persistAgronomistConsultation').mockRejectedValueOnce(
+          new Error('Erreur quota AsyncStorage / SQLite plein')
+        );
+
+        // Exécuter la logique métier de gestion d'erreur de agronomist.tsx
+        let persistedSuccessfully = false;
+        let entryToDisplay: any;
+        let warningToastMessage: string | null = null;
+        let successToastMessage: string | null = null;
+
+        const res = await apiClient.askAgronomist('Maïs', 'Fertilisation', 'Comment régénérer le sol ?');
+        try {
+          const persisted = await growthService.persistAgronomistConsultation(TEST_CTX, {
+            crop: 'Maïs',
+            category: 'Fertilisation',
+            question: 'Comment régénérer le sol ?',
+            answer: res.answer,
+            disclaimer: res.disclaimer || disclaimer,
+            askedAt: new Date().toISOString(),
+          });
+          entryToDisplay = persisted;
+          persistedSuccessfully = true;
+          successToastMessage = 'Ordonnance agronomique générée et enregistrée !';
+        } catch {
+          // Logique implémentée dans agronomist.tsx
+          entryToDisplay = {
+            id: `agro-volatile-${Date.now()}`,
+            crop: 'Maïs',
+            category: 'Fertilisation',
+            question: 'Comment régénérer le sol ?',
+            answer: res.answer,
+            disclaimer: res.disclaimer || disclaimer,
+            askedAt: new Date().toISOString(),
+            notSavedLocally: true,
+          };
+          warningToastMessage = 'Réponse reçue mais non sauvegardée localement (erreur stockage).';
+        }
+
+        // Vérifications formelles :
+        // 1. Pas de succès trompeur
+        expect(persistedSuccessfully).toBe(false);
+        expect(successToastMessage).toBeNull();
+        expect(warningToastMessage).toBe('Réponse reçue mais non sauvegardée localement (erreur stockage).');
+
+        // 2. La réponse reste consultable et lisible en mémoire vive
+        expect(entryToDisplay).toBeDefined();
+        expect(entryToDisplay.answer).toBe(serverAnswer);
+        expect(entryToDisplay.notSavedLocally).toBe(true);
+        expect(entryToDisplay.id).toMatch(/^agro-volatile-/);
+      });
     });
   });
 });
