@@ -1,10 +1,16 @@
+# ==============================================================================
+# SI-TCHA AI - Docker Compose Production Durci
+# Ce fichier requiert des variables d'environnement de production obligatoires.
+# Ne jamais exécuter avec des secrets par défaut ou des fallbacks faibles.
+# ==============================================================================
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sitcha_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sitcha_dev_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire en production}
       POSTGRES_DB: ${POSTGRES_DB:-sitcha_db}
     ports:
       - "${POSTGRES_PORT:-15432}:5432"
@@ -25,8 +31,8 @@ services:
     healthcheck:
       disable: true
     environment:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://${POSTGRES_USER:-sitcha_user}:${POSTGRES_PASSWORD:-sitcha_dev_password}@postgres:5432/${POSTGRES_DB:-sitcha_db}?schema=public
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sitcha_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire en production}@postgres:5432/${POSTGRES_DB:-sitcha_db}?schema=public
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,17 +46,17 @@ services:
     ports:
       - "${PORT:-4000}:4000"
     environment:
-      NODE_ENV: development
-      PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-sitcha_user}:${POSTGRES_PASSWORD:-sitcha_dev_password}@postgres:5432/${POSTGRES_DB:-sitcha_db}?schema=public
-      JWT_SECRET: dev-jwt-secret-placeholder-minimum-32-chars-key
-      CORS_ORIGIN: http://localhost:8081,http://localhost:19006
-      TRUST_PROXY: "1"
-      LOG_LEVEL: info
-      OTP_PROVIDER: disabled
-      ENABLE_API_DOCS: "true"
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sitcha_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire en production}@postgres:5432/${POSTGRES_DB:-sitcha_db}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET est obligatoire en production (min. 32 car., générer avec openssl rand -base64 32)}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN est obligatoire en production (liste blanche d origines HTTPS séparées par virgules)}
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      OTP_PROVIDER: "${OTP_PROVIDER:-disabled}"
+      ENABLE_API_DOCS: "${ENABLE_API_DOCS:-false}"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
