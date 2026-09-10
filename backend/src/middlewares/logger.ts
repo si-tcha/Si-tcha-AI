@@ -65,56 +65,81 @@ export const SENSITIVE_PHONE_KEY_REGEX =
   /^(phone|phonenumber|phone_number|contact|contactphone|contact_phone|telephone|mobile|tel|phone_num)$/i;
 
 /**
- * Masque fortement un numéro de téléphone pour la journalisation sécurisée (ex: +2376******33).
- * Préserve le préfixe pays/réseau et les 2 derniers chiffres, tout en masquant le corps du numéro.
+ * Masque fortement un numéro de téléphone pour la journalisation sécurisée (ex: +2376******33 ou 6******33).
+ * Règle stricte :
+ * - Numéro international (+237 ou 237) : conserve +237, le premier chiffre réseau (2 ou 6), 6 étoiles, et les 2 derniers chiffres (+2376******33).
+ * - Numéro local : conserve UNIQUEMENT le premier chiffre réseau (2 ou 6), 6 étoiles, et les 2 derniers chiffres (6******33).
+ * - Ne conserve JAMAIS 4 chiffres au début d'un numéro local.
+ * - Idempotent sans dépendre d'un simple includes('*') contournable.
  */
 export function maskPhone(phone?: string | null): string {
   if (!phone || typeof phone !== 'string') return '';
-  const trimmed = phone.trim();
-  if (trimmed.length <= 4) return '***';
-  if (trimmed.includes('*')) return trimmed;
+  const raw = phone.trim();
 
-  const prefixLen = trimmed.startsWith('+') ? 5 : 4;
-  const suffixLen = 2;
-  if (trimmed.length <= prefixLen + suffixLen) {
-    return trimmed.slice(0, 2) + '***' + trimmed.slice(-1);
+  // Idempotence stricte : si le numéro est déjà masqué selon le format conforme (+2376******33 ou 6******33)
+  if (/^(\+?237)?[26]\*{4,8}\d{2}$/.test(raw)) {
+    return raw;
   }
-  const prefix = trimmed.slice(0, prefixLen);
-  const suffix = trimmed.slice(-suffixLen);
-  const maskCount = Math.max(3, trimmed.length - prefixLen - suffixLen);
-  return `${prefix}${'*'.repeat(maskCount)}${suffix}`;
+
+  // Normalisation des encodages URL (%2B, %20, %2D) et séparateurs
+  const normalized = raw.replace(/%2b/gi, '+').replace(/%20/gi, ' ').replace(/%2d/gi, '-');
+  const digits = normalized.replace(/\D/g, '');
+
+  // 1. Format international camerounais : 237 suivi de 9 chiffres commençant par 2 ou 6
+  if (digits.startsWith('237') && digits.length === 12 && /^[26]/.test(digits.slice(3))) {
+    const core = digits.slice(3);
+    return `+237${core[0]}******${core.slice(-2)}`;
+  }
+  if (digits.startsWith('00237') && digits.length === 14 && /^[26]/.test(digits.slice(5))) {
+    const core = digits.slice(5);
+    return `+237${core[0]}******${core.slice(-2)}`;
+  }
+
+  // 2. Format local camerounais : 9 chiffres commençant par 2 ou 6
+  // Règle : préserver uniquement le 1er chiffre réseau et les 2 derniers chiffres
+  if (digits.length === 9 && /^[26]/.test(digits)) {
+    return `${digits[0]}******${digits.slice(-2)}`;
+  }
+
+  // Fallback si tronqué ou non conforme
+  if (digits.length <= 4) return '***';
+  return '***';
 }
 
 /**
  * Nettoie une chaîne de texte de tous les identifiants, mots de passe, tokens et secrets sensibles.
+ * Détecte et masque les numéros camerounais sous toutes leurs variantes (international, local, espaces, tirets, URLs).
  */
 export function sanitizeLogString(str?: string | null): string {
   if (!str || typeof str !== 'string') return '';
 
-  return (
-    str
-      // 1. Masquage des URLs de connexion de bases de données (Postgres, MySQL, MongoDB, Redis, etc.)
-      .replace(
-        /([a-zA-Z0-9+.-]+:\/\/[^:\s/@]+):([^@\s/]+)@/g,
-        '$1:[REDACTED_SECRET]@'
-      )
-      // 2. Masquage des Bearer tokens
-      .replace(/(bearer\s+)[a-zA-Z0-9_\-.]+/gi, '$1[REDACTED_TOKEN]')
-      // 3. Masquage des JWT (3 parties séparées par des points)
-      .replace(/eyJ[a-zA-Z0-9_\-]+\.eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/g, '[REDACTED_JWT]')
-      // 4. Masquage des assignations de secrets sensibles (password=..., token=..., pin=..., otp=..., secret=...)
-      .replace(
-        /(password|passwd|pwd|secret|token|pin|otp|otpcode|verificationcode|smscode|apikey|api_key|authorization|cookie)([\s:=]+)[^\s,;&"']+/gi,
-        '$1$2[REDACTED]'
-      )
-      // 5. Masquage de cookies de session
-      .replace(/(session(?:_id)?=)[^;\s&]+/gi, '$1[REDACTED_COOKIE]')
-      // 6. Masquage des numéros de téléphone camerounais explicites (+237 6xx... ou +237 2xx...) dans les messages texte
-      .replace(
-        /(\+?237[26]\d{8})\b/g,
-        (match) => maskPhone(match)
-      )
-  );
+  let res = str
+    // 1. Masquage des URLs de connexion de bases de données (Postgres, MySQL, MongoDB, Redis, etc.)
+    .replace(
+      /([a-zA-Z0-9+.-]+:\/\/[^:\s/@]+):([^@\s/]+)@/g,
+      '$1:[REDACTED_SECRET]@'
+    )
+    // 2. Masquage des Bearer tokens
+    .replace(/(bearer\s+)[a-zA-Z0-9_\-.]+/gi, '$1[REDACTED_TOKEN]')
+    // 3. Masquage des JWT (3 parties séparées par des points)
+    .replace(/eyJ[a-zA-Z0-9_\-]+\.eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/g, '[REDACTED_JWT]')
+    // 4. Masquage des assignations de secrets sensibles (password=..., token=..., pin=..., otp=..., secret=...)
+    .replace(
+      /(password|passwd|pwd|secret|token|pin|otp|otpcode|verificationcode|smscode|apikey|api_key|authorization|cookie)([\s:=]+)[^\s,;&"']+/gi,
+      '$1$2[REDACTED]'
+    )
+    // 5. Masquage de cookies de session
+    .replace(/(session(?:_id)?=)[^;\s&]+/gi, '$1[REDACTED_COOKIE]');
+
+  // 6. Masquage des numéros de téléphone camerounais internationaux (+237 ou 237 ou %2B237 avec espaces/tirets/URL)
+  const intlRegex = /(?<!\d)(?:\+|%2B)?237[\s.\-_]*(?:%20|%2D)?[26](?:[\s.\-_]*(?:%20|%2D)?\d){8}(?!\d)/gi;
+  res = res.replace(intlRegex, (match) => maskPhone(match));
+
+  // 7. Masquage des numéros de téléphone camerounais locaux (9 chiffres commençant par 2 ou 6, avec espaces/tirets/URL)
+  const localRegex = /(?<![\w\d])([26])(?:[\s.\-_]*(?:%20|%2D)?\d){8}(?![\w\d])/gi;
+  res = res.replace(localRegex, (match) => maskPhone(match));
+
+  return res;
 }
 
 /**
@@ -225,6 +250,13 @@ export function sanitizeErrorForLog(err: any): Record<string, unknown> {
 
   if (err.stack) {
     sanitized.stack = sanitizeLogString(err.stack);
+  }
+
+  if (err.syscall) {
+    sanitized.syscall = err.syscall;
+  }
+  if (err.errno !== undefined) {
+    sanitized.errno = err.errno;
   }
 
   // Métadonnées utiles pour Prisma (sans exposer de raw query ni de credentials)

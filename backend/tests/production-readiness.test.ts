@@ -724,6 +724,209 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(streamOutput).toContain('invalid_type');
       expect(streamOutput).toContain('too_small');
     });
+
+    it('Masquage exhaustif de tous les formats de numéros camerounais, URLs, erreurs SMS et préservation des codes techniques', async () => {
+      const { Writable } = await import('stream');
+      const pinoModule = await import('pino');
+      const pino = pinoModule.default || pinoModule;
+      const {
+        SENSITIVE_PATHS,
+        sanitizeErrorForLog,
+        sanitizeLogString,
+        sanitizeDataRecursively,
+        maskPhone,
+      } = await import('../src/middlewares/logger.js');
+
+      // 1. Validation unitaire de maskPhone sur tous les formats camerounais obligatoires
+      // Format 1: international sans espace (+237699112233)
+      expect(maskPhone('+237699112233')).toBe('+2376******33');
+      // Format 2: international sans + (237699112233)
+      expect(maskPhone('237699112233')).toBe('+2376******33');
+      // Format 3: local sans espace (699112233) -> préserve 1er chiffre et 2 derniers chiffres, JAMAIS 4 premiers chiffres
+      expect(maskPhone('699112233')).toBe('6******33');
+      expect(maskPhone('699112233')).not.toMatch(/^6991/);
+      // Format 4: international avec espaces (+237 699 112 233)
+      expect(maskPhone('+237 699 112 233')).toBe('+2376******33');
+      // Format 5: international avec tirets (+237-699-112-233)
+      expect(maskPhone('+237-699-112-233')).toBe('+2376******33');
+      // Format 6: local avec espaces (699 112 233)
+      expect(maskPhone('699 112 233')).toBe('6******33');
+      expect(maskPhone('699 112 233')).not.toMatch(/^6991/);
+      // Format 7: local avec tirets (699-112-233)
+      expect(maskPhone('699-112-233')).toBe('6******33');
+      expect(maskPhone('699-112-233')).not.toMatch(/^6991/);
+      // Lignes fixes / Camtel (chiffre 2)
+      expect(maskPhone('+237222112233')).toBe('+2372******33');
+      expect(maskPhone('222112233')).toBe('2******33');
+
+      // Idempotence stricte : déjà masqué ne doit pas ajouter d'étoiles ni corrompre
+      expect(maskPhone('+2376******33')).toBe('+2376******33');
+      expect(maskPhone('6******33')).toBe('6******33');
+      // Protection contre contournement naïf includes('*') : ne divulgue pas le numéro
+      expect(maskPhone('6*99112233')).not.toBe('6*99112233');
+      expect(maskPhone('6*99112233')).toBe('6******33');
+
+      // 2. Validation unitaire de sanitizeLogString sur chaînes libres, URLs et erreurs SMS
+      expect(sanitizeLogString('SMS error to +237699112233: delivery failed')).toBe(
+        'SMS error to +2376******33: delivery failed'
+      );
+      expect(sanitizeLogString('SMS error to 237699112233: delivery failed')).toBe(
+        'SMS error to +2376******33: delivery failed'
+      );
+      expect(sanitizeLogString('Échec envoi vers 699112233')).toBe('Échec envoi vers 6******33');
+      expect(sanitizeLogString('Message vers +237 699 112 233')).toBe('Message vers +2376******33');
+      expect(sanitizeLogString('Message vers +237-699-112-233')).toBe('Message vers +2376******33');
+      expect(sanitizeLogString('Erreur destinataire 699 112 233')).toBe('Erreur destinataire 6******33');
+      expect(sanitizeLogString('Erreur destinataire 699-112-233')).toBe('Erreur destinataire 6******33');
+      expect(
+        sanitizeLogString('https://sms-provider.cm/api/send?to=%2B237699112233&status=failed')
+      ).toBe('https://sms-provider.cm/api/send?to=+2376******33&status=failed');
+
+      // Absence de faux positif sur identifiants techniques
+      const technicalMsg =
+        'Commit: 8dd839ebf102, Port: 5432, Timestamp: 1711234567890, UUID: d9e843c0-0f04-4c8e-a6a2-4a0dfc8230b0';
+      expect(sanitizeLogString(technicalMsg)).toBe(technicalMsg);
+
+      // 3. Test de flux Pino complet avec Memory Stream
+      let emittedLogs = '';
+      const stream = new Writable({
+        write(chunk, _encoding, callback) {
+          emittedLogs += chunk.toString();
+          callback();
+        },
+      });
+
+      const pinoAudit = (pino as any)(
+        {
+          level: 'info',
+          redact: {
+            paths: SENSITIVE_PATHS,
+            censor: '[REDACTED]',
+          },
+          formatters: {
+            log(obj: Record<string, any>) {
+              return sanitizeDataRecursively(obj);
+            },
+          },
+          serializers: {
+            err: sanitizeErrorForLog,
+            error: sanitizeErrorForLog,
+          },
+          hooks: {
+            logMethod(inputArgs: any[], method: any) {
+              const sanitizedArgs = inputArgs.map((arg) => {
+                if (typeof arg === 'string') return sanitizeLogString(arg);
+                if (arg instanceof Error) return arg;
+                if (arg && typeof arg === 'object') return sanitizeDataRecursively(arg);
+                return arg;
+              });
+              return method.apply(this, sanitizedArgs);
+            },
+          },
+        },
+        stream
+      );
+
+      // Définition de sentinelles pour chacun des 7 formats
+      const S1_INTL_RAW = '+237699112233';
+      const S2_INTL_NOPLUS = '237699112234';
+      const S3_LOCAL_RAW = '699112235';
+      const S4_INTL_SPACES = '+237 699 112 236';
+      const S5_INTL_DASHES = '+237-699-112-237';
+      const S6_LOCAL_SPACES = '699 112 238';
+      const S7_LOCAL_DASHES = '699-112-239';
+
+      const complexPayload = {
+        user: {
+          phone: S1_INTL_RAW,
+          contact: S2_INTL_NOPLUS,
+        },
+        smsResult: {
+          success: false,
+          error: `Provider rejected ${S4_INTL_SPACES} with timeout`,
+        },
+        deepNested: {
+          layer1: {
+            layer2: {
+              contactPhone: S5_INTL_DASHES,
+              localNum: S6_LOCAL_SPACES,
+            },
+          },
+        },
+        req: {
+          url: `/api/v1/auth/callback?phone=%2B${S2_INTL_NOPLUS}&contact=${S7_LOCAL_DASHES}`,
+        },
+      };
+
+      const clonedPayloadBefore = JSON.parse(JSON.stringify(complexPayload));
+
+      // Émission de logs divers
+      pinoAudit.info(complexPayload, `Notification envoyée à ${S3_LOCAL_RAW}`);
+
+      // Émission d'une erreur avec stack trace contenant un numéro, Prisma P2002 et code système
+      const systemPrismaErr: any = new Error(
+        `Failed to connect to SMS gateway for recipient ${S1_INTL_RAW}`
+      );
+      systemPrismaErr.code = 'P2002';
+      systemPrismaErr.statusCode = 500;
+      systemPrismaErr.syscall = 'connect';
+      systemPrismaErr.errno = -111;
+      systemPrismaErr.meta = { target: ['contact'] };
+      systemPrismaErr.stack = `Error: Gateway timeout\n  at sendOtp (/app/dist/sms.js:42:10?to=%2B${S2_INTL_NOPLUS})\n  at /app/node_modules/pg/client.js:100:15`;
+
+      pinoAudit.error({ err: systemPrismaErr }, 'Erreur critique passerelle');
+
+      // Émission d'erreurs Zod techniques
+      const zodPayload = {
+        issues: [
+          {
+            code: 'invalid_type',
+            expected: 'string',
+            received: 'number',
+            path: ['body', 'phone'],
+            message: 'Numéro attendu',
+          },
+          {
+            code: 'too_small',
+            minimum: 9,
+            path: ['body', 'pin'],
+            message: 'Trop court',
+          },
+        ],
+      };
+      pinoAudit.warn({ validation: zodPayload }, 'Validation Zod échouée');
+
+      // Assertions de NON-MUTATION
+      expect(complexPayload).toEqual(clonedPayloadBefore);
+      expect(complexPayload.user.phone).toBe(S1_INTL_RAW);
+      expect(complexPayload.user.contact).toBe(S2_INTL_NOPLUS);
+
+      // Assertions d'ABSENCE ABSOLUE des numéros bruts dans le flux
+      expect(emittedLogs).not.toContain(S1_INTL_RAW);
+      expect(emittedLogs).not.toContain(S2_INTL_NOPLUS);
+      expect(emittedLogs).not.toContain(S3_LOCAL_RAW);
+      expect(emittedLogs).not.toContain(S4_INTL_SPACES);
+      expect(emittedLogs).not.toContain(S5_INTL_DASHES);
+      expect(emittedLogs).not.toContain(S6_LOCAL_SPACES);
+      expect(emittedLogs).not.toContain(S7_LOCAL_DASHES);
+
+      // Assertions de PRÉSENCE des versions masquées
+      expect(emittedLogs).toContain('+2376******33');
+      expect(emittedLogs).toContain('+2376******34');
+      expect(emittedLogs).toContain('6******35');
+      expect(emittedLogs).toContain('+2376******36');
+      expect(emittedLogs).toContain('+2376******37');
+      expect(emittedLogs).toContain('6******38');
+      expect(emittedLogs).toContain('6******39');
+
+      // Assertions de CONSERVATION des codes techniques
+      expect(emittedLogs).toContain('P2002');
+      expect(emittedLogs).toContain('prismaCode');
+      expect(emittedLogs).toContain('invalid_type');
+      expect(emittedLogs).toContain('too_small');
+      expect(emittedLogs).toContain('connect'); // syscall
+      expect(emittedLogs).toContain('500'); // statusCode
+    });
   });
 
   describe('4. Healthcheck de processus et Readiness probe', () => {
