@@ -386,6 +386,196 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(emittedLogs).toContain('[REDACTED]');
       expect(emittedLogs).toContain('[REDACTED_SECRET]');
     });
+
+    it('Préserve les références partagées non-cycliques (DAG) sans les marquer [CIRCULAR] et détecte les vrais cycles', async () => {
+      const { sanitizeDataRecursively } = await import('../src/middlewares/logger.js');
+
+      // 1. Référence partagée non cyclique (même objet référencé à 2 endroits distincts dans un DAG)
+      const sharedAccount = {
+        accountId: 'acc-42',
+        password: 'shared-password-secret-xyz',
+        balance: 1000,
+      };
+      const transactionPayload = {
+        source: sharedAccount,
+        destination: sharedAccount,
+        metadata: { audit: sharedAccount },
+      };
+
+      const clonedBefore = JSON.parse(JSON.stringify(transactionPayload));
+      const sanitizedDag = sanitizeDataRecursively(transactionPayload);
+
+      // Non-mutation de l'original
+      expect(transactionPayload).toEqual(clonedBefore);
+      expect(sharedAccount.password).toBe('shared-password-secret-xyz');
+
+      // Les références répétées non-cycliques sont assainies et NON marquées [CIRCULAR]
+      expect(sanitizedDag.source.accountId).toBe('acc-42');
+      expect(sanitizedDag.source.password).toBe('[REDACTED]');
+      expect(sanitizedDag.source).not.toBe('[CIRCULAR]');
+
+      expect(sanitizedDag.destination.accountId).toBe('acc-42');
+      expect(sanitizedDag.destination.password).toBe('[REDACTED]');
+      expect(sanitizedDag.destination).not.toBe('[CIRCULAR]');
+
+      expect(sanitizedDag.metadata.audit.accountId).toBe('acc-42');
+      expect(sanitizedDag.metadata.audit.password).toBe('[REDACTED]');
+      expect(sanitizedDag.metadata.audit).not.toBe('[CIRCULAR]');
+
+      // 2. Vrai cycle direct (auto-référence)
+      const directCycle: any = { id: 'direct-01', secret: 'abc' };
+      directCycle.self = directCycle;
+      const sanitizedDirect = sanitizeDataRecursively(directCycle);
+      expect(sanitizedDirect.id).toBe('direct-01');
+      expect(sanitizedDirect.secret).toBe('[REDACTED]');
+      expect(sanitizedDirect.self).toBe('[CIRCULAR]');
+
+      // 3. Vrai cycle indirect (A -> B -> A)
+      const cycleA: any = { name: 'A' };
+      const cycleB: any = { name: 'B', toA: cycleA };
+      cycleA.toB = cycleB;
+      const sanitizedIndirect = sanitizeDataRecursively(cycleA);
+      expect(sanitizedIndirect.name).toBe('A');
+      expect(sanitizedIndirect.toB.name).toBe('B');
+      expect(sanitizedIndirect.toB.toA).toBe('[CIRCULAR]');
+    });
+
+    it('errorHandler ne logge que des métadonnées bornées : absence de body/sentinelles/socket/server et présence des métadonnées permises', async () => {
+      const { Writable } = await import('stream');
+      const pinoModule = await import('pino');
+      const pino = pinoModule.default || pinoModule;
+      const { sanitizeErrorForLog, sanitizeLogString, sanitizeDataRecursively } = await import(
+        '../src/middlewares/logger.js'
+      );
+
+      let errorHandlerLogs = '';
+      const memStream = new Writable({
+        write(chunk, _encoding, callback) {
+          errorHandlerLogs += chunk.toString();
+          callback();
+        },
+      });
+
+      const auditLogger = (pino as any)(
+        {
+          level: 'info',
+          redact: {
+            paths: SENSITIVE_PATHS,
+            censor: '[REDACTED]',
+          },
+          formatters: {
+            log(obj: Record<string, any>) {
+              return sanitizeDataRecursively(obj);
+            },
+          },
+          serializers: {
+            err: sanitizeErrorForLog,
+          },
+          hooks: {
+            logMethod(inputArgs: any[], method: any) {
+              const sanitizedArgs = inputArgs.map((arg) => {
+                if (typeof arg === 'string') return sanitizeLogString(arg);
+                if (arg instanceof Error) return arg;
+                if (arg && typeof arg === 'object') return sanitizeDataRecursively(arg);
+                return arg;
+              });
+              return method.apply(this, sanitizedArgs);
+            },
+          },
+        },
+        memStream
+      );
+
+      // Espionner le logger dans errorHandler
+      const loggerModule = await import('../src/middlewares/logger.js');
+      const originalErrorMethod = loggerModule.logger.error;
+      const originalWarnMethod = loggerModule.logger.warn;
+      (loggerModule.logger as any).error = (...args: any[]) => (auditLogger as any).error(...args);
+      (loggerModule.logger as any).warn = (...args: any[]) => (auditLogger as any).warn(...args);
+
+      try {
+        const BODY_SECRET = 'BODY_PASSWORD_DO_NOT_LOG_987654';
+        const COOKIE_SECRET = 'COOKIE_SECRET_NEVER_LEAK_321';
+        const SOCKET_INTERNAL_SENTINEL = 'socket_internal_buffer_leak_test';
+
+        // Simuler un objet Request Express complet avec body, headers, socket et structures internes
+        const mockReq: any = {
+          id: 'req-prod-audit-42',
+          method: 'POST',
+          originalUrl: '/api/sensitive/action',
+          url: '/api/sensitive/action',
+          ip: '203.0.113.195',
+          user: { id: 'usr-987' },
+          body: {
+            password: BODY_SECRET,
+            pin: '1234',
+            personalNote: 'Confidential message',
+          },
+          headers: {
+            authorization: 'Bearer token_super_secret_auth',
+            cookie: `session_id=${COOKIE_SECRET}`,
+          },
+          socket: {
+            remoteAddress: '203.0.113.195',
+            internalBuffer: SOCKET_INTERNAL_SENTINEL,
+            server: { maxConnections: 1000, internalProp: 'server_leak' },
+          },
+          server: { activeConnections: 5 },
+        };
+
+        const mockRes: any = {
+          statusCode: 500,
+          status(code: number) {
+            this.statusCode = code;
+            return this;
+          },
+          json(payload: any) {
+            this.payload = payload;
+            return this;
+          },
+        };
+
+        const testError = new Error('Database query timed out');
+        testError.stack = 'Error: Database query timed out\n  at runQuery (/app/query.ts:15:9)';
+
+        // Cloner avant pour tester la non-mutation
+        const reqClonedBefore = JSON.parse(JSON.stringify({
+          id: mockReq.id,
+          method: mockReq.method,
+          originalUrl: mockReq.originalUrl,
+          body: mockReq.body,
+        }));
+
+        errorHandler(testError, mockReq as any, mockRes as any, (() => {}) as any);
+
+        // 1. Non-mutation stricte
+        expect(mockReq.body.password).toBe(BODY_SECRET);
+        expect(mockReq.id).toBe(reqClonedBefore.id);
+
+        // 2. Absence totale des données de body, cookies et sentinelles
+        expect(errorHandlerLogs).not.toContain(BODY_SECRET);
+        expect(errorHandlerLogs).not.toContain(COOKIE_SECRET);
+        expect(errorHandlerLogs).not.toContain('token_super_secret_auth');
+        expect(errorHandlerLogs).not.toContain('Confidential message');
+
+        // 3. Absence totale des objets internes socket et server
+        expect(errorHandlerLogs).not.toContain(SOCKET_INTERNAL_SENTINEL);
+        expect(errorHandlerLogs).not.toContain('server_leak');
+        expect(errorHandlerLogs).not.toContain('maxConnections');
+        expect(errorHandlerLogs).not.toContain('activeConnections');
+
+        // 4. Présence stricte des métadonnées opérationnelles permises
+        expect(errorHandlerLogs).toContain('req-prod-audit-42'); // requestId
+        expect(errorHandlerLogs).toContain('POST');              // method
+        expect(errorHandlerLogs).toContain('/api/sensitive/action'); // url
+        expect(errorHandlerLogs).toContain('203.0.113.195');    // ip
+        expect(errorHandlerLogs).toContain('usr-987');          // userId
+        expect(errorHandlerLogs).toContain('500');              // statusCode
+      } finally {
+        (loggerModule.logger as any).error = originalErrorMethod;
+        (loggerModule.logger as any).warn = originalWarnMethod;
+      }
+    });
   });
 
   describe('4. Healthcheck de processus et Readiness probe', () => {

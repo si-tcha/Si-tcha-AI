@@ -78,7 +78,7 @@ export function sanitizeLogString(str?: string | null): string {
  * Assainit de façon strictement récursive n'importe quel objet ou tableau
  * SANS JAMAIS muter les objets ou tableaux originaux.
  */
-export function sanitizeDataRecursively(data: any, seen = new WeakSet()): any {
+export function sanitizeDataRecursively(data: any, pathStack = new Set<any>()): any {
   if (data === null || data === undefined) {
     return data;
   }
@@ -91,11 +91,10 @@ export function sanitizeDataRecursively(data: any, seen = new WeakSet()): any {
     return data;
   }
 
-  // Protection contre les références circulaires
-  if (seen.has(data)) {
+  // Protection contre les références circulaires réelles sur le chemin actif de parcours
+  if (pathStack.has(data)) {
     return '[CIRCULAR]';
   }
-  seen.add(data);
 
   if (data instanceof Date) {
     return new Date(data.getTime());
@@ -109,8 +108,11 @@ export function sanitizeDataRecursively(data: any, seen = new WeakSet()): any {
     return sanitizeErrorForLog(data);
   }
 
+  const nextStack = new Set(pathStack);
+  nextStack.add(data);
+
   if (Array.isArray(data)) {
-    return data.map((item) => sanitizeDataRecursively(item, seen));
+    return data.map((item) => sanitizeDataRecursively(item, nextStack));
   }
 
   const result: Record<string, any> = {};
@@ -118,7 +120,7 @@ export function sanitizeDataRecursively(data: any, seen = new WeakSet()): any {
     if (SENSITIVE_KEY_REGEX.test(key)) {
       result[key] = '[REDACTED]';
     } else {
-      result[key] = sanitizeDataRecursively(value, seen);
+      result[key] = sanitizeDataRecursively(value, nextStack);
     }
   }
 
@@ -230,6 +232,15 @@ export const httpLogger = (pinoHttp as any)({
   autoLogging: true,
   serializers: {
     err: sanitizeErrorForLog,
+    req: (req: any) => ({
+      requestId: req.id || req.raw?.id,
+      method: req.method,
+      url: req.url || req.raw?.originalUrl,
+      ip: req.remoteAddress || req.raw?.ip,
+    }),
+    res: (res: any) => ({
+      statusCode: res.statusCode,
+    }),
   },
   customLogLevel: (req: any, res: any, err?: Error) => {
     if (res.statusCode >= 500 || err) return 'error';

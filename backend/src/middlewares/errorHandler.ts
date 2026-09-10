@@ -59,10 +59,20 @@ export function errorHandler(
 
   const isProd = process.env.NODE_ENV === 'production';
 
+  // Métadonnées bornées et minimales (ne jamais passer l'objet req brut à Pino)
+  const requestMetadata = {
+    requestId: (req as any).id,
+    method: req.method,
+    url: req.originalUrl || req.url,
+    statusCode,
+    ip: req.ip || (req.socket as any)?.remoteAddress,
+    userId: (req as any).user?.id,
+  };
+
   if (statusCode >= 500) {
-    logger.error({ err: sanitizeErrorForLog(err), req }, 'Server Error');
+    logger.error({ err: sanitizeErrorForLog(err), req: requestMetadata }, 'Server Error');
   } else {
-    logger.warn({ err: sanitizeErrorForLog(err) }, 'Client Error');
+    logger.warn({ err: sanitizeErrorForLog(err), req: requestMetadata }, 'Client Error');
   }
 
   const safeMessage = isProd && statusCode >= 500
