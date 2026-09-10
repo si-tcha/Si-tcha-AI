@@ -26,6 +26,7 @@ vi.mock('../src/lib/prisma', () => {
         count: vi.fn(),
       },
       $transaction: vi.fn(),
+      $executeRaw: vi.fn(),
     },
   };
 });
@@ -57,6 +58,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
     (prisma.transactionAcheteur.findMany as any).mockResolvedValue([]);
     (prisma.transactionAcheteur.count as any).mockResolvedValue(0);
     (prisma.recolteOffre.updateMany as any).mockResolvedValue({ count: 1 });
+    (prisma.$executeRaw as any) = vi.fn().mockResolvedValue(1);
 
     (prisma.acheteur.findUnique as any).mockImplementation(({ where }: any) => {
       if (where.id === BigInt(100)) {
@@ -106,7 +108,11 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
     it('doit refuser l’accès sans token (401)', async () => {
       const res = await request(app)
         .post('/api/buyer/orders')
-        .send({ type: 'commande_ferme', items: [{ productId: '1', quantity: 10 }] });
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [{ productId: '1', quantity: 10 }],
+        });
       expect(res.status).toBe(401);
     });
 
@@ -114,15 +120,48 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
       const res = await request(app)
         .post('/api/buyer/orders')
         .set('Authorization', `Bearer ${sellerToken}`)
-        .send({ type: 'commande_ferme', items: [{ productId: '1', quantity: 10 }] });
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [{ productId: '1', quantity: 10 }],
+        });
       expect(res.status).toBe(403);
+    });
+
+    it('doit rejeter une requête sans clientRequestId (400)', async () => {
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          items: [{ productId: '1', quantity: 10 }],
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.errors.some((e: any) => e.path.includes('clientRequestId'))).toBe(true);
+    });
+
+    it('doit rejeter une requête avec un clientRequestId non-UUID (400)', async () => {
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: 'not-a-valid-uuid',
+          items: [{ productId: '1', quantity: 10 }],
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.errors.some((e: any) => e.path.includes('clientRequestId'))).toBe(true);
     });
 
     it('doit rejeter une requête sans type ou avec type invalide (400)', async () => {
       const res = await request(app)
         .post('/api/buyer/orders')
         .set('Authorization', `Bearer ${buyer1Token}`)
-        .send({ type: 'invalid_type', items: [{ productId: '1', quantity: 10 }] });
+        .send({
+          type: 'invalid_type',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [{ productId: '1', quantity: 10 }],
+        });
       expect(res.status).toBe(400);
     });
 
@@ -130,15 +169,65 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
       const res = await request(app)
         .post('/api/buyer/orders')
         .set('Authorization', `Bearer ${buyer1Token}`)
-        .send({ type: 'commande_ferme', items: [] });
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [],
+        });
       expect(res.status).toBe(400);
+    });
+
+    it('doit rejeter un panier avec plus de 50 articles (400)', async () => {
+      const items = Array.from({ length: 51 }, (_, i) => ({
+        productId: String(i + 1),
+        quantity: 1,
+      }));
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items,
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.errors.some((e: any) => e.message.includes('50'))).toBe(true);
     });
 
     it('doit rejeter une quantité nulle ou négative (400)', async () => {
       const res = await request(app)
         .post('/api/buyer/orders')
         .set('Authorization', `Bearer ${buyer1Token}`)
-        .send({ type: 'commande_ferme', items: [{ productId: '1', quantity: 0 }] });
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [{ productId: '1', quantity: 0 }],
+        });
+      expect(res.status).toBe(400);
+    });
+
+    it('doit rejeter une quantité supérieure à 1 000 000 (400)', async () => {
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [{ productId: '1', quantity: 1000001 }],
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.errors.some((e: any) => e.message.includes('1 000 000'))).toBe(true);
+    });
+
+    it('doit rejeter un productId non numérique ou négatif (400)', async () => {
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
+          items: [{ productId: '-5', quantity: 10 }],
+        });
       expect(res.status).toBe(400);
     });
 
@@ -148,6 +237,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
+          clientRequestId: '11111111-1111-4111-8111-111111111111',
           items: [
             { productId: '1', quantity: 10 },
             { productId: '1', quantity: 5 },
@@ -158,7 +248,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
     });
   });
 
-  describe('Validation Métier : Offre Inexistante, Prix Absent, Stock Insuffisant', () => {
+  describe('Validation Métier : Offre Inexistante, Prix Absent ou Invalide, Stock Insuffisant', () => {
     it('doit retourner 404 si une offre n’existe pas', async () => {
       (prisma.recolteOffre.findUnique as any).mockResolvedValue(null);
 
@@ -167,6 +257,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
+          clientRequestId: '22222222-2222-4222-8222-222222222221',
           items: [{ productId: '999', quantity: 10 }],
         });
 
@@ -187,6 +278,28 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
+          clientRequestId: '22222222-2222-4222-8222-222222222222',
+          items: [{ productId: '1', quantity: 10 }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/prix serveur valide/);
+    });
+
+    it('doit retourner 400 si un produit possède un prix serveur nul ou négatif', async () => {
+      (prisma.recolteOffre.findUnique as any).mockResolvedValue({
+        id: BigInt(1),
+        quantiteDisponible: 100,
+        produitAgricole: { nom: 'Maïs', prix: 0, unite: 'kg' },
+        gic: { id: BigInt(10), nom: 'GIC Test' },
+      });
+
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '22222222-2222-4222-8222-222222222223',
           items: [{ productId: '1', quantity: 10 }],
         });
 
@@ -207,6 +320,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
+          clientRequestId: '22222222-2222-4222-8222-222222222224',
           items: [{ productId: '1', quantity: 20 }], // Demande 20
         });
 
@@ -234,7 +348,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         prixConvenu: { toString: () => '2500' },
         statut: 'en_attente',
         recolteOffreId: BigInt(1),
-        clientRequestId: 'req-abc-123',
+        clientRequestId: '33333333-3333-4333-8333-333333333331',
         createdAt: new Date('2026-09-07T10:00:00.000Z'),
         recolteOffre: mockOffer,
       });
@@ -244,7 +358,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
-          clientRequestId: 'req-abc-123',
+          clientRequestId: '33333333-3333-4333-8333-333333333331',
           items: [{ productId: '1', quantity: 25 }],
         });
 
@@ -307,6 +421,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'achat_direct',
+          clientRequestId: '33333333-3333-4333-8333-333333333332',
           items: [
             { productId: '1', quantity: 20 },
             { productId: '2', quantity: 10 },
@@ -335,6 +450,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'achat_direct',
+          clientRequestId: '33333333-3333-4333-8333-333333333333',
           items: [{ productId: '1', quantity: 5 }],
         });
 
@@ -354,7 +470,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
           prixConvenu: { toString: () => '1800' },
           statut: 'en_attente',
           recolteOffreId: BigInt(1),
-          clientRequestId: 'idempotent-uuid-001',
+          clientRequestId: '44444444-4444-4444-8444-444444444441',
           createdAt: new Date('2026-09-07T11:00:00.000Z'),
           recolteOffre: {
             id: BigInt(1),
@@ -371,7 +487,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
-          clientRequestId: 'idempotent-uuid-001',
+          clientRequestId: '44444444-4444-4444-8444-444444444441',
           items: [{ productId: '1', quantity: 50 }],
         });
 
@@ -393,7 +509,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
           type: 'commande_ferme',
           quantite: 50,
           recolteOffreId: BigInt(1),
-          clientRequestId: 'idempotent-uuid-001',
+          clientRequestId: '44444444-4444-4444-8444-444444444442',
           recolteOffre: { produitAgricole: { nom: 'Cacao' }, gic: { nom: 'GIC' } },
         },
       ];
@@ -406,7 +522,7 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
         .set('Authorization', `Bearer ${buyer1Token}`)
         .send({
           type: 'commande_ferme',
-          clientRequestId: 'idempotent-uuid-001',
+          clientRequestId: '44444444-4444-4444-8444-444444444442',
           items: [{ productId: '1', quantity: 75 }],
         });
 

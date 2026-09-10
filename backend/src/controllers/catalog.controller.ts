@@ -7,11 +7,11 @@ export async function getProducts(req: Request, res: Response, next: NextFunctio
   try {
     const { page, limit, skip } = getPagination(req);
 
-    // Seules les offres avec du stock disponible (> 0) et un prix serveur défini sont proposées
+    // Seules les offres avec du stock disponible (> 0) et un prix serveur strictement positif (> 0) sont proposées
     const whereClause = {
       quantiteDisponible: { gt: 0 },
       produitAgricole: {
-        prix: { not: null },
+        prix: { not: null, gt: 0 },
       },
     };
 

@@ -179,7 +179,7 @@ describe('Catalog & GIC Endpoints — RBAC, Data Fidelity & Error Handling', () 
         expect.objectContaining({
           where: {
             quantiteDisponible: { gt: 0 },
-            produitAgricole: { prix: { not: null } },
+            produitAgricole: { prix: { not: null, gt: 0 } },
           },
           orderBy: [{ id: 'asc' }],
           skip: 0,

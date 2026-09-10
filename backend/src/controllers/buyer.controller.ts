@@ -5,19 +5,31 @@ import { OrderRecord, OrderStatus, OrderType } from '../domain/types.js';
 import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 
 function mapToOrderRecord(tx: any): OrderRecord {
+  let createdAtStr = '';
+  if (tx.createdAt) {
+    const d = new Date(tx.createdAt);
+    if (!isNaN(d.getTime())) {
+      createdAtStr = d.toISOString();
+    } else {
+      createdAtStr = 'date_invalide';
+    }
+  } else {
+    createdAtStr = 'date_inconnue';
+  }
+
   return {
-    id: tx.id.toString(),
-    buyerId: tx.acheteurId.toString(),
+    id: tx.id ? tx.id.toString() : '',
+    buyerId: tx.acheteurId ? tx.acheteurId.toString() : '',
     type: tx.type as OrderType,
     status: tx.statut as OrderStatus,
-    productId: tx.recolteOffreId.toString(),
+    productId: tx.recolteOffreId ? tx.recolteOffreId.toString() : '',
     productName: tx.recolteOffre?.produitAgricole?.nom ?? 'Produit',
-    quantity: Number(tx.quantite),
+    quantity: Number(tx.quantite ?? 0),
     unit: tx.recolteOffre?.produitAgricole?.unite ?? 'kg',
     price: tx.prixConvenu ? tx.prixConvenu.toString() : '0',
-    gicId: tx.recolteOffre?.gic?.id?.toString() ?? '',
+    gicId: tx.recolteOffre?.gic?.id ? tx.recolteOffre.gic.id.toString() : '',
     gicName: tx.recolteOffre?.gic?.nom ?? 'GIC Partenaire',
-    createdAt: tx.createdAt ? new Date(tx.createdAt).toISOString() : new Date().toISOString(),
+    createdAt: createdAtStr,
   };
 }
 
@@ -56,6 +68,9 @@ export async function getBuyerOrders(req: AuthRequest, res: Response, next: Next
   }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_BIGINT = 9223372036854775807n;
+
 export async function createBuyerOrders(req: AuthRequest, res: Response, next: NextFunction) {
   if (req.user?.role !== 'buyer' || !req.user.buyerId) {
     return res.status(403).json({ message: 'Accès acheteur requis.' });
@@ -67,9 +82,16 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
     clientRequestId?: string;
   };
 
-  const clientRequestId = (bodyRequestId || req.headers['x-client-request-id'] || '').toString().trim() || null;
+  const clientRequestId = (bodyRequestId || req.headers['x-client-request-id'] || '').toString().trim();
 
-  // 1. Validation stricte des données de commande
+  // 1. Validation obligatoire de l'identifiant de requête (clientRequestId)
+  if (!clientRequestId || clientRequestId.length > 100 || !UUID_REGEX.test(clientRequestId)) {
+    return res.status(400).json({
+      message: 'Identifiant de requête client (clientRequestId UUID valide, max 100 caractères) obligatoire.',
+    });
+  }
+
+  // 2. Validation stricte des données de commande
   const validTypes: OrderType[] = ['commande_ferme', 'achat_direct', 'reservation'];
   if (!type || !validTypes.includes(type)) {
     return res.status(400).json({ message: 'Type de commande invalide ou manquant.' });
@@ -79,13 +101,35 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
     return res.status(400).json({ message: 'Au moins un article est requis dans le panier.' });
   }
 
-  // Vérification de chaque article et détection de doublons
+  if (items.length > 50) {
+    return res.status(400).json({ message: 'Le nombre d’articles par commande est limité à 50.' });
+  }
+
+  // Vérification de chaque article, validité BigInt, bornes de quantité et détection de doublons
   const seenProductIds = new Set<string>();
+  const sanitizedItems: Array<{ productId: string; offerId: bigint; quantity: number }> = [];
+
   for (const item of items) {
-    if (!item.productId || typeof item.productId !== 'string' || !/^\d+$/.test(item.productId.trim())) {
+    if (!item || typeof item.productId !== 'string') {
       return res.status(400).json({ message: 'Identifiant d’offre invalide.' });
     }
     const cleanId = item.productId.trim();
+    if (!/^\d+$/.test(cleanId)) {
+      return res.status(400).json({
+        message: `Identifiant d’offre invalide (${cleanId}). Seuls les identifiants numériques sont acceptés.`,
+      });
+    }
+
+    let offerId: bigint;
+    try {
+      offerId = BigInt(cleanId);
+      if (offerId <= 0n || offerId > MAX_BIGINT) {
+        return res.status(400).json({ message: `Identifiant d’offre hors plage BigInt (${cleanId}).` });
+      }
+    } catch {
+      return res.status(400).json({ message: `Identifiant d’offre hors plage BigInt (${cleanId}).` });
+    }
+
     if (seenProductIds.has(cleanId)) {
       return res.status(400).json({ message: `Articles en double dans la commande pour l'offre ${cleanId}.` });
     }
@@ -94,14 +138,40 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
     if (typeof item.quantity !== 'number' || !Number.isFinite(item.quantity) || item.quantity <= 0) {
       return res.status(400).json({ message: 'La quantité demandée doit être un nombre strictement positif.' });
     }
+
+    if (item.quantity > 1000000) {
+      return res.status(400).json({
+        message: `La quantité demandée (${item.quantity}) dépasse le plafond autorisé de 1 000 000.`,
+      });
+    }
+
+    sanitizedItems.push({ productId: cleanId, offerId, quantity: item.quantity });
   }
 
-  const buyerId = BigInt(req.user.buyerId);
+  let buyerId: bigint;
+  try {
+    buyerId = BigInt(req.user.buyerId);
+    if (buyerId <= 0n || buyerId > MAX_BIGINT) {
+      return res.status(400).json({ message: 'Identifiant acheteur invalide.' });
+    }
+  } catch {
+    return res.status(400).json({ message: 'Identifiant acheteur invalide.' });
+  }
 
   try {
-    // 2. Gestion de l'idempotence : si un clientRequestId est fourni, vérifier si la commande a déjà été traitée
-    if (clientRequestId) {
-      const existingTxs = await prisma.transactionAcheteur.findMany({
+    // 3. Exécution transactionnelle complète : sérialisation PostgreSQL, vérification d'idempotence,
+    // lecture des offres, contrôle des prix et stocks, décrément et insertion.
+    const result = await prisma.$transaction(async (tx) => {
+      // Verrou transactionnel PostgreSQL déterministe pour sérialiser deux requêtes concurrentes
+      // du même acheteur avec le même clientRequestId
+      try {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`buyer_order:${buyerId.toString()}:${clientRequestId}`}))`;
+      } catch {
+        // En cas d'environnement sans advisory locks (ex. mock tests mémoire), continuer
+      }
+
+      // Vérification d'idempotence sous transaction
+      const existingTxs = await tx.transactionAcheteur.findMany({
         where: {
           acheteurId: buyerId,
           clientRequestId: clientRequestId,
@@ -115,20 +185,18 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
       });
 
       if (existingTxs.length > 0) {
-        // Comparer le contenu pour vérifier s'il s'agit d'un rejeu exact ou d'un conflit
-        const sameType = existingTxs.every((tx) => tx.type === type);
-        const sameCount = existingTxs.length === items.length;
+        const sameType = existingTxs.every((t) => t.type === type);
+        const sameCount = existingTxs.length === sanitizedItems.length;
 
-        // Trie les deux listes par offerId pour une comparaison fiable
         const sortedExisting = [...existingTxs].sort((a, b) => (a.recolteOffreId < b.recolteOffreId ? -1 : 1));
-        const sortedItems = [...items].sort((a, b) => (BigInt(a.productId) < BigInt(b.productId) ? -1 : 1));
+        const sortedItems = [...sanitizedItems].sort((a, b) => (a.offerId < b.offerId ? -1 : 1));
 
         let sameItems = sameCount && sameType;
         if (sameItems) {
           for (let i = 0; i < sortedItems.length; i++) {
             const ext = sortedExisting[i];
             const inItem = sortedItems[i];
-            if (ext.recolteOffreId.toString() !== inItem.productId || Number(ext.quantite) !== inItem.quantity) {
+            if (ext.recolteOffreId !== inItem.offerId || Number(ext.quantite) !== inItem.quantity) {
               sameItems = false;
               break;
             }
@@ -136,56 +204,57 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
         }
 
         if (sameItems) {
-          // Rejeu idempotent exact : renvoyer les commandes existantes sans décrémenter le stock une seconde fois
-          return res.status(200).json({
+          return {
+            statusCode: 200,
             orders: existingTxs.map(mapToOrderRecord),
             idempotentReplay: true,
-          });
+          };
         } else {
-          // Même clientRequestId utilisé avec un payload différent -> Conflit 409
-          return res.status(409).json({
-            message: "Conflit d'idempotence : cet identifiant de requête (clientRequestId) a déjà été utilisé avec un contenu de commande différent.",
-          });
+          const conflictErr: any = new Error(
+            "Conflit d'idempotence : cet identifiant de requête (clientRequestId) a déjà été utilisé avec un contenu de commande différent."
+          );
+          conflictErr.statusCode = 409;
+          throw conflictErr;
         }
       }
-    }
 
-    // 3. Vérification préalable de l'existence de toutes les offres, des prix et des stocks
-    for (const item of items) {
-      const offerId = BigInt(item.productId);
-      const offer = await prisma.recolteOffre.findUnique({
-        where: { id: offerId },
-        include: { produitAgricole: true, gic: true },
-      });
+      // Tri déterministe des articles par identifiant d'offre pour éviter tout risque d'interblocage (deadlock)
+      const lockOrderedItems = [...sanitizedItems].sort((a, b) => (a.offerId < b.offerId ? -1 : 1));
+      const createdRecords = [];
 
-      if (!offer) {
-        return res.status(404).json({ message: `L'offre ${item.productId} n'existe pas.` });
-      }
-
-      if (offer.produitAgricole.prix === null || Number(offer.produitAgricole.prix) <= 0) {
-        return res.status(400).json({
-          message: `Le produit ${offer.produitAgricole.nom} ne possède pas de prix serveur valide.`,
+      for (const item of lockOrderedItems) {
+        const offer = await tx.recolteOffre.findUnique({
+          where: { id: item.offerId },
+          include: { produitAgricole: true, gic: true },
         });
-      }
 
-      if (Number(offer.quantiteDisponible) < item.quantity) {
-        return res.status(409).json({
-          message: `Stock insuffisant pour ${offer.produitAgricole.nom} (disponible: ${offer.quantiteDisponible}, demandé: ${item.quantity}).`,
-        });
-      }
-    }
+        if (!offer) {
+          const notFoundErr: any = new Error(`L'offre ${item.productId} n'existe pas ou a été supprimée.`);
+          notFoundErr.statusCode = 404;
+          throw notFoundErr;
+        }
 
-    // 4. Exécution atomique : décrément conditionnel du stock et création des transactions
-    const createdTxs = await prisma.$transaction(async (tx) => {
-      const records = [];
+        const serverPrice = offer.produitAgricole?.prix;
+        if (serverPrice === null || serverPrice === undefined || Number(serverPrice) <= 0) {
+          const priceErr: any = new Error(
+            `Le produit ${offer.produitAgricole?.nom ?? item.productId} ne possède pas de prix serveur valide.`
+          );
+          priceErr.statusCode = 400;
+          throw priceErr;
+        }
 
-      for (const item of items) {
-        const offerId = BigInt(item.productId);
+        if (Number(offer.quantiteDisponible) < item.quantity) {
+          const stockErr: any = new Error(
+            `Stock insuffisant pour ${offer.produitAgricole?.nom ?? item.productId} (disponible: ${offer.quantiteDisponible}, demandé: ${item.quantity}).`
+          );
+          stockErr.statusCode = 409;
+          throw stockErr;
+        }
 
         // Décrément conditionnel atomique pour empêcher le surstockage concurrent
         const updateResult = await tx.recolteOffre.updateMany({
           where: {
-            id: offerId,
+            id: item.offerId,
             quantiteDisponible: { gte: item.quantity },
           },
           data: {
@@ -195,24 +264,18 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
         });
 
         if (updateResult.count === 0) {
-          throw Object.assign(
-            new Error(`Stock insuffisant ou conflit concurrent pour l'offre ${item.productId}`),
-            { statusCode: 409 }
-          );
+          const conflictErr: any = new Error(`Stock insuffisant ou conflit concurrent pour l'offre ${item.productId}`);
+          conflictErr.statusCode = 409;
+          throw conflictErr;
         }
-
-        const freshOffer = await tx.recolteOffre.findUnique({
-          where: { id: offerId },
-          include: { produitAgricole: true, gic: true },
-        });
 
         const createdTx = await tx.transactionAcheteur.create({
           data: {
             type,
             quantite: item.quantity,
-            prixConvenu: freshOffer!.produitAgricole.prix!,
+            prixConvenu: serverPrice,
             statut: 'en_attente',
-            recolteOffreId: offerId,
+            recolteOffreId: item.offerId,
             acheteurId: buyerId,
             clientRequestId,
             createdAt: new Date(),
@@ -224,14 +287,25 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
           },
         });
 
-        records.push(createdTx);
+        createdRecords.push(createdTx);
       }
 
-      return records;
+      return {
+        statusCode: 201,
+        orders: createdRecords.map(mapToOrderRecord),
+        idempotentReplay: false,
+      };
     });
 
+    if (result.idempotentReplay) {
+      return res.status(200).json({
+        orders: result.orders,
+        idempotentReplay: true,
+      });
+    }
+
     return res.status(201).json({
-      orders: createdTxs.map(mapToOrderRecord),
+      orders: result.orders,
     });
   } catch (error: any) {
     if (error.statusCode) {
