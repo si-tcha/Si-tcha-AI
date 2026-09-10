@@ -576,6 +576,154 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
         (loggerModule.logger as any).warn = originalWarnMethod;
       }
     });
+
+    it('Protection stricte des téléphones et préservation des codes techniques (Prisma P2002, Zod invalid_type)', async () => {
+      const { Writable } = await import('stream');
+      const pinoModule = await import('pino');
+      const pino = pinoModule.default || pinoModule;
+      const {
+        SENSITIVE_PATHS,
+        sanitizeErrorForLog,
+        sanitizeLogString,
+        sanitizeDataRecursively,
+        maskPhone,
+      } = await import('../src/middlewares/logger.js');
+
+      let streamOutput = '';
+      const memStream = new Writable({
+        write(chunk, _encoding, callback) {
+          streamOutput += chunk.toString();
+          callback();
+        },
+      });
+
+      const auditLogger = (pino as any)(
+        {
+          level: 'info',
+          redact: {
+            paths: SENSITIVE_PATHS,
+            censor: '[REDACTED]',
+          },
+          formatters: {
+            log(obj: Record<string, any>) {
+              return sanitizeDataRecursively(obj);
+            },
+          },
+          serializers: {
+            err: sanitizeErrorForLog,
+          },
+          hooks: {
+            logMethod(inputArgs: any[], method: any) {
+              const sanitizedArgs = inputArgs.map((arg) => {
+                if (typeof arg === 'string') return sanitizeLogString(arg);
+                if (arg instanceof Error) return arg;
+                if (arg && typeof arg === 'object') return sanitizeDataRecursively(arg);
+                return arg;
+              });
+              return method.apply(this, sanitizedArgs);
+            },
+          },
+        },
+        memStream
+      );
+
+      // Sentinelles
+      const RAW_PHONE_SENTINEL_1 = '+237699112233';
+      const RAW_PHONE_SENTINEL_2 = '+237655443322';
+      const RAW_PHONE_SENTINEL_3 = '+237600000001';
+      const MASKED_PHONE_1 = maskPhone(RAW_PHONE_SENTINEL_1); // '+2376******33'
+      const MASKED_PHONE_2 = maskPhone(RAW_PHONE_SENTINEL_2); // '+2376******22'
+      const MASKED_PHONE_3 = maskPhone(RAW_PHONE_SENTINEL_3); // '+2376******01'
+
+      const OTP_SENTINEL_1 = '789012';
+      const OTP_SENTINEL_2 = '345678';
+      const OTP_SENTINEL_3 = '901234';
+
+      // 1. Log d'un payload contenant numéros de téléphone et codes secrets (OTP, verificationCode, smsCode, body.code)
+      const inputPayload = {
+        user: {
+          id: 'usr-phone-test-1',
+          phone: RAW_PHONE_SENTINEL_1,
+          phoneNumber: RAW_PHONE_SENTINEL_2,
+          contact: RAW_PHONE_SENTINEL_3,
+        },
+        authSecrets: {
+          otpCode: OTP_SENTINEL_1,
+          verificationCode: OTP_SENTINEL_2,
+          smsCode: OTP_SENTINEL_3,
+        },
+        body: {
+          code: '112233',
+          phone: RAW_PHONE_SENTINEL_1,
+        },
+      };
+
+      const clonedPayloadBefore = JSON.parse(JSON.stringify(inputPayload));
+
+      auditLogger.info(inputPayload, 'Test de journalisation téléphone et secrets');
+
+      // 2. Log d'un code Prisma technique (P2002)
+      const prismaError: any = new Error('Unique constraint failed on the fields: (`contact`)');
+      prismaError.name = 'PrismaClientKnownRequestError';
+      prismaError.code = 'P2002';
+      prismaError.meta = { target: ['contact'] };
+      const clonedPrismaError = { name: prismaError.name, code: prismaError.code };
+
+      auditLogger.error({ err: prismaError }, 'Erreur de contrainte Prisma');
+
+      // 3. Log d'une erreur de validation Zod contenant un code technique (invalid_type, too_small)
+      const zodErrorPayload = {
+        name: 'ZodError',
+        issues: [
+          {
+            code: 'invalid_type',
+            expected: 'string',
+            received: 'number',
+            path: ['body', 'phone'],
+            message: 'Numéro attendu',
+          },
+          {
+            code: 'too_small',
+            minimum: 9,
+            path: ['body', 'pin'],
+            message: 'Trop court',
+          },
+        ],
+      };
+      const clonedZodBefore = JSON.parse(JSON.stringify(zodErrorPayload));
+
+      auditLogger.warn({ validation: zodErrorPayload }, 'Erreur de validation Zod');
+
+      // Assertions :
+      // 1. NON-MUTATION des objets originaux
+      expect(inputPayload).toEqual(clonedPayloadBefore);
+      expect(inputPayload.user.phone).toBe(RAW_PHONE_SENTINEL_1);
+      expect(prismaError.code).toBe(clonedPrismaError.code);
+      expect(zodErrorPayload).toEqual(clonedZodBefore);
+
+      // 2. AUCUN numéro brut ne doit apparaître dans le flux JSON Pino
+      expect(streamOutput).not.toContain(RAW_PHONE_SENTINEL_1);
+      expect(streamOutput).not.toContain(RAW_PHONE_SENTINEL_2);
+      expect(streamOutput).not.toContain(RAW_PHONE_SENTINEL_3);
+
+      // 3. Les numéros masqués DOIVENT être présents
+      expect(streamOutput).toContain(MASKED_PHONE_1);
+      expect(streamOutput).toContain(MASKED_PHONE_2);
+      expect(streamOutput).toContain(MASKED_PHONE_3);
+
+      // 4. Les codes OTP et de vérification sont STRICTEMENT absents (remplacés par [REDACTED])
+      expect(streamOutput).not.toContain(OTP_SENTINEL_1);
+      expect(streamOutput).not.toContain(OTP_SENTINEL_2);
+      expect(streamOutput).not.toContain(OTP_SENTINEL_3);
+      expect(streamOutput).not.toContain('112233'); // body.code
+
+      // 5. Le code Prisma P2002 est STRICTEMENT PRÉSERVÉ dans les logs
+      expect(streamOutput).toContain('P2002');
+
+      // 6. Les codes techniques Zod (invalid_type, too_small) sont STRICTEMENT PRÉSERVÉS
+      expect(streamOutput).toContain('invalid_type');
+      expect(streamOutput).toContain('too_small');
+    });
   });
 
   describe('4. Healthcheck de processus et Readiness probe', () => {

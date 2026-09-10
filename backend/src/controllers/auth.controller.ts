@@ -5,6 +5,7 @@ import prisma from '../lib/prisma.js';
 import { defaultOtpProvider, generateSecureOtp } from '../services/otpProvider.js';
 import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
 import { getJwtSecret, protect, requireAuth, requireActive, requireRole, isAdmin, isGicLeader } from '../middlewares/auth.js';
+import { maskPhone } from '../middlewares/logger.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -344,14 +345,14 @@ export async function resendOtp(req: Request, res: Response) {
   // Ne pas générer ni persister d'OTP en base, retourner une réponse publique générique
   if (!targetAccount) {
     if (req.log?.info) {
-      req.log.info({ phone: canonicalPhone, role }, 'Resend OTP : compte introuvable ou rôle invalide');
+      req.log.info({ phone: maskPhone(canonicalPhone), role }, 'Resend OTP : compte introuvable ou rôle invalide');
     }
     return res.status(200).json(GENERIC_RESPONSE);
   }
 
   if (isAlreadyVerified) {
     if (req.log?.info) {
-      req.log.info({ phone: canonicalPhone, role }, 'Resend OTP : compte déjà vérifié');
+      req.log.info({ phone: maskPhone(canonicalPhone), role }, 'Resend OTP : compte déjà vérifié');
     }
     return res.status(200).json(GENERIC_RESPONSE);
   }
@@ -383,7 +384,7 @@ export async function resendOtp(req: Request, res: Response) {
   // 6. Si l'envoi échoue après persistance : retourner 503 sans valider le compte
   if (!smsResult.success) {
     if (req.log?.error) {
-      req.log.error({ phone: canonicalPhone, error: smsResult.error }, 'Échec d’envoi SMS par le provider');
+      req.log.error({ phone: maskPhone(canonicalPhone), error: smsResult.error }, 'Échec d’envoi SMS par le provider');
     }
     return res.status(503).json({
       message: 'Le service SMS est temporairement indisponible. Veuillez réessayer plus tard.',
