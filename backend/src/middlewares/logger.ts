@@ -44,6 +44,9 @@ export const SENSITIVE_PATHS = [
   '*.DATABASE_URL',
 ];
 
+export const SENSITIVE_KEY_REGEX =
+  /^(password|passwd|pwd|secret|token|pin|otp|code|refreshtoken|authorization|cookie|apikey|api_key|access_token|databaseurl|database_url|dburl)$/i;
+
 /**
  * Nettoie une chaîne de texte de tous les identifiants, mots de passe, tokens et secrets sensibles.
  */
@@ -72,9 +75,61 @@ export function sanitizeLogString(str?: string | null): string {
 }
 
 /**
+ * Assainit de façon strictement récursive n'importe quel objet ou tableau
+ * SANS JAMAIS muter les objets ou tableaux originaux.
+ */
+export function sanitizeDataRecursively(data: any, seen = new WeakSet()): any {
+  if (data === null || data === undefined) {
+    return data;
+  }
+
+  if (typeof data === 'string') {
+    return sanitizeLogString(data);
+  }
+
+  if (typeof data !== 'object') {
+    return data;
+  }
+
+  // Protection contre les références circulaires
+  if (seen.has(data)) {
+    return '[CIRCULAR]';
+  }
+  seen.add(data);
+
+  if (data instanceof Date) {
+    return new Date(data.getTime());
+  }
+
+  if (data instanceof RegExp) {
+    return data;
+  }
+
+  if (data instanceof Error) {
+    return sanitizeErrorForLog(data);
+  }
+
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeDataRecursively(item, seen));
+  }
+
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (SENSITIVE_KEY_REGEX.test(key)) {
+      result[key] = '[REDACTED]';
+    } else {
+      result[key] = sanitizeDataRecursively(value, seen);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Sérialiseur sécurisé pour les erreurs :
  * Conserve le nom, le code et le statut HTTP tout en éliminant toute fuite
  * de credentials ou tokens dans le message ou la stack trace.
+ * IMPORTANT : Ne mute JAMAIS l'objet Error original.
  */
 export function sanitizeErrorForLog(err: any): Record<string, unknown> {
   if (!err) {
@@ -85,23 +140,16 @@ export function sanitizeErrorForLog(err: any): Record<string, unknown> {
     return { message: sanitizeLogString(err) };
   }
 
-  if (err.message && typeof err.message === 'string') {
-    err.message = sanitizeLogString(err.message);
-  }
-
-  if (err.stack && typeof err.stack === 'string') {
-    err.stack = sanitizeLogString(err.stack);
-  }
-
+  // Ne JAMAIS muter l'objet Error original
   const sanitized: Record<string, unknown> = {
     name: err.name || 'Error',
     code: err.code,
     statusCode: err.statusCode || err.status,
-    message: err.message || 'No error message',
+    message: sanitizeLogString(err.message || 'No error message'),
   };
 
   if (err.stack) {
-    sanitized.stack = err.stack;
+    sanitized.stack = sanitizeLogString(err.stack);
   }
 
   // Métadonnées utiles pour Prisma (sans exposer de raw query ni de credentials)
@@ -134,38 +182,34 @@ export const logger = pino({
   },
   hooks: {
     logMethod(inputArgs: any[], method: any) {
-      for (let i = 0; i < inputArgs.length; i++) {
-        const arg = inputArgs[i];
+      // Cloner et assainir de manière récursive sans jamais muter les arguments originaux
+      const sanitizedArgs = inputArgs.map((arg) => {
         if (typeof arg === 'string') {
-          inputArgs[i] = sanitizeLogString(arg);
-        } else if (arg && typeof arg === 'object') {
-          if (arg instanceof Error) {
-            if (arg.message) arg.message = sanitizeLogString(arg.message);
-            if (arg.stack) arg.stack = sanitizeLogString(arg.stack);
-          } else if (arg.err instanceof Error) {
-            if (arg.err.message) arg.err.message = sanitizeLogString(arg.err.message);
-            if (arg.err.stack) arg.err.stack = sanitizeLogString(arg.err.stack);
-          } else if (arg.error instanceof Error) {
-            if (arg.error.message) arg.error.message = sanitizeLogString(arg.error.message);
-            if (arg.error.stack) arg.error.stack = sanitizeLogString(arg.error.stack);
-          }
-          if (typeof arg.msg === 'string') {
-            arg.msg = sanitizeLogString(arg.msg);
-          }
-          if (typeof arg.message === 'string') {
-            arg.message = sanitizeLogString(arg.message);
-          }
+          return sanitizeLogString(arg);
         }
+        if (arg instanceof Error) {
+          // Laisser le serializer s'en occuper sans muter l'erreur originale
+          return arg;
+        }
+        if (arg && typeof arg === 'object') {
+          return sanitizeDataRecursively(arg);
+        }
+        return arg;
+      });
+
+      // Si l'appel est logger.error(err) avec une Error seule,
+      // Pino utiliserait err.message original pour le champ "msg".
+      // On passe explicitement le message assaini sans muter err.
+      if (inputArgs.length === 1 && inputArgs[0] instanceof Error) {
+        return method.call(this, { err: inputArgs[0] }, sanitizeLogString(inputArgs[0].message));
       }
-      return method.apply(this, inputArgs);
+
+      return method.apply(this, sanitizedArgs);
     },
   },
   formatters: {
     log(obj: Record<string, any>) {
-      if (typeof obj.msg === 'string') {
-        obj.msg = sanitizeLogString(obj.msg);
-      }
-      return obj;
+      return sanitizeDataRecursively(obj);
     },
   },
   transport:

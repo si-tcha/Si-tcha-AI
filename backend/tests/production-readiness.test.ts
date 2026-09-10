@@ -225,11 +225,50 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(SENSITIVE_PATHS).toContain('databaseUrl');
     });
 
-    it('Preuve réelle de masquage via flux mémoire Pino avec sentinelles', async () => {
+    it('sanitizeDataRecursively assainit récursivement à toute profondeur sans muter l’objet original', async () => {
+      const { sanitizeDataRecursively } = await import('../src/middlewares/logger.js');
+
+      const original = {
+        level1: {
+          level2: {
+            level3: {
+              password: 'super-secret-password-123',
+              apiKey: 'api-key-xyz-789',
+              nestedArray: [
+                { pin: '4321', label: 'safe-label' },
+                { connectionString: 'postgresql://admin:secretPass@localhost:5432/db' },
+              ],
+            },
+          },
+        },
+        safeProperty: 'hello world',
+      };
+
+      const clonedBefore = JSON.parse(JSON.stringify(original));
+      const sanitized = sanitizeDataRecursively(original);
+
+      // 1. Non-mutation stricte de l'original
+      expect(original).toEqual(clonedBefore);
+      expect(original.level1.level2.level3.password).toBe('super-secret-password-123');
+      expect(original.level1.level2.level3.apiKey).toBe('api-key-xyz-789');
+      expect(original.level1.level2.level3.nestedArray[0].pin).toBe('4321');
+
+      // 2. Assainissement récursif complet
+      expect(sanitized.level1.level2.level3.password).toBe('[REDACTED]');
+      expect(sanitized.level1.level2.level3.apiKey).toBe('[REDACTED]');
+      expect(sanitized.level1.level2.level3.nestedArray[0].pin).toBe('[REDACTED]');
+      expect(sanitized.level1.level2.level3.nestedArray[0].label).toBe('safe-label');
+      expect(sanitized.level1.level2.level3.nestedArray[1].connectionString).toContain('[REDACTED_SECRET]');
+      expect(sanitized.safeProperty).toBe('hello world');
+    });
+
+    it('Preuve réelle de masquage récursif via flux mémoire Pino avec sentinelles et non-mutation', async () => {
       const { Writable } = await import('stream');
       const pinoModule = await import('pino');
       const pino = pinoModule.default || pinoModule;
-      const { sanitizeErrorForLog, sanitizeLogString } = await import('../src/middlewares/logger.js');
+      const { sanitizeErrorForLog, sanitizeLogString, sanitizeDataRecursively } = await import(
+        '../src/middlewares/logger.js'
+      );
 
       let emittedLogs = '';
       const memStream = new Writable({
@@ -248,10 +287,7 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
           },
           formatters: {
             log(obj: Record<string, any>) {
-              if (typeof obj.msg === 'string') {
-                obj.msg = sanitizeLogString(obj.msg);
-              }
-              return obj;
+              return sanitizeDataRecursively(obj);
             },
           },
           serializers: {
@@ -260,71 +296,93 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
           },
           hooks: {
             logMethod(inputArgs: any[], method: any) {
-              for (let i = 0; i < inputArgs.length; i++) {
-                const arg = inputArgs[i];
+              const sanitizedArgs = inputArgs.map((arg) => {
                 if (typeof arg === 'string') {
-                  inputArgs[i] = sanitizeLogString(arg);
-                } else if (arg && typeof arg === 'object') {
-                  if (arg instanceof Error) {
-                    if (arg.message) arg.message = sanitizeLogString(arg.message);
-                    if (arg.stack) arg.stack = sanitizeLogString(arg.stack);
-                  } else if (arg.err instanceof Error) {
-                    if (arg.err.message) arg.err.message = sanitizeLogString(arg.err.message);
-                    if (arg.err.stack) arg.err.stack = sanitizeLogString(arg.err.stack);
-                  } else if (arg.error instanceof Error) {
-                    if (arg.error.message) arg.error.message = sanitizeLogString(arg.error.message);
-                    if (arg.error.stack) arg.error.stack = sanitizeLogString(arg.error.stack);
-                  }
-                  if (typeof arg.msg === 'string') {
-                    arg.msg = sanitizeLogString(arg.msg);
-                  }
-                  if (typeof arg.message === 'string') {
-                    arg.message = sanitizeLogString(arg.message);
-                  }
+                  return sanitizeLogString(arg);
                 }
+                if (arg instanceof Error) {
+                  return arg;
+                }
+                if (arg && typeof arg === 'object') {
+                  return sanitizeDataRecursively(arg);
+                }
+                return arg;
+              });
+
+              if (inputArgs.length === 1 && inputArgs[0] instanceof Error) {
+                return method.call(this, { err: inputArgs[0] }, sanitizeLogString(inputArgs[0].message));
               }
-              return method.apply(this, inputArgs);
+
+              return method.apply(this, sanitizedArgs);
             },
           },
         },
         memStream
       );
 
-      // Sentinelles hautement reconnaissables
+      // Sentinelles hautement reconnaissables à différentes profondeurs
       const DB_PASSWORD_SENTINEL = 'SuperSecretDbPassword42!';
       const STACK_SECRET_SENTINEL = 'internal_secret_token_in_stack_trace_999';
       const BEARER_SENTINEL = 'bearer_sentinel_xyz123abc';
       const COOKIE_SENTINEL = 'cookie_sentinel_secret_val_456';
       const PIN_SENTINEL = '9876';
       const OTP_SENTINEL = '543210';
+      const DEEP_API_KEY_SENTINEL = 'deep_secret_api_key_888';
+      const NESTED_PASSWORD_SENTINEL = 'nested_secret_pwd_777';
 
-      // 1. Log d'un objet avec clés sensibles
-      testLogger.info({
-        pin: PIN_SENTINEL,
-        otp: OTP_SENTINEL,
+      // 1. Log d'un objet métier multi-niveaux avec secrets imbriqués
+      const businessObject = {
+        txId: 'tx-001',
+        meta: {
+          level1: {
+            level2: {
+              level3: {
+                password: NESTED_PASSWORD_SENTINEL,
+                apiKey: DEEP_API_KEY_SENTINEL,
+                databaseUrl: `postgresql://user:${DB_PASSWORD_SENTINEL}@db:5432/db`,
+              },
+            },
+          },
+        },
+        items: [
+          { name: 'Item 1', credentials: { pin: PIN_SENTINEL, otp: OTP_SENTINEL } },
+        ],
         req: {
           headers: {
             authorization: `Bearer ${BEARER_SENTINEL}`,
             cookie: `session_id=${COOKIE_SENTINEL}`,
           },
         },
-      });
+      };
+
+      testLogger.info(businessObject, 'Opération métier avec données imbriquées');
 
       // 2. Log d'une erreur contenant un secret de connexion et une stack trace sensible
-      const sensitiveError = new Error(`Connection failed to postgresql://sitcha_user:${DB_PASSWORD_SENTINEL}@db:5432/sitcha_db`);
-      sensitiveError.stack = `Error: Connection failed\n    at SecretAuth (/app/auth.js:10:5)\n    at token=${STACK_SECRET_SENTINEL}`;
+      const originalErrorMsg = `Connection failed to postgresql://sitcha_user:${DB_PASSWORD_SENTINEL}@db:5432/sitcha_db`;
+      const originalErrorStack = `Error: Connection failed\n    at SecretAuth (/app/auth.js:10:5)\n    at token=${STACK_SECRET_SENTINEL}`;
+      const sensitiveError = new Error(originalErrorMsg);
+      sensitiveError.stack = originalErrorStack;
 
       testLogger.error({ err: sensitiveError });
 
-      // Vérification formelle : aucune des sentinelles ne doit apparaître dans la sortie textuelle brute
+      // Vérification 1 : NON-MUTATION stricte des objets originaux
+      expect(sensitiveError.message).toBe(originalErrorMsg);
+      expect(sensitiveError.stack).toBe(originalErrorStack);
+      expect(businessObject.meta.level1.level2.level3.password).toBe(NESTED_PASSWORD_SENTINEL);
+      expect(businessObject.meta.level1.level2.level3.apiKey).toBe(DEEP_API_KEY_SENTINEL);
+      expect(businessObject.items[0].credentials.pin).toBe(PIN_SENTINEL);
+
+      // Vérification 2 : AUCUNE des sentinelles ne doit apparaître dans la sortie textuelle brute
       expect(emittedLogs).not.toContain(DB_PASSWORD_SENTINEL);
       expect(emittedLogs).not.toContain(STACK_SECRET_SENTINEL);
       expect(emittedLogs).not.toContain(BEARER_SENTINEL);
       expect(emittedLogs).not.toContain(COOKIE_SENTINEL);
       expect(emittedLogs).not.toContain(PIN_SENTINEL);
       expect(emittedLogs).not.toContain(OTP_SENTINEL);
+      expect(emittedLogs).not.toContain(DEEP_API_KEY_SENTINEL);
+      expect(emittedLogs).not.toContain(NESTED_PASSWORD_SENTINEL);
 
-      // Vérification de la présence des marqueurs de censure
+      // Vérification 3 : Présence des marqueurs de censure
       expect(emittedLogs).toContain('[REDACTED]');
       expect(emittedLogs).toContain('[REDACTED_SECRET]');
     });
