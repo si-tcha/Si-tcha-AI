@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS "ParcelEntry" (
     CONSTRAINT "ParcelEntry_pkey" PRIMARY KEY ("id")
 );
 
+-- Si ParcelEntry a été créée préalablement par une migration antérieure (ex: Bloc 3 sans actualHarvestDate),
+-- s'assurer que la colonne actualHarvestDate est systématiquement ajoutée de façon forward-only et idempotente :
+ALTER TABLE "ParcelEntry"
+ADD COLUMN IF NOT EXISTS "actualHarvestDate" VARCHAR(50);
+
 DO $$
 BEGIN
   IF NOT EXISTS (
