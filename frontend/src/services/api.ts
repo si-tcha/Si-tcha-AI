@@ -577,10 +577,12 @@ export const clearToken = clearSession;
 export const clearRole = clearSession;
 
 export async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
-  // Capture atomique du token et de la génération de session AVANT le fetch
+  // Capturer la génération AVANT toute lecture asynchrone du stockage. Une mutation
+  // de session qui démarre pendant readStoredSession() ne doit jamais attribuer son
+  // ticket plus récent au token plus ancien que cette lecture vient de retourner.
+  const requestTicket = sessionMutationSeq;
   const session = memorySession ?? (await readStoredSession());
   const token = session?.token ?? null;
-  const requestTicket = sessionMutationSeq;
   const baseUrl = getApiBaseUrl();
   let response: Response;
 
@@ -608,15 +610,15 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
       (Array.isArray(payload?.errors) ? payload.errors.map((e: any) => e.message || e).join(', ') : 'Erreur API SI-TCHA.');
     const requireOtp = Boolean(payload?.requireOtp);
 
-    // Ne jamais déclencher d'invalidation globale sur 401 pour les routes d'authentification publique :
-    // /auth/login, /auth/verify-otp, /auth/resend-otp, /auth/register
-    // Un échec de tentative de connexion ne doit jamais déconnecter une session existante.
-    const isPublicAuthEndpoint = /^\/?auth\/(login|verify-otp|resend-otp|register)(\/|\?|$)/.test(path);
+    // Les routes qui pilotent elles-mêmes le cycle de session ne délèguent jamais
+    // leur 401 au handler global. En particulier, signOut() reste l'unique
+    // propriétaire du nettoyage local lorsqu'un /auth/logout retourne 401.
+    const isSessionAuthEndpoint = /^\/?auth\/(login|verify-otp|resend-otp|register|logout)(\/|\?|$)/.test(path);
 
     // Sur 401 sur route protégée :
     // Déléguer entièrement au handler AuthContext lorsqu'il est enregistré (un seul propriétaire, un seul ticket).
     // Sinon, fallback direct vers clearSessionIfTokenMatches.
-    if (response.status === 401 && token && !isPublicAuthEndpoint) {
+    if (response.status === 401 && token && !isSessionAuthEndpoint) {
       if (unauthorizedHandler) {
         // Le handler réalise l'éviction atomique ET la transition React en un seul ticket.
         // Il est awaité pour garantir que la déconnexion est terminée avant de throw.
