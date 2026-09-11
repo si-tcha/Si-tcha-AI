@@ -4,15 +4,10 @@ import prisma from '../lib/prisma.js';
 import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
+import { getConfig } from '../config/env.js';
+
 export function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error("FATAL: La variable d'environnement JWT_SECRET n'est pas définie. Le serveur ne peut pas démarrer en toute sécurité.");
-    }
-    return 'dev-jwt-secret-placeholder-minimum-32-chars-key';
-  }
-  return secret;
+  return getConfig().JWT_SECRET;
 }
 
 /**

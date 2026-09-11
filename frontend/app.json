@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
-    "scheme": "frontend",
+    "scheme": "sitcha",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/logo.png",
@@ -38,6 +38,13 @@
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
           }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SI-TCHA AI a besoin d'accéder à vos photos pour sélectionner des photos de cultures ou de récoltes.",
+          "cameraPermission": "SI-TCHA AI a besoin d'accéder à votre appareil photo pour photographier vos cultures et analyser leur état."
         }
       ],
       "expo-image",

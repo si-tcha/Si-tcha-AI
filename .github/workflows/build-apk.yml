@@ -9,8 +9,10 @@ on:
 
 jobs:
   build:
-    name: Build Android Debug APK
+    name: Build Android Internal Test Debug APK
     runs-on: ubuntu-latest
+    env:
+      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
 
     steps:
       - name: Free Disk Space on Runner
@@ -40,6 +42,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'frontend/package-lock.json'
 
+      - name: Validate EXPO_PUBLIC_API_URL Configuration
+        run: |
+          echo "Vérification stricte de la variable EXPO_PUBLIC_API_URL..."
+          node scripts/validate-api-url.mjs "$EXPO_PUBLIC_API_URL"
+        env:
+          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
         with:
@@ -57,6 +66,8 @@ jobs:
         run: |
           cd frontend
           npx expo prebuild --platform android --clean
+        env:
+          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
 
       - name: Make gradlew executable
         run: |
@@ -67,11 +78,12 @@ jobs:
           cd frontend/android
           ./gradlew assembleDebug --no-daemon
         env:
+          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SI-TCHA-AI-Debug-APK
+          name: SI-TCHA-AI-Internal-Test-Debug-APK
           path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
