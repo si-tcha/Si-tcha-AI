@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   apiClient,
   SessionResponse,
@@ -45,108 +45,187 @@ export interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+// ─── COORDINATEUR DE SESSION ATOMIQUE (Latest-Wins) ──────────────────────────
 
-export function useAuthProviderState(): AuthContextType {
-  // Source de vérité unique pour la session
-  const [session, setSession] = useState<AuthSessionState>({
+export class AuthSessionCoordinator {
+  private sessionOpSeq = 0;
+  private session: AuthSessionState = {
     status: 'loading',
     user: null,
     token: null,
     error: null,
-  });
+  };
+  private listeners = new Set<() => void>();
 
-  const sessionOpSeq = useRef(0);
+  constructor() {
+    this.session = {
+      status: 'loading',
+      user: null,
+      token: null,
+      error: null,
+    };
+  }
 
-  // Opération atomique centralisée de transition de session
-  const commitSession = useCallback(
-    async (
-      opId: number,
-      nextSession: AuthSessionState,
-      userToActivate: UserProfile | null,
-      options?: { saveToken?: string | null; runSync?: boolean }
-    ): Promise<boolean> => {
-      // Si une opération plus récente a débuté, rejeter immédiatement
-      if (sessionOpSeq.current !== opId) {
-        return false;
-      }
+  public subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
 
-      if (userToActivate && userToActivate.role === 'buyer') {
-        const buyerId = (userToActivate.buyerId || userToActivate.id || '').trim();
-        if (isValidBuyerId(buyerId)) {
-          dbService.setActiveBuyerId(buyerId);
-          await cartStore.setBuyerId(buyerId);
+  private notify() {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
 
-          // Revérifier après l'attente asynchrone de cartStore
-          if (sessionOpSeq.current !== opId) {
-            return false;
-          }
+  public getState = (): AuthSessionState => {
+    return this.session;
+  };
 
-          if (options?.saveToken) {
-            await saveSession(options.saveToken, userToActivate);
-          }
+  public getSessionOpSeq = (): number => {
+    return this.sessionOpSeq;
+  };
 
-          if (sessionOpSeq.current !== opId) {
-            return false;
-          }
+  public commitSession = async (
+    opId: number,
+    nextSession: AuthSessionState,
+    userToActivate: UserProfile | null,
+    options?: { saveToken?: string | null; runSync?: boolean }
+  ): Promise<boolean> => {
+    // Si une opération plus récente a débuté, rejeter immédiatement
+    if (opId < this.sessionOpSeq) {
+      return false;
+    }
+    this.sessionOpSeq = Math.max(this.sessionOpSeq, opId);
 
-          setSession(nextSession);
+    if (userToActivate && userToActivate.role === 'buyer') {
+      const buyerId = (userToActivate.buyerId || userToActivate.id || '').trim();
+      if (isValidBuyerId(buyerId)) {
+        dbService.setActiveBuyerId(buyerId);
+        await cartStore.setBuyerId(buyerId);
 
-          if (options?.runSync) {
-            dbService.syncBuyerData(buyerId).catch(() => {});
-          }
-          return true;
+        // Revérifier après l'attente asynchrone de cartStore
+        if (this.sessionOpSeq > opId) {
+          return false;
         }
+
+        if (options?.saveToken) {
+          await saveSession(options.saveToken, userToActivate, opId);
+        }
+
+        if (this.sessionOpSeq > opId) {
+          return false;
+        }
+
+        this.session = nextSession;
+        this.notify();
+
+        if (options?.runSync) {
+          dbService.syncBuyerData(buyerId).catch(() => {});
+        }
+        return true;
       }
+    }
 
-      // Rôle non-acheteur, non-connecté ou déconnexion
-      cartStore.reset();
-      dbService.setActiveBuyerId(null);
+    // Rôle non-acheteur, non-connecté ou déconnexion
+    cartStore.reset();
+    dbService.setActiveBuyerId(null);
 
-      if (sessionOpSeq.current !== opId) {
-        return false;
+    if (this.sessionOpSeq > opId) {
+      return false;
+    }
+
+    this.session = nextSession;
+    this.notify();
+    return true;
+  };
+
+  public signIn = async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {
+    const opId = ++this.sessionOpSeq;
+    const res = await apiClient.login(phone, pin, role);
+    if (this.sessionOpSeq !== opId) {
+      return { message: 'Opération de session obsolète', obsolete: true };
+    }
+    if (res.token && res.user) {
+      const committed = await this.commitSession(
+        opId,
+        {
+          status: 'authenticated',
+          user: res.user,
+          token: res.token,
+          error: null,
+        },
+        res.user,
+        { saveToken: res.token, runSync: true }
+      );
+      if (!committed) {
+        return { message: 'Opération de session obsolète', obsolete: true };
       }
+    }
+    return res;
+  };
 
-      setSession(nextSession);
-      return true;
-    },
-    []
-  );
+  public completeOtp = async (phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> => {
+    const opId = ++this.sessionOpSeq;
+    const res = await apiClient.verifyOtp(phone, code, role);
+    if (this.sessionOpSeq !== opId) {
+      return { message: 'Opération de session obsolète', obsolete: true };
+    }
+    if (res.token && res.user) {
+      const committed = await this.commitSession(
+        opId,
+        {
+          status: 'authenticated',
+          user: res.user,
+          token: res.token,
+          error: null,
+        },
+        res.user,
+        { saveToken: res.token, runSync: true }
+      );
+      if (!committed) {
+        return { message: 'Opération de session obsolète', obsolete: true };
+      }
+    }
+    return res;
+  };
 
-  const signOut = useCallback(async () => {
-    const opId = ++sessionOpSeq.current;
+  public signOut = async (): Promise<void> => {
+    const opId = ++this.sessionOpSeq;
     try {
       await apiClient.logout();
     } catch {
       // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
-      await clearSession();
-      if (sessionOpSeq.current === opId) {
+      if (this.sessionOpSeq === opId) {
+        await clearSession(opId);
         cartStore.reset();
         dbService.setActiveBuyerId(null);
-        setSession({
+        this.session = {
           status: 'unauthenticated',
           user: null,
           token: null,
           error: null,
-        });
+        };
+        this.notify();
       }
     }
-  }, []);
+  };
 
-  const refreshUser = useCallback(async (): Promise<RefreshUserResult> => {
-    const opId = ++sessionOpSeq.current;
+  public refreshUser = async (): Promise<RefreshUserResult> => {
+    const opId = ++this.sessionOpSeq;
     try {
       const res = await apiClient.getMe();
-      if (sessionOpSeq.current !== opId) {
+      if (this.sessionOpSeq !== opId) {
         return { type: 'obsolete' };
       }
       if (res.user) {
         const currentToken = await readToken();
-        if (sessionOpSeq.current !== opId) {
+        if (this.sessionOpSeq !== opId) {
           return { type: 'obsolete' };
         }
-        const committed = await commitSession(
+        const committed = await this.commitSession(
           opId,
           {
             status: 'authenticated',
@@ -164,11 +243,11 @@ export function useAuthProviderState(): AuthContextType {
       }
       return { type: 'server_error', status: 500, message: 'Réponse utilisateur invalide' };
     } catch (err: any) {
-      if (sessionOpSeq.current !== opId) {
+      if (this.sessionOpSeq !== opId) {
         return { type: 'obsolete' };
       }
       if (err instanceof ApiError && err.status === 401) {
-        await signOut();
+        await this.signOut();
         return { type: 'unauthenticated' };
       }
       if (isNetworkError(err)) {
@@ -182,24 +261,37 @@ export function useAuthProviderState(): AuthContextType {
       }
       return { type: 'server_error', status: 500, message: err?.message || 'Erreur serveur' };
     }
-  }, [commitSession, signOut]);
+  };
 
-  const restoreSession = useCallback(async () => {
-    const opId = ++sessionOpSeq.current;
-    setSession((prev) => ({ ...prev, status: 'loading' }));
+  public restoreSession = async (): Promise<void> => {
+    const opId = ++this.sessionOpSeq;
+    this.session = { ...this.session, status: 'loading' };
+    this.notify();
+
     try {
-      const result = await performSessionRestore();
-      if (sessionOpSeq.current !== opId) return;
+      const result = await performSessionRestore({
+        save: async (token, user) => {
+          if (this.sessionOpSeq === opId) {
+            await saveSession(token, user, opId);
+          }
+        },
+        clear: async () => {
+          if (this.sessionOpSeq === opId) {
+            await clearSession(opId);
+          }
+        },
+      });
+      if (this.sessionOpSeq !== opId) return;
 
       const nextSession = resolveRestoreSessionState(result);
       if (nextSession.status === 'authenticated' && nextSession.user) {
-        await commitSession(opId, nextSession, nextSession.user, { runSync: true });
+        await this.commitSession(opId, nextSession, nextSession.user, { runSync: true });
       } else {
-        await commitSession(opId, nextSession, null);
+        await this.commitSession(opId, nextSession, null);
       }
     } catch (err: any) {
-      if (sessionOpSeq.current !== opId) return;
-      await commitSession(
+      if (this.sessionOpSeq !== opId) return;
+      await this.commitSession(
         opId,
         {
           status: 'storage_error',
@@ -210,86 +302,51 @@ export function useAuthProviderState(): AuthContextType {
         null
       );
     }
-  }, [commitSession]);
+  };
+
+  public handleUnauthorized = async (evictedToken?: string): Promise<void> => {
+    // Si le 401 concerne un ancien token différent du token actuellement en session, ignorer
+    if (evictedToken && this.session.token && this.session.token !== evictedToken) {
+      return;
+    }
+    const opId = ++this.sessionOpSeq;
+    await clearSession(opId);
+    if (this.sessionOpSeq === opId) {
+      cartStore.reset();
+      dbService.setActiveBuyerId(null);
+      this.session = {
+        status: 'unauthenticated',
+        user: null,
+        token: null,
+        error: null,
+      };
+      this.notify();
+    }
+  };
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function useAuthProviderState(): AuthContextType {
+  const coordinatorRef = useRef<AuthSessionCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new AuthSessionCoordinator();
+  }
+  const coordinator = coordinatorRef.current;
+
+  const session = useSyncExternalStore(coordinator.subscribe, coordinator.getState);
 
   useEffect(() => {
-    setUnauthorizedHandler(async () => {
-      const opId = ++sessionOpSeq.current;
-      await clearSession();
-      if (sessionOpSeq.current === opId) {
-        cartStore.reset();
-        dbService.setActiveBuyerId(null);
-        setSession({
-          status: 'unauthenticated',
-          user: null,
-          token: null,
-          error: null,
-        });
-      }
+    setUnauthorizedHandler((token) => {
+      coordinator.handleUnauthorized(token);
     });
 
-    restoreSession();
+    coordinator.restoreSession();
 
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [restoreSession]);
-
-  const signIn = useCallback(
-    async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {
-      const opId = ++sessionOpSeq.current;
-      const res = await apiClient.login(phone, pin, role);
-      if (sessionOpSeq.current !== opId) {
-        return { message: 'Opération de session obsolète', obsolete: true };
-      }
-      if (res.token && res.user) {
-        const committed = await commitSession(
-          opId,
-          {
-            status: 'authenticated',
-            user: res.user,
-            token: res.token,
-            error: null,
-          },
-          res.user,
-          { saveToken: res.token, runSync: true }
-        );
-        if (!committed) {
-          return { message: 'Opération de session obsolète', obsolete: true };
-        }
-      }
-      return res;
-    },
-    [commitSession]
-  );
-
-  const completeOtp = useCallback(
-    async (phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> => {
-      const opId = ++sessionOpSeq.current;
-      const res = await apiClient.verifyOtp(phone, code, role);
-      if (sessionOpSeq.current !== opId) {
-        return { message: 'Opération de session obsolète', obsolete: true };
-      }
-      if (res.token && res.user) {
-        const committed = await commitSession(
-          opId,
-          {
-            status: 'authenticated',
-            user: res.user,
-            token: res.token,
-            error: null,
-          },
-          res.user,
-          { saveToken: res.token, runSync: true }
-        );
-        if (!committed) {
-          return { message: 'Opération de session obsolète', obsolete: true };
-        }
-      }
-      return res;
-    },
-    [commitSession]
-  );
+  }, [coordinator]);
 
   // Propriétés dérivées de manière stricte et prévisible
   const loading = session.status === 'loading';
@@ -314,14 +371,14 @@ export function useAuthProviderState(): AuthContextType {
     authenticated,
     isOffline,
     sessionStatus: session.status,
-    sessionSeq: sessionOpSeq.current,
+    sessionSeq: coordinator.getSessionOpSeq(),
     serverError,
     storageError,
-    restoreSession,
-    refreshUser,
-    signIn,
-    completeOtp,
-    signOut,
+    restoreSession: coordinator.restoreSession,
+    refreshUser: coordinator.refreshUser,
+    signIn: coordinator.signIn,
+    completeOtp: coordinator.completeOtp,
+    signOut: coordinator.signOut,
   };
 }
 

@@ -184,7 +184,7 @@ export function _resetMemorySessionForTesting() {
   memorySession = null;
 }
 
-type UnauthorizedHandler = () => void;
+type UnauthorizedHandler = (evictedToken?: string) => void;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
@@ -333,12 +333,28 @@ export async function readStoredUser(): Promise<UserProfile | null> {
   return session ? session.user : null;
 }
 
+let sessionMutationSeq = 0;
+let sessionWriteQueue: Promise<any> = Promise.resolve();
+
+export function getSessionMutationSeq(): number {
+  return sessionMutationSeq;
+}
+
+export function _resetSessionMutationSeqForTesting(initial = 0) {
+  sessionMutationSeq = initial;
+  sessionWriteQueue = Promise.resolve();
+}
+
 /**
- * Enregistre la session de manière atomique.
+ * Enregistre la session de manière atomique avec coordination latest-wins.
  * Ne met à jour l'état mémoire qu'après succès de la persistance.
- * Lève une erreur si le stockage n'est pas disponible ou si l'écriture échoue.
+ * Si une opération plus récente a débuté, l'écriture obsolète est ignorée.
  */
-export async function saveSession(token: string, user: UserProfile): Promise<void> {
+export async function saveSession(
+  token: string,
+  user: UserProfile,
+  explicitSeq?: number
+): Promise<void> {
   if (!token || !user) {
     throw new Error('Données de session incomplètes.');
   }
@@ -353,54 +369,97 @@ export async function saveSession(token: string, user: UserProfile): Promise<voi
     throw new Error('Données de session non conformes au schéma v1.');
   }
 
-  const serialized = JSON.stringify(sessionData);
-
-  // 1. Écriture dans le stockage persistant
-  if (Platform.OS === 'web') {
-    if (typeof localStorage === 'undefined' || !localStorage) {
-      throw new Error('Stockage persistant indisponible: localStorage non disponible.');
-    }
-    localStorage.setItem(SESSION_KEY, serialized);
-  } else {
-    if (!SecureStore || typeof SecureStore.setItemAsync !== 'function') {
-      throw new Error('Stockage persistant indisponible: SecureStore non disponible.');
-    }
-    await SecureStore.setItemAsync(SESSION_KEY, serialized);
+  const seq = explicitSeq !== undefined ? explicitSeq : ++sessionMutationSeq;
+  if (explicitSeq !== undefined && explicitSeq > sessionMutationSeq) {
+    sessionMutationSeq = explicitSeq;
   }
 
-  // 2. Mise à jour de l'état mémoire UNIQUEMENT après persistance réussie
-  memorySession = sessionData;
+  // Si une mutation de session plus récente a déjà débuté, rejeter immédiatement
+  if (seq < sessionMutationSeq && explicitSeq !== undefined) {
+    return;
+  }
+
+  const serialized = JSON.stringify(sessionData);
+
+  const runTask = async () => {
+    // Vérification avant écriture
+    if (seq < sessionMutationSeq && explicitSeq !== undefined) {
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      if (typeof localStorage === 'undefined' || !localStorage) {
+        throw new Error('Stockage persistant indisponible: localStorage non disponible.');
+      }
+      localStorage.setItem(SESSION_KEY, serialized);
+    } else {
+      if (!SecureStore || typeof SecureStore.setItemAsync !== 'function') {
+        throw new Error('Stockage persistant indisponible: SecureStore non disponible.');
+      }
+      await SecureStore.setItemAsync(SESSION_KEY, serialized);
+    }
+
+    // Mise à jour de l'état mémoire UNIQUEMENT si toujours la version la plus récente
+    if (seq >= sessionMutationSeq) {
+      memorySession = sessionData;
+    }
+  };
+
+  const currentWrite = sessionWriteQueue.then(runTask, runTask);
+  sessionWriteQueue = currentWrite;
+  return currentWrite;
 }
 
 /**
- * Supprime la session locale et l'état en mémoire.
+ * Supprime la session locale et l'état en mémoire avec coordination latest-wins.
  */
-export async function clearSession(): Promise<void> {
-  memorySession = null;
+export async function clearSession(explicitSeq?: number): Promise<void> {
+  const seq = explicitSeq !== undefined ? explicitSeq : ++sessionMutationSeq;
+  if (explicitSeq !== undefined && explicitSeq > sessionMutationSeq) {
+    sessionMutationSeq = explicitSeq;
+  }
 
-  if (Platform.OS === 'web') {
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.removeItem(SESSION_KEY);
-        for (const key of LEGACY_STORAGE_KEYS) {
-          localStorage.removeItem(key);
+  if (seq < sessionMutationSeq && explicitSeq !== undefined) {
+    return;
+  }
+
+  const runTask = async () => {
+    if (seq < sessionMutationSeq && explicitSeq !== undefined) {
+      return;
+    }
+
+    if (seq >= sessionMutationSeq) {
+      memorySession = null;
+    }
+
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(SESSION_KEY);
+          for (const key of LEGACY_STORAGE_KEYS) {
+            localStorage.removeItem(key);
+          }
+        } catch (err) {
+          console.warn('Erreur localStorage clearSession:', err);
         }
+      }
+    } else if (SecureStore) {
+      try {
+        await SecureStore.deleteItemAsync(SESSION_KEY);
       } catch (err) {
-        console.warn('Erreur localStorage clearSession:', err);
+        console.warn('Erreur SecureStore clearSession:', err);
+      }
+      for (const key of LEGACY_STORAGE_KEYS) {
+        try {
+          await SecureStore.deleteItemAsync(key);
+        } catch {}
       }
     }
-  } else if (SecureStore) {
-    try {
-      await SecureStore.deleteItemAsync(SESSION_KEY);
-    } catch (err) {
-      console.warn('Erreur SecureStore clearSession:', err);
-    }
-    for (const key of LEGACY_STORAGE_KEYS) {
-      try {
-        await SecureStore.deleteItemAsync(key);
-      } catch {}
-    }
-  }
+  };
+
+  const currentClear = sessionWriteQueue.then(runTask, runTask);
+  sessionWriteQueue = currentClear;
+  return currentClear;
 }
 
 // Aliases pour rétrocompatibilité
@@ -436,11 +495,15 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
       (Array.isArray(payload?.errors) ? payload.errors.map((e: any) => e.message || e).join(', ') : 'Erreur API SI-TCHA.');
     const requireOtp = Boolean(payload?.requireOtp);
 
-    // Sur 401 sur route protégée : invalider la session immédiatement
-    if (response.status === 401) {
-      await clearSession();
-      if (unauthorizedHandler) {
-        unauthorizedHandler();
+    // Sur 401 sur route protégée :
+    // Invalider la session UNIQUEMENT si le token utilisé par cette requête est toujours le token de la session courante
+    if (response.status === 401 && token) {
+      const currentToken = await readToken();
+      if (currentToken === token) {
+        await clearSession();
+        if (unauthorizedHandler) {
+          unauthorizedHandler(token);
+        }
       }
     }
     // Sur 403 : ne PAS invalider le token ou déconnecter l'utilisateur
@@ -465,22 +528,14 @@ export const apiClient = {
     }
   },
 
-  // Login : téléphone + PIN, rôle facultatif
+  // Login : téléphone + PIN, rôle facultatif (mutation de session gérée par la coordination latest-wins)
   async login(phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> {
-    const session = await request<SessionResponse>('/auth/login', 'POST', { phone, pin, role });
-    if (session.token && session.user) {
-      await saveSession(session.token, session.user);
-    }
-    return session;
+    return request<SessionResponse>('/auth/login', 'POST', { phone, pin, role });
   },
 
-  // Verify OTP : rôle obligatoire (strictement aligné avec le backend)
+  // Verify OTP : rôle obligatoire (mutation de session gérée par la coordination latest-wins)
   async verifyOtp(phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> {
-    const session = await request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code, role });
-    if (session.token && session.user) {
-      await saveSession(session.token, session.user);
-    }
-    return session;
+    return request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code, role });
   },
 
   async resendOtp(input: { phone: string; role: 'buyer' | 'seller' }): Promise<SessionResponse> {
@@ -496,14 +551,7 @@ export const apiClient = {
   },
 
   async getMe(): Promise<{ user: UserProfile }> {
-    const res = await request<{ user: UserProfile }>('/auth/me', 'GET');
-    if (res.user) {
-      const token = await readToken();
-      if (token) {
-        await saveSession(token, res.user);
-      }
-    }
-    return res;
+    return request<{ user: UserProfile }>('/auth/me', 'GET');
   },
 
   async logout(): Promise<{ message: string }> {
@@ -511,8 +559,6 @@ export const apiClient = {
       return await request<{ message: string }>('/auth/logout', 'POST');
     } catch {
       return { message: 'Déconnexion locale effectuée.' };
-    } finally {
-      await clearSession();
     }
   },
 
