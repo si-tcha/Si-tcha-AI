@@ -1,23 +1,22 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import {
-  UserProfile,
-  SessionResponse,
   apiClient,
+  SessionResponse,
+  UserProfile,
   readToken,
   saveSession,
   clearSession,
-  setUnauthorizedHandler,
-  ApiError,
   isNetworkError,
+  ApiError,
+  setUnauthorizedHandler,
 } from '@/services/api';
-
 import {
   performSessionRestore,
   resolveRestoreSessionState,
   SessionStatus,
   AuthSessionState,
 } from '@/auth/sessionRestore';
-import { dbService } from '@/services/database';
+import { dbService, isValidBuyerId } from '@/services/database';
 import { cartStore } from '@/services/cart-store';
 
 export type RefreshUserResult =
@@ -28,8 +27,10 @@ export type RefreshUserResult =
 
 export interface AuthContextType {
   user: UserProfile | null;
+  buyerId: string | null;
   token: string | null;
   loading: boolean;
+  isLoading: boolean;
   authenticated: boolean;
   isOffline: boolean;
   sessionStatus: SessionStatus;
@@ -53,12 +54,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
+  const activationSeq = useRef(0);
+
   const activateUserSession = useCallback(async (user: UserProfile | null) => {
+    const currentSeq = ++activationSeq.current;
+
     if (user && user.role === 'buyer') {
       const buyerId = (user.buyerId || user.id || '').trim();
-      if (buyerId) {
+      if (isValidBuyerId(buyerId)) {
         dbService.setActiveBuyerId(buyerId);
         await cartStore.setBuyerId(buyerId);
+        // Empêcher toute ancienne activation A de synchroniser ou réactiver A si B est passé
+        if (activationSeq.current !== currentSeq) {
+          return;
+        }
         // Synchronisation des commandes / alertes privées UNIQUEMENT APRÈS cette activation
         dbService.syncBuyerData(buyerId).catch(() => {});
         return;
@@ -199,7 +208,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Propriétés dérivées de manière stricte et prévisible
   const loading = session.status === 'loading';
+  const isLoading = loading;
   const authenticated = session.status === 'authenticated' && Boolean(session.token && session.user);
+  const rawBuyerId = session.user?.role === 'buyer' ? (session.user.buyerId || session.user.id || null) : null;
+  const buyerId = rawBuyerId && isValidBuyerId(rawBuyerId) ? rawBuyerId : null;
   const isOffline = session.status === 'offline';
   const serverError =
     session.status === 'server_error' && session.error
@@ -212,8 +224,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         user: session.user,
+        buyerId,
         token: session.token,
         loading,
+        isLoading,
         authenticated,
         isOffline,
         sessionStatus: session.status,

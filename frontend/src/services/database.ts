@@ -46,6 +46,8 @@ import {
   WeatherRecord,
   getBuyerClientRequestIdKey,
   getBuyerAlertPrefsKey,
+  validateBuyerId,
+  isValidBuyerId,
   nowIso,
 } from './database.shared';
 
@@ -121,25 +123,31 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 class DatabaseService {
   private dbInstance: SQLite.SQLiteDatabase | null = null;
   private activeBuyerId: string | null = null;
+  private contextGeneration = 0;
 
   setActiveBuyerId(buyerId: string | null): void {
-    this.activeBuyerId = buyerId;
+    if (buyerId === null || buyerId === undefined || buyerId === '') {
+      this.activeBuyerId = null;
+      this.contextGeneration++;
+      return;
+    }
+    this.activeBuyerId = validateBuyerId(buyerId);
+    this.contextGeneration++;
   }
 
   getActiveBuyerId(): string | null {
     return this.activeBuyerId;
   }
 
+  getContextGeneration(): number {
+    return this.contextGeneration;
+  }
+
   requireActiveBuyerId(): string {
-    if (
-      !this.activeBuyerId ||
-      typeof this.activeBuyerId !== 'string' ||
-      !this.activeBuyerId.trim() ||
-      this.activeBuyerId === 'anonymous'
-    ) {
+    if (!this.activeBuyerId) {
       throw new Error('Opération non autorisée : un acheteur actif connecté est requis.');
     }
-    return this.activeBuyerId.trim();
+    return validateBuyerId(this.activeBuyerId);
   }
 
   private getClientRequestIdKey(): string {
@@ -148,6 +156,12 @@ class DatabaseService {
 
   private getAlertPrefsKey(): string {
     return getBuyerAlertPrefsKey(this.requireActiveBuyerId());
+  }
+
+  async getCartForBuyer(buyerId: string): Promise<CartItemRecord[]> {
+    const validBuyerId = validateBuyerId(buyerId);
+    const rows = this.getDb().getAllSync('SELECT * FROM cart_items WHERE buyerId = ? ORDER BY rowid ASC', [validBuyerId]) as any[];
+    return rows.map((r) => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
   private getDb() {
@@ -354,13 +368,12 @@ class DatabaseService {
   }
 
   async syncBuyerData(buyerId?: string): Promise<boolean> {
-    const targetBuyerId = buyerId || this.activeBuyerId;
-    if (!targetBuyerId || targetBuyerId === 'anonymous') {
+    const rawId = buyerId || this.activeBuyerId;
+    if (!rawId || !isValidBuyerId(rawId)) {
       return false;
     }
-    if (this.activeBuyerId !== targetBuyerId) {
-      this.activeBuyerId = targetBuyerId;
-    }
+    const capturedBuyerId = rawId;
+    const capturedGen = this.contextGeneration;
 
     try {
       const [orders, prefsRes] = await Promise.all([
@@ -368,22 +381,26 @@ class DatabaseService {
         apiClient.getAlertPreferences().catch(() => null),
       ]);
 
+      if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+        return false;
+      }
+
       let updated = false;
       const db = this.getDb();
 
       if (Array.isArray(orders)) {
-        db.runSync('DELETE FROM orders WHERE buyerId = ?', [targetBuyerId]);
+        db.runSync('DELETE FROM orders WHERE buyerId = ?', [capturedBuyerId]);
         for (const o of orders) {
           db.runSync(
             'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [targetBuyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+            [capturedBuyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
           );
         }
         this.lastOrdersSyncSuccessful = true;
         updated = true;
       }
       if (prefsRes?.preferences) {
-        this.writeKv(this.getAlertPrefsKey(), prefsRes.preferences);
+        this.writeKv(getBuyerAlertPrefsKey(capturedBuyerId), prefsRes.preferences);
         updated = true;
       }
       return updated;
@@ -738,22 +755,27 @@ class DatabaseService {
   }
 
   async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
-    const buyerId = this.requireActiveBuyerId();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
     const db = this.getDb();
 
     if (syncWithServer) {
       try {
         const orders = await this.fetchAllBuyerOrders();
-        db.runSync('DELETE FROM orders WHERE buyerId = ?', [buyerId]);
-        for (const o of orders) {
-          db.runSync(
-            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
-          );
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          db.runSync('DELETE FROM orders WHERE buyerId = ?', [capturedBuyerId]);
+          for (const o of orders) {
+            db.runSync(
+              'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [capturedBuyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+            );
+          }
+          this.lastOrdersSyncSuccessful = true;
         }
-        this.lastOrdersSyncSuccessful = true;
       } catch (err) {
-        this.lastOrdersSyncSuccessful = false;
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          this.lastOrdersSyncSuccessful = false;
+        }
         if (!isNetworkError(err)) {
           throw err;
         }
@@ -761,7 +783,7 @@ class DatabaseService {
       }
     }
 
-    const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [buyerId]) as any[];
+    const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [capturedBuyerId]) as any[];
     return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
@@ -773,11 +795,21 @@ class DatabaseService {
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
-    const buyerId = this.requireActiveBuyerId();
-    const cart = await this.getCart();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const db = this.getDb();
+
+    const cartRows = db.getAllSync('SELECT * FROM cart_items WHERE buyerId = ? ORDER BY rowid ASC', [capturedBuyerId]) as any[];
+    const cart = cartRows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
     if (!cart.length) return [];
 
-    const clientRequestId = await this.getOrCreateCartClientRequestId();
+    const clientReqIdKey = getBuyerClientRequestIdKey(capturedBuyerId);
+    let clientRequestId = this.readKv<string | null>(clientReqIdKey, null);
+    if (!clientRequestId) {
+      clientRequestId = generateClientRequestId();
+      this.writeKv(clientReqIdKey, clientRequestId);
+    }
+
     const items = cart.map((item) => ({ productId: item.productId, quantity: item.quantity }));
 
     // Appel direct au backend avec la clé d'idempotence
@@ -786,46 +818,58 @@ class DatabaseService {
     const res = await apiClient.createOrder(type, items, clientRequestId);
 
     // En cas de succès serveur (201 ou 200 rejeu idempotent) :
-    // 1. Vider le panier local et nettoyer la clé d'idempotence
-    await this.clearCart();
+    // 1. Vider le panier et la clé d'idempotence du buyerId capturé
+    db.runSync('DELETE FROM cart_items WHERE buyerId = ?', [capturedBuyerId]);
+    db.runSync('DELETE FROM kv_store WHERE key = ?', [clientReqIdKey]);
 
     // 2. Extraire les commandes renvoyées directement par la réponse du POST
     const serverOrders = (Array.isArray(res?.orders) ? res.orders : []) as OrderRecord[];
 
-    // 3. Mettre à jour immédiatement la base SQLite locale de l'acheteur avec les commandes créées
-    const db = this.getDb();
+    // 3. Mettre à jour immédiatement la base SQLite locale pour le buyerId capturé
     for (const o of serverOrders) {
       db.runSync(
         'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+        [capturedBuyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
       );
     }
 
-    // 4. Déclencher en tâche de fond la synchronisation complète sans bloquer le retour
+    // 4. Déclencher en tâche de fond la synchronisation complète pour le buyerId capturé
     this.fetchAllBuyerOrders()
       .then((allOrders) => {
-        db.runSync('DELETE FROM orders WHERE buyerId = ?', [buyerId]);
-        for (const o of allOrders) {
-          db.runSync(
-            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
-          );
+        if (Array.isArray(allOrders)) {
+          db.runSync('DELETE FROM orders WHERE buyerId = ?', [capturedBuyerId]);
+          for (const o of allOrders) {
+            db.runSync(
+              'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [capturedBuyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+            );
+          }
         }
       })
       .catch((bgErr) => {
         console.warn('Synchro en tâche de fond des commandes après POST SQLite non bloquante:', bgErr);
       });
 
-    const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [buyerId]) as any[];
+    // 5. Vérifier si le contexte actif a changé pendant le POST
+    if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié pendant la création de la commande.');
+    }
+
+    const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [capturedBuyerId]) as any[];
     return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
   async getAlertPreferences(): Promise<AlertPreferences> {
-    this.requireActiveBuyerId();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const prefsKey = getBuyerAlertPrefsKey(capturedBuyerId);
+
     try {
       const res = await apiClient.getAlertPreferences();
       if (res?.preferences) {
-        this.writeKv(this.getAlertPrefsKey(), res.preferences);
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          this.writeKv(prefsKey, res.preferences);
+        }
         return res.preferences;
       }
     } catch (err) {
@@ -834,19 +878,26 @@ class DatabaseService {
       }
       console.warn('Mode hors-ligne : lecture des alertes depuis le kv_store local.');
     }
-    return this.readKv(this.getAlertPrefsKey(), DEFAULT_ALERT_PREFS);
+    return this.readKv(prefsKey, DEFAULT_ALERT_PREFS);
   }
 
   async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> {
-    this.requireActiveBuyerId();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const prefsKey = getBuyerAlertPrefsKey(capturedBuyerId);
+
     try {
       const res = await apiClient.saveAlertPreferences(prefs);
       const saved = res?.preferences || prefs;
-      this.writeKv(this.getAlertPrefsKey(), saved);
+      if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+        this.writeKv(prefsKey, saved);
+      }
       return saved;
     } catch (err) {
       if (isNetworkError(err)) {
-        this.writeKv(this.getAlertPrefsKey(), prefs);
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          this.writeKv(prefsKey, prefs);
+        }
         return prefs;
       }
       throw err;
@@ -1096,3 +1147,4 @@ class DatabaseService {
 }
 
 export const dbService = new DatabaseService();
+export { validateBuyerId, isValidBuyerId };

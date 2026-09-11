@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { dbService, CartItemRecord } from './database';
+import { validateBuyerId, isValidBuyerId } from './database.shared';
 
 type Listener = () => void;
 
@@ -7,22 +8,28 @@ class CartStore {
   private cart: CartItemRecord[] = [];
   private listeners: Set<Listener> = new Set();
   private initialized = false;
+  private currentBuyerId: string | null = null;
+  private currentGeneration = 0;
+
+  getBuyerId(): string | null {
+    return this.currentBuyerId;
+  }
+
+  getGeneration(): number {
+    return this.currentGeneration;
+  }
 
   async init() {
-    if (!dbService.getActiveBuyerId()) {
+    const buyerId = dbService.getActiveBuyerId();
+    if (!buyerId || !isValidBuyerId(buyerId)) {
+      this.currentBuyerId = null;
+      this.currentGeneration++;
       this.cart = [];
       this.initialized = true;
       this.notify();
       return;
     }
-    try {
-      await dbService.initDatabase();
-      this.cart = await dbService.getCart();
-      this.initialized = true;
-      this.notify();
-    } catch (err) {
-      console.warn('Erreur init cartStore:', err);
-    }
+    await this.setBuyerId(buyerId);
   }
 
   getCart(): CartItemRecord[] {
@@ -56,76 +63,191 @@ class CartStore {
     product: { productId: string; name: string; price: string; unit: string },
     maxStock?: number
   ) {
+    const capturedBuyerId = this.currentBuyerId;
+    const capturedGen = this.currentGeneration;
+    if (!capturedBuyerId) {
+      throw new Error('Opération non autorisée : aucun acheteur connecté.');
+    }
+
     await dbService.initDatabase();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié.');
+    }
+
     const item = await dbService.addToCart(product, maxStock);
-    this.cart = await dbService.getCart();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return item;
+    }
+
+    const cart = await dbService.getCartForBuyer(capturedBuyerId);
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return item;
+    }
+
+    this.cart = cart;
     this.initialized = true;
     this.notify();
     return item;
   }
 
   async incrementCartItem(productId: string, maxStock?: number) {
+    const capturedBuyerId = this.currentBuyerId;
+    const capturedGen = this.currentGeneration;
+    if (!capturedBuyerId) {
+      throw new Error('Opération non autorisée : aucun acheteur connecté.');
+    }
+
     await dbService.initDatabase();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié.');
+    }
+
     const item = await dbService.incrementCartItem(productId, maxStock);
-    this.cart = await dbService.getCart();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return item;
+    }
+
+    const cart = await dbService.getCartForBuyer(capturedBuyerId);
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return item;
+    }
+
+    this.cart = cart;
     this.initialized = true;
     this.notify();
     return item;
   }
 
   async decrementCartItem(productId: string) {
+    const capturedBuyerId = this.currentBuyerId;
+    const capturedGen = this.currentGeneration;
+    if (!capturedBuyerId) {
+      throw new Error('Opération non autorisée : aucun acheteur connecté.');
+    }
+
     await dbService.initDatabase();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié.');
+    }
+
     const item = await dbService.decrementCartItem(productId);
-    this.cart = await dbService.getCart();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return item;
+    }
+
+    const cart = await dbService.getCartForBuyer(capturedBuyerId);
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return item;
+    }
+
+    this.cart = cart;
     this.initialized = true;
     this.notify();
     return item;
   }
 
   async removeFromCart(productId: string) {
+    const capturedBuyerId = this.currentBuyerId;
+    const capturedGen = this.currentGeneration;
+    if (!capturedBuyerId) {
+      throw new Error('Opération non autorisée : aucun acheteur connecté.');
+    }
+
     await dbService.initDatabase();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié.');
+    }
+
     await dbService.removeFromCart(productId);
-    this.cart = await dbService.getCart();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return;
+    }
+
+    const cart = await dbService.getCartForBuyer(capturedBuyerId);
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return;
+    }
+
+    this.cart = cart;
     this.initialized = true;
     this.notify();
   }
 
   async clearCart() {
+    const capturedBuyerId = this.currentBuyerId;
+    const capturedGen = this.currentGeneration;
+    if (!capturedBuyerId) {
+      throw new Error('Opération non autorisée : aucun acheteur connecté.');
+    }
+
     await dbService.initDatabase();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié.');
+    }
+
     await dbService.clearCart();
+    if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+      return;
+    }
+
     this.cart = [];
     this.initialized = true;
     this.notify();
   }
 
-  async refresh() {
-    if (!dbService.getActiveBuyerId()) {
-      this.cart = [];
-      this.initialized = true;
-      this.notify();
+  async refresh(targetBuyerId?: string | null, targetGen?: number) {
+    const capturedBuyerId = targetBuyerId !== undefined ? targetBuyerId : this.currentBuyerId;
+    const capturedGen = targetGen !== undefined ? targetGen : this.currentGeneration;
+
+    if (!capturedBuyerId) {
+      if (this.currentGeneration === capturedGen) {
+        this.cart = [];
+        this.initialized = true;
+        this.notify();
+      }
       return;
     }
+
     try {
       await dbService.initDatabase();
-      this.cart = await dbService.getCart();
+      if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+        return;
+      }
+      const cart = await dbService.getCartForBuyer(capturedBuyerId);
+      if (this.currentGeneration !== capturedGen || this.currentBuyerId !== capturedBuyerId) {
+        return;
+      }
+      this.cart = cart;
+      this.initialized = true;
+      this.notify();
     } catch {
-      this.cart = [];
+      if (this.currentGeneration === capturedGen && this.currentBuyerId === capturedBuyerId) {
+        this.cart = [];
+        this.initialized = true;
+        this.notify();
+      }
     }
-    this.initialized = true;
-    this.notify();
   }
 
   async setBuyerId(buyerId: string | null) {
-    dbService.setActiveBuyerId(buyerId);
+    const validBuyerId = buyerId && isValidBuyerId(buyerId) ? validateBuyerId(buyerId) : null;
+    this.currentGeneration++;
+    const gen = this.currentGeneration;
+    this.currentBuyerId = validBuyerId;
+    dbService.setActiveBuyerId(validBuyerId);
     this.cart = [];
     this.initialized = false;
     this.notify();
-    if (buyerId) {
-      await this.refresh();
+
+    if (validBuyerId) {
+      await this.refresh(validBuyerId, gen);
     }
   }
 
   reset() {
+    this.currentGeneration++;
+    this.currentBuyerId = null;
+    dbService.setActiveBuyerId(null);
     this.cart = [];
     this.initialized = false;
     this.notify();

@@ -46,6 +46,8 @@ import {
   getBuyerOrdersKey,
   getBuyerClientRequestIdKey,
   getBuyerAlertPrefsKey,
+  validateBuyerId,
+  isValidBuyerId,
   nowIso,
 } from './database.shared';
 
@@ -115,25 +117,31 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 
 class DatabaseService {
   private activeBuyerId: string | null = null;
+  private contextGeneration = 0;
 
   setActiveBuyerId(buyerId: string | null): void {
-    this.activeBuyerId = buyerId;
+    if (buyerId === null || buyerId === undefined || buyerId === '') {
+      this.activeBuyerId = null;
+      this.contextGeneration++;
+      return;
+    }
+    this.activeBuyerId = validateBuyerId(buyerId);
+    this.contextGeneration++;
   }
 
   getActiveBuyerId(): string | null {
     return this.activeBuyerId;
   }
 
+  getContextGeneration(): number {
+    return this.contextGeneration;
+  }
+
   requireActiveBuyerId(): string {
-    if (
-      !this.activeBuyerId ||
-      typeof this.activeBuyerId !== 'string' ||
-      !this.activeBuyerId.trim() ||
-      this.activeBuyerId === 'anonymous'
-    ) {
+    if (!this.activeBuyerId) {
       throw new Error('Opération non autorisée : un acheteur actif connecté est requis.');
     }
-    return this.activeBuyerId.trim();
+    return validateBuyerId(this.activeBuyerId);
   }
 
   getCartKey(): string {
@@ -150,6 +158,11 @@ class DatabaseService {
 
   getAlertPrefsKey(): string {
     return getBuyerAlertPrefsKey(this.requireActiveBuyerId());
+  }
+
+  async getCartForBuyer(buyerId: string): Promise<CartItemRecord[]> {
+    const validBuyerId = validateBuyerId(buyerId);
+    return readJson<CartItemRecord[]>(getBuyerCartKey(validBuyerId), []);
   }
 
   private async fetchAllPublicProducts(): Promise<ProductOffer[]> {
@@ -236,13 +249,12 @@ class DatabaseService {
   }
 
   async syncBuyerData(buyerId?: string): Promise<boolean> {
-    const targetBuyerId = buyerId || this.activeBuyerId;
-    if (!targetBuyerId || targetBuyerId === 'anonymous') {
+    const rawId = buyerId || this.activeBuyerId;
+    if (!rawId || !isValidBuyerId(rawId)) {
       return false;
     }
-    if (this.activeBuyerId !== targetBuyerId) {
-      this.activeBuyerId = targetBuyerId;
-    }
+    const capturedBuyerId = rawId;
+    const capturedGen = this.contextGeneration;
 
     try {
       const [orders, prefsRes] = await Promise.all([
@@ -250,14 +262,19 @@ class DatabaseService {
         apiClient.getAlertPreferences().catch(() => null),
       ]);
 
+      // Si le contexte a changé pendant les requêtes réseau, ignorer la mise à jour
+      if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+        return false;
+      }
+
       let updated = false;
       if (Array.isArray(orders)) {
-        writeJson(this.getOrdersKey(), orders);
+        writeJson(getBuyerOrdersKey(capturedBuyerId), orders);
         this.lastOrdersSyncSuccessful = true;
         updated = true;
       }
       if (prefsRes?.preferences) {
-        writeJson(this.getAlertPrefsKey(), prefsRes.preferences);
+        writeJson(getBuyerAlertPrefsKey(capturedBuyerId), prefsRes.preferences);
         updated = true;
       }
       return updated;
@@ -414,9 +431,11 @@ class DatabaseService {
   }
 
   async clearCart(): Promise<void> {
-    this.requireActiveBuyerId();
-    writeJson(this.getCartKey(), []);
-    await this.invalidateCartClientRequestId();
+    const buyerId = this.requireActiveBuyerId();
+    writeJson(getBuyerCartKey(buyerId), []);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(getBuyerClientRequestIdKey(buyerId));
+    }
   }
 
   async addToCart(
@@ -429,12 +448,14 @@ class DatabaseService {
     maxStock?: number
   ): Promise<CartItemRecord> {
     const buyerId = this.requireActiveBuyerId();
+    const cartKey = getBuyerCartKey(buyerId);
+    const clientReqIdKey = getBuyerClientRequestIdKey(buyerId);
     const targetId = String(product.productId);
     if (maxStock !== undefined && maxStock < 1) {
       throw new Error(`Stock indisponible pour ${product.name}.`);
     }
 
-    const cart = await this.getCart();
+    const cart = readJson<CartItemRecord[]>(cartKey, []);
     const existing = cart.find((item) => String(item.productId) === targetId);
 
     if (existing) {
@@ -447,8 +468,10 @@ class DatabaseService {
         synced: false,
       };
       const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-      writeJson(this.getCartKey(), updatedCart);
-      await this.invalidateCartClientRequestId();
+      writeJson(cartKey, updatedCart);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(clientReqIdKey);
+      }
       return updatedItem;
     }
 
@@ -462,15 +485,19 @@ class DatabaseService {
       buyerId,
       synced: false,
     };
-    writeJson(this.getCartKey(), [...cart, newItem]);
-    await this.invalidateCartClientRequestId();
+    writeJson(cartKey, [...cart, newItem]);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(clientReqIdKey);
+    }
     return newItem;
   }
 
   async incrementCartItem(productId: string, maxStock?: number): Promise<CartItemRecord | null> {
-    this.requireActiveBuyerId();
+    const buyerId = this.requireActiveBuyerId();
+    const cartKey = getBuyerCartKey(buyerId);
+    const clientReqIdKey = getBuyerClientRequestIdKey(buyerId);
     const targetId = String(productId);
-    const cart = await this.getCart();
+    const cart = readJson<CartItemRecord[]>(cartKey, []);
     const existing = cart.find((item) => String(item.productId) === targetId);
     if (!existing) return null;
 
@@ -484,15 +511,19 @@ class DatabaseService {
       synced: false,
     };
     const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-    writeJson(this.getCartKey(), updatedCart);
-    await this.invalidateCartClientRequestId();
+    writeJson(cartKey, updatedCart);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(clientReqIdKey);
+    }
     return updatedItem;
   }
 
   async decrementCartItem(productId: string): Promise<CartItemRecord | null> {
-    this.requireActiveBuyerId();
+    const buyerId = this.requireActiveBuyerId();
+    const cartKey = getBuyerCartKey(buyerId);
+    const clientReqIdKey = getBuyerClientRequestIdKey(buyerId);
     const targetId = String(productId);
-    const cart = await this.getCart();
+    const cart = readJson<CartItemRecord[]>(cartKey, []);
     const existing = cart.find((item) => String(item.productId) === targetId);
     if (!existing) return null;
 
@@ -507,18 +538,24 @@ class DatabaseService {
       synced: false,
     };
     const updatedCart = cart.map((item) => (String(item.productId) === targetId ? updatedItem : item));
-    writeJson(this.getCartKey(), updatedCart);
-    await this.invalidateCartClientRequestId();
+    writeJson(cartKey, updatedCart);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(clientReqIdKey);
+    }
     return updatedItem;
   }
 
   async removeFromCart(productId: string): Promise<void> {
-    this.requireActiveBuyerId();
+    const buyerId = this.requireActiveBuyerId();
+    const cartKey = getBuyerCartKey(buyerId);
+    const clientReqIdKey = getBuyerClientRequestIdKey(buyerId);
     const targetId = String(productId);
-    const cart = await this.getCart();
+    const cart = readJson<CartItemRecord[]>(cartKey, []);
     const updatedCart = cart.filter((item) => String(item.productId) !== targetId);
-    writeJson(this.getCartKey(), updatedCart);
-    await this.invalidateCartClientRequestId();
+    writeJson(cartKey, updatedCart);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(clientReqIdKey);
+    }
   }
 
   async getGicProfile(): Promise<GicProfile> {
@@ -605,29 +642,46 @@ class DatabaseService {
   }
 
   async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
-    this.requireActiveBuyerId();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const ordersKey = getBuyerOrdersKey(capturedBuyerId);
+
     if (syncWithServer) {
       try {
         const orders = await this.fetchAllBuyerOrders();
-        writeJson(this.getOrdersKey(), orders);
-        this.lastOrdersSyncSuccessful = true;
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          writeJson(ordersKey, orders);
+          this.lastOrdersSyncSuccessful = true;
+        }
       } catch (err) {
-        this.lastOrdersSyncSuccessful = false;
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          this.lastOrdersSyncSuccessful = false;
+        }
         if (!isNetworkError(err)) {
           throw err;
         }
         console.warn('Erreur réseau lors de la synchronisation des commandes, repli sur le cache local:', err);
       }
     }
-    return readJson(this.getOrdersKey(), []);
+    return readJson(ordersKey, []);
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
-    this.requireActiveBuyerId();
-    const cart = await this.getCart();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const cartKey = getBuyerCartKey(capturedBuyerId);
+    const clientReqIdKey = getBuyerClientRequestIdKey(capturedBuyerId);
+    const ordersKey = getBuyerOrdersKey(capturedBuyerId);
+
+    const cart = readJson<CartItemRecord[]>(cartKey, []);
     if (!cart.length) return [];
 
-    const clientRequestId = await this.getOrCreateCartClientRequestId();
+    let clientRequestId = readJson<string | null>(clientReqIdKey, null);
+    if (!clientRequestId) {
+      clientRequestId = generateClientRequestId();
+      writeJson(clientReqIdKey, clientRequestId);
+    }
+
     const items = cart.map((item) => ({ productId: item.productId, quantity: item.quantity }));
 
     // Appel direct au backend avec la clé d'idempotence
@@ -636,17 +690,20 @@ class DatabaseService {
     const res = await apiClient.createOrder(type, items, clientRequestId);
 
     // En cas de succès serveur (201 ou 200 rejeu idempotent) :
-    // 1. Vider immédiatement le panier local et nettoyer la clé d'idempotence
-    await this.clearCart();
+    // 1. Vider le panier du buyerId capturé (pas du nouvel acheteur si contexte changé)
+    writeJson(cartKey, []);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(clientReqIdKey);
+    }
 
     // 2. Extraire les commandes renvoyées directement par la réponse du POST
     const serverOrders = (Array.isArray(res?.orders) ? res.orders : []) as OrderRecord[];
 
-    // 3. Mettre à jour immédiatement le cache local de l'acheteur avec les commandes créées
-    const currentOrders = readJson<OrderRecord[]>(this.getOrdersKey(), []);
+    // 3. Mettre à jour immédiatement le cache local du buyerId capturé
+    const currentOrders = readJson<OrderRecord[]>(ordersKey, []);
     const mergedMap = new Map<string, OrderRecord>();
     for (const o of serverOrders) {
-      mergedMap.set(String(o.id), o);
+      mergedMap.set(String(o.id), { ...o, buyerId: capturedBuyerId });
     }
     for (const o of currentOrders) {
       if (!mergedMap.has(String(o.id))) {
@@ -656,27 +713,38 @@ class DatabaseService {
     const updatedOrders = Array.from(mergedMap.values()).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-    writeJson(this.getOrdersKey(), updatedOrders);
+    writeJson(ordersKey, updatedOrders);
 
-    // 4. Déclencher en tâche de fond la synchronisation complète de toutes les commandes
-    // sans bloquer le retour ni faire échouer si le GET plante
+    // 4. Déclencher en tâche de fond la synchronisation complète du cache capturé
     this.fetchAllBuyerOrders()
       .then((allOrders) => {
-        writeJson(this.getOrdersKey(), allOrders);
+        if (Array.isArray(allOrders)) {
+          writeJson(ordersKey, allOrders);
+        }
       })
       .catch((bgErr) => {
         console.warn('Synchro en tâche de fond des commandes après POST non bloquante:', bgErr);
       });
 
+    // 5. Vérifier si le contexte actif a changé pendant le POST
+    if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié pendant la création de la commande.');
+    }
+
     return updatedOrders;
   }
 
   async getAlertPreferences(): Promise<AlertPreferences> {
-    this.requireActiveBuyerId();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const prefsKey = getBuyerAlertPrefsKey(capturedBuyerId);
+
     try {
       const res = await apiClient.getAlertPreferences();
       if (res?.preferences) {
-        writeJson(this.getAlertPrefsKey(), res.preferences);
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          writeJson(prefsKey, res.preferences);
+        }
         return res.preferences;
       }
     } catch (err) {
@@ -685,19 +753,26 @@ class DatabaseService {
       }
       console.warn('Mode hors-ligne : lecture des alertes depuis le cache local.');
     }
-    return readJson(this.getAlertPrefsKey(), DEFAULT_ALERT_PREFS);
+    return readJson(prefsKey, DEFAULT_ALERT_PREFS);
   }
 
   async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> {
-    this.requireActiveBuyerId();
+    const capturedBuyerId = this.requireActiveBuyerId();
+    const capturedGen = this.contextGeneration;
+    const prefsKey = getBuyerAlertPrefsKey(capturedBuyerId);
+
     try {
       const res = await apiClient.saveAlertPreferences(prefs);
       const saved = res?.preferences || prefs;
-      writeJson(this.getAlertPrefsKey(), saved);
+      if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+        writeJson(prefsKey, saved);
+      }
       return saved;
     } catch (err) {
       if (isNetworkError(err)) {
-        writeJson(this.getAlertPrefsKey(), prefs);
+        if (this.contextGeneration === capturedGen && this.activeBuyerId === capturedBuyerId) {
+          writeJson(prefsKey, prefs);
+        }
         return prefs;
       }
       throw err;
@@ -967,3 +1042,4 @@ class DatabaseService {
 }
 
 export const dbService = new DatabaseService();
+export { validateBuyerId, isValidBuyerId };
