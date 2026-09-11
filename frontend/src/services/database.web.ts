@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { apiClient, isNetworkError } from './api';
+import { isValidAgronomistCacheKey, isValidParcelCacheKey } from '../utils/cacheKey';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -84,6 +85,13 @@ function readJson<T>(key: string, fallback: T): T {
 
 function writeJson(key: string, value: unknown) {
   if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function writePrivateJsonOrThrow(key: string, value: unknown) {
+  if (typeof localStorage === 'undefined') {
+    throw new Error('Stockage privé local indisponible.');
+  }
   localStorage.setItem(key, JSON.stringify(value));
 }
 
@@ -960,35 +968,53 @@ class DatabaseService {
   }
 
   // --- Journal de Croissance & Alertes Rendement (Lot D) ---
-  async getParcels(): Promise<ParcelGrowthRecord[]> {
-    return readJson(STORAGE_KEYS.PARCELS, DEFAULT_PARCELS);
+
+  /**
+   * Lit les parcelles depuis le localStorage sous une clé isolée par utilisateur.
+   * @param cacheKey - Clé obligatoire isolée par (role, userId, gicId) via parcelCacheKey().
+   */
+  async getParcels(cacheKey: string): Promise<ParcelGrowthRecord[]> {
+    if (!isValidParcelCacheKey(cacheKey)) {
+      throw new Error('Clé de cache privée obligatoire et valide requise pour accéder aux parcelles.');
+    }
+    return readJson<ParcelGrowthRecord[]>(cacheKey, []);
   }
 
-  async addParcel(
-    parcelName: string,
-    crop: string,
-    sowingDate: string,
-    stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter',
-    estimatedHarvestDate: string,
-    estimatedVolumeKg: number,
-    actualHarvestVolumeKg?: number
-  ): Promise<ParcelGrowthRecord> {
-    const list = await this.getParcels();
-    const newParcel: ParcelGrowthRecord = {
-      id: Date.now().toString(),
-      parcelName,
-      crop,
-      sowingDate,
-      stage,
-      estimatedHarvestDate,
-      estimatedVolumeKg,
-      actualHarvestVolumeKg,
-      updatedAt: nowIso(),
-    };
-    list.unshift(newParcel);
-    writeJson(STORAGE_KEYS.PARCELS, list);
-    return newParcel;
+  /**
+   * Sauvegarde les parcelles confirmées par le serveur dans le localStorage sous une clé isolée.
+   * JAMAIS appelé directement par l'UI : passe exclusivement par growthService.
+   * @param cacheKey - Clé obligatoire isolée via parcelCacheKey().
+   */
+  async saveParcels(parcels: ParcelGrowthRecord[], cacheKey: string): Promise<void> {
+    if (!isValidParcelCacheKey(cacheKey)) {
+      throw new Error('Clé de cache privée obligatoire et valide requise pour sauvegarder les parcelles.');
+    }
+    writePrivateJsonOrThrow(cacheKey, parcels);
   }
+
+  // addParcel et updateParcelHarvest sont intentionnellement supprimés.
+  // Ces méthodes créaient des enregistrements locaux avec id=Date.now() et synced=false,
+  // permettant à l'UI de présenter des parcelles non confirmées par le serveur.
+  // Toute création/modification passe exclusivement par growthService → apiClient → serveur.
+
+  // --- Historique agronome — Persistance par utilisateur (Lot D) ---
+
+  /** Lit l'historique agronome depuis localStorage (clé isolée par user). */
+  async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
+      throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+    }
+    return readJson<T[]>(cacheKey, []);
+  }
+
+  /** Persiste l'historique agronome dans localStorage (clé isolée par user). */
+  async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
+      throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+    }
+    writePrivateJsonOrThrow(cacheKey, entries);
+  }
+
 
   // --- Préfinancement & Trust Score (Lot D) ---
   async getPrefinancingDeals(): Promise<PrefinancingDeal[]> {

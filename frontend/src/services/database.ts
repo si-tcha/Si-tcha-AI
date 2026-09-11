@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import { Alert } from 'react-native';
 import { apiClient, isNetworkError } from './api';
+import { isValidAgronomistCacheKey, isValidParcelCacheKey } from '../utils/cacheKey';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -200,6 +201,12 @@ class DatabaseService {
     }
   }
 
+  private writeKvOrThrow(key: string, value: unknown) {
+    const db = this.getDb();
+    db.execSync(`CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    db.runSync('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);', [key, JSON.stringify(value)]);
+  }
+
   private async fetchAllPublicProducts(): Promise<ProductOffer[]> {
     let page = 1;
     const limit = 50;
@@ -255,7 +262,7 @@ class DatabaseService {
 
   async syncPublicData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, b2bRes, parcelsRes, prefinRes, trustRes] = await Promise.all([
+      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, b2bRes, prefinRes, trustRes] = await Promise.all([
         this.fetchAllPublicProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
@@ -263,7 +270,6 @@ class DatabaseService {
         apiClient.getExpenses().catch(() => null),
         apiClient.getGicProfile().catch(() => null),
         apiClient.getB2BOffers().catch(() => null),
-        apiClient.getParcels().catch(() => null),
         apiClient.getPrefinancingDeals().catch(() => null),
         apiClient.getTrustRatings().catch(() => null),
       ]);
@@ -326,16 +332,6 @@ class DatabaseService {
           db.runSync(
             'INSERT OR REPLACE INTO b2b_offers (id, title, type, category, priceOrExchange, gicName, location, contact, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [o.id, o.title, o.type, o.category, o.priceOrExchange, o.gicName, o.location, o.contact, o.createdAt, 1]
-          );
-        }
-        updated = true;
-      }
-      if (Array.isArray(parcelsRes?.parcels)) {
-        db.runSync('DELETE FROM parcels WHERE synced = 1 OR synced IS NULL');
-        for (const p of (parcelsRes.parcels as any[])) {
-          db.runSync(
-            'INSERT OR REPLACE INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [p.id, p.parcelName, p.crop, p.sowingDate, p.stage, p.estimatedHarvestDate, p.estimatedVolumeKg, p.actualHarvestVolumeKg || null, p.updatedAt, 1]
           );
         }
         updated = true;
@@ -500,9 +496,18 @@ class DatabaseService {
       this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
 
       // Migrations pour s'assurer que les colonnes 'synced' existent dans les tables préexistantes
-      try { db.runSync("ALTER TABLE prefinancing ADD COLUMN synced INTEGER;"); } catch (e) {}
-      try { db.runSync("ALTER TABLE trust_ratings ADD COLUMN synced INTEGER;"); } catch (e) {}
-      try { db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;"); } catch (e) {}
+      try {
+        db.runSync("ALTER TABLE prefinancing ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE trust_ratings ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE parcels ADD COLUMN actualHarvestDate TEXT;");
+      } catch (e) { /* ignore if already exists */ }
 
       // Seules les données publiques sont synchronisées à l'initialisation
       this.syncPublicData().catch(() => {});
@@ -1016,39 +1021,54 @@ class DatabaseService {
   }
 
   // --- Journal de Croissance & Alertes Rendement (Lot D) ---
-  async getParcels(): Promise<ParcelGrowthRecord[]> {
-    return this.getDb().getAllSync('SELECT * FROM parcels ORDER BY updatedAt DESC') as any[];
+
+  /**
+   * Lit les parcelles privées depuis le cache SQLite sous une clé utilisateur isolée.
+   * @param cacheKey - Clé obligatoire isolée par (role, userId, gicId) via parcelCacheKey().
+   */
+  async getParcels(cacheKey: string): Promise<ParcelGrowthRecord[]> {
+    if (!isValidParcelCacheKey(cacheKey)) {
+      throw new Error('Clé de cache privée obligatoire et valide requise pour accéder aux parcelles.');
+    }
+    return this.readKv<ParcelGrowthRecord[]>(cacheKey, []);
   }
 
-  async addParcel(parcelName: string, crop: string, sowingDate: string, stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter', estimatedHarvestDate: string, estimatedVolumeKg: number, actualHarvestVolumeKg?: number): Promise<ParcelGrowthRecord> {
-    const id = Date.now().toString();
-    const updatedAt = nowIso();
-    const db = this.getDb();
-    db.runSync(
-      'INSERT INTO parcels (id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg || null, updatedAt, 0]
-    );
-
-    // Background sync to backend
-    apiClient.createParcel({ parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg }).then(() => {
-      db.runSync('UPDATE parcels SET synced = 1 WHERE id = ?', [id]);
-      this.syncRemoteData().catch(() => {});
-    }).catch((e) => {
-      if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : parcelle sauvegardée localement.");
-    });
-
-    return { id, parcelName, crop, sowingDate, stage, estimatedHarvestDate, estimatedVolumeKg, actualHarvestVolumeKg, updatedAt };
+  /**
+   * Sauvegarde les parcelles privées confirmées par le serveur dans le cache SQLite sous clé isolée.
+   * JAMAIS appelé directement par l'UI : passe exclusivement par growthService.
+   * @param parcels - Parcelles confirmées.
+   * @param cacheKey - Clé obligatoire isolée via parcelCacheKey().
+   */
+  async saveParcels(parcels: ParcelGrowthRecord[], cacheKey: string): Promise<void> {
+    if (!isValidParcelCacheKey(cacheKey)) {
+      throw new Error('Clé de cache privée obligatoire et valide requise pour sauvegarder les parcelles.');
+    }
+    this.writeKvOrThrow(cacheKey, parcels);
   }
 
-  async updateParcelHarvest(id: string, actualHarvestVolumeKg: number): Promise<void> {
-    const db = this.getDb();
-    const updatedAt = nowIso();
-    db.runSync(
-      'UPDATE parcels SET actualHarvestVolumeKg = ?, updatedAt = ?, synced = 0 WHERE id = ?',
-      [actualHarvestVolumeKg, updatedAt, id]
-    );
-    this.syncRemoteData().catch(() => {});
+  // addParcel et updateParcelHarvest sont intentionnellement supprimés.
+  // Ces méthodes créaient des enregistrements locaux avec id=Date.now() et synced=false,
+  // permettant à l'UI de présenter des parcelles non confirmées par le serveur.
+  // Toute création/modification passe exclusivement par growthService → apiClient → serveur.
+
+  // --- Historique agronome — Persistance par utilisateur (Lot D) ---
+
+  /** Lit l'historique agronome depuis le cache kv_store (clé isolée par user). */
+  async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
+      throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+    }
+    return this.readKv<T[]>(cacheKey, []);
   }
+
+  /** Persiste l'historique agronome dans le cache kv_store (clé isolée par user). */
+  async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
+      throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
+    }
+    this.writeKvOrThrow(cacheKey, entries);
+  }
+
 
   // --- Préfinancement & Trust Score (Lot D) ---
   async getPrefinancingDeals(): Promise<PrefinancingDeal[]> {

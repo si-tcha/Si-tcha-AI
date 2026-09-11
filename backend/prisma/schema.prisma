@@ -344,6 +344,7 @@ model ParcelEntry {
   estimatedHarvestDate  String   @db.VarChar(50)
   estimatedVolumeKg     Float
   actualHarvestVolumeKg Float?
+  actualHarvestDate     String?  @db.VarChar(50)
   updatedAt             DateTime @default(now())
   gicId                 BigInt
   gic                   GIC      @relation("gicParcels", fields: [gicId], references: [id])

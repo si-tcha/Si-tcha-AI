@@ -31,3 +31,14 @@ export const otpLimiter = rateLimit({
     message: 'Trop de demandes de code OTP. Veuillez patienter avant de réessayer.',
   },
 });
+
+export const agronomistLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'test' ? 50 : 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: 'Trop de consultations agronomiques demandées. Veuillez patienter avant de renouveler votre question.',
+  },
+});
+

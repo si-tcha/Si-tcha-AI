@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidIsoDate } from '../utils/growthUtils.js';
 
 // ─── Catalogue ───────────────────────────────────────────────────────────────
 export const paginationQuerySchema = z.object({
@@ -47,11 +48,24 @@ export const updateGicProfileSchema = z.object({
 // ─── Agronome IA ─────────────────────────────────────────────────────────────
 export const askAgronomistSchema = z.object({
   body: z.object({
-    crop: z.string().min(1, 'La culture est requise'),
-    category: z.string().min(1, 'La catégorie est requise'),
-    question: z.string().min(5, 'La question doit contenir au moins 5 caractères'),
+    crop: z
+      .string({ message: 'La culture est requise' })
+      .trim()
+      .min(1, 'La culture est requise')
+      .max(100, 'Le nom de la culture ne doit pas dépasser 100 caractères'),
+    category: z
+      .string({ message: 'La catégorie est requise' })
+      .trim()
+      .min(1, 'La catégorie est requise')
+      .max(100, 'La catégorie ne doit pas dépasser 100 caractères'),
+    question: z
+      .string({ message: 'La question est requise' })
+      .trim()
+      .min(5, 'La question doit contenir au moins 5 caractères')
+      .max(1000, 'La question ne doit pas dépasser 1000 caractères'),
   }),
 });
+
 
 // ─── Acheteur ────────────────────────────────────────────────────────────────
 export const createOrderSchema = z.object({
@@ -105,17 +119,203 @@ export const createB2BOfferSchema = z.object({
 });
 
 // ─── Parcelles / Journal de croissance ───────────────────────────────────────
+const PARCEL_STAGES = ['Semis', 'Levée', 'Floraison', 'Maturation', 'Prêt à récolter', 'Récolté'] as const;
+
 export const createParcelSchema = z.object({
-  body: z.object({
-    parcelName: z.string().min(1, 'Le nom de la parcelle est requis'),
-    crop: z.string().min(1, 'La culture est requise'),
-    sowingDate: z.string().optional().default(''),
-    stage: z.string().optional().default('Semis'),
-    estimatedHarvestDate: z.string().optional().default(''),
-    estimatedVolumeKg: z.number().optional().default(0),
-    actualHarvestVolumeKg: z.number().nullable().optional(),
-  }),
+  body: z
+    .object({
+      parcelName: z
+        .string({ message: 'Le nom de la parcelle est requis' })
+        .trim()
+        .min(1, 'Le nom de la parcelle est requis')
+        .max(200, 'Le nom de la parcelle ne doit pas dépasser 200 caractères'),
+      crop: z
+        .string({ message: 'La culture est requise' })
+        .trim()
+        .min(1, 'La culture est requise')
+        .max(100, 'Le nom de la culture ne doit pas dépasser 100 caractères'),
+      sowingDate: z
+        .string({ message: 'La date de semis est requise' })
+        .trim()
+        .refine(isValidIsoDate, {
+          message: 'Date de semis invalide (format YYYY-MM-DD attendu)',
+        }),
+      stage: z.enum(PARCEL_STAGES, {
+        message: 'Étape de croissance invalide',
+      }).default('Semis'),
+      estimatedHarvestDate: z
+        .string({ message: 'La date de récolte estimée est requise' })
+        .trim()
+        .refine(isValidIsoDate, {
+          message: 'Date de récolte estimée invalide (format YYYY-MM-DD attendu)',
+        }),
+      estimatedVolumeKg: z
+        .number({ message: 'Le volume estimé est requis' })
+        .finite('Le volume estimé doit être un nombre fini')
+        .positive('Le volume estimé doit être strictement supérieur à 0 kg')
+        .max(1_000_000, 'Le volume estimé ne peut pas dépasser 1 000 000 kg'),
+      actualHarvestVolumeKg: z
+        .number({ message: 'Le volume réel récolté doit être un nombre valide' })
+        .finite('Le volume réel récolté doit être un nombre fini')
+        .min(0, 'Le volume réel récolté doit être supérieur ou égal à 0 kg')
+        .max(1_000_000, 'Le volume réel récolté ne peut pas dépasser 1 000 000 kg')
+        .nullable()
+        .optional(),
+      actualHarvestDate: z
+        .string()
+        .trim()
+        .refine(isValidIsoDate, {
+          message: 'Date de récolte réelle invalide (format YYYY-MM-DD attendu)',
+        })
+        .nullable()
+        .optional(),
+    })
+    .refine(
+      (data) => data.estimatedHarvestDate >= data.sowingDate,
+      {
+        message: 'La date de récolte estimée ne peut pas être antérieure à la date de semis',
+        path: ['estimatedHarvestDate'],
+      }
+    )
+    .refine(
+      (data) => !data.actualHarvestDate || data.actualHarvestDate >= data.sowingDate,
+      {
+        message: 'La date de récolte réelle ne peut pas être antérieure à la date de semis',
+        path: ['actualHarvestDate'],
+      }
+    )
+    .refine(
+      (data) => {
+        const hasVol = data.actualHarvestVolumeKg !== null && data.actualHarvestVolumeKg !== undefined;
+        const hasDate = data.actualHarvestDate !== null && data.actualHarvestDate !== undefined && data.actualHarvestDate.length > 0;
+        return hasVol === hasDate;
+      },
+      {
+        message: 'Le volume réel récolté et la date de récolte réelle doivent être fournis ensemble ou tous deux omis',
+        path: ['actualHarvestVolumeKg'],
+      }
+    )
+    .refine(
+      (data) => {
+        if (data.stage === 'Récolté') {
+          const hasVol = data.actualHarvestVolumeKg !== null && data.actualHarvestVolumeKg !== undefined;
+          const hasDate = data.actualHarvestDate !== null && data.actualHarvestDate !== undefined && data.actualHarvestDate.length > 0;
+          return hasVol && hasDate;
+        }
+        return true;
+      },
+      {
+        message: "L'étape 'Récolté' exige de renseigner le volume réel et la date réelle de récolte",
+        path: ['stage'],
+      }
+    ),
 });
+
+export const updateParcelSchema = z.object({
+  params: z.object({
+    id: z.string().trim().min(1, 'Identifiant de parcelle requis'),
+  }),
+  body: z
+    .object({
+      parcelName: z
+        .string()
+        .trim()
+        .min(1, 'Le nom de la parcelle ne peut pas être vide')
+        .max(200, 'Le nom de la parcelle ne doit pas dépasser 200 caractères')
+        .optional(),
+      crop: z
+        .string()
+        .trim()
+        .min(1, 'La culture ne peut pas être vide')
+        .max(100, 'La culture ne doit pas dépasser 100 caractères')
+        .optional(),
+      sowingDate: z
+        .string()
+        .trim()
+        .refine(isValidIsoDate, {
+          message: 'Date de semis invalide (format YYYY-MM-DD attendu)',
+        })
+        .optional(),
+      stage: z.enum(PARCEL_STAGES, {
+        message: 'Étape de croissance invalide',
+      }).optional(),
+      estimatedHarvestDate: z
+        .string()
+        .trim()
+        .refine(isValidIsoDate, {
+          message: 'Date de récolte estimée invalide (format YYYY-MM-DD attendu)',
+        })
+        .optional(),
+      estimatedVolumeKg: z
+        .number({ message: 'Le volume estimé doit être un nombre valide' })
+        .finite('Le volume estimé doit être un nombre fini')
+        .positive('Le volume estimé doit être strictement supérieur à 0 kg')
+        .max(1_000_000, 'Le volume estimé ne peut pas dépasser 1 000 000 kg')
+        .optional(),
+      actualHarvestVolumeKg: z
+        .number({ message: 'Le volume réel récolté doit être un nombre valide' })
+        .finite('Le volume réel récolté doit être un nombre fini')
+        .min(0, 'Le volume réel récolté doit être supérieur ou égal à 0 kg')
+        .max(1_000_000, 'Le volume réel récolté ne peut pas dépasser 1 000 000 kg')
+        .nullable()
+        .optional(),
+      actualHarvestDate: z
+        .string()
+        .trim()
+        .refine(isValidIsoDate, {
+          message: 'Date de récolte réelle invalide (format YYYY-MM-DD attendu)',
+        })
+        .nullable()
+        .optional(),
+    })
+    .refine(
+      (data) => Object.keys(data).length > 0,
+      {
+        message: 'Au moins un champ doit être fourni pour la mise à jour',
+      }
+    )
+    .refine(
+      (data) => {
+        if (data.sowingDate && data.estimatedHarvestDate) {
+          return data.estimatedHarvestDate >= data.sowingDate;
+        }
+        return true;
+      },
+      {
+        message: 'La date de récolte estimée ne peut pas être antérieure à la date de semis',
+        path: ['estimatedHarvestDate'],
+      }
+    )
+    .refine(
+      (data) => {
+        if (data.sowingDate && data.actualHarvestDate) {
+          return data.actualHarvestDate >= data.sowingDate;
+        }
+        return true;
+      },
+      {
+        message: 'La date de récolte réelle ne peut pas être antérieure à la date de semis',
+        path: ['actualHarvestDate'],
+      }
+    )
+    .refine(
+      (data) => {
+        const hasVol = data.actualHarvestVolumeKg !== undefined;
+        const hasDate = data.actualHarvestDate !== undefined;
+        if (hasVol && hasDate) {
+          const volIsNull = data.actualHarvestVolumeKg === null;
+          const dateIsNull = !data.actualHarvestDate || data.actualHarvestDate.length === 0;
+          return volIsNull === dateIsNull;
+        }
+        return true;
+      },
+      {
+        message: 'Le volume réel récolté et la date de récolte réelle doivent être modifiés ensemble',
+        path: ['actualHarvestVolumeKg'],
+      }
+    ),
+});
+
 
 // ─── Préfinancement ──────────────────────────────────────────────────────────
 export const createPrefinancingDealSchema = z.object({

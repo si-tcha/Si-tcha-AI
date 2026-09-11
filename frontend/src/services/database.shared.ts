@@ -328,17 +328,24 @@ export const DEFAULT_AGRONOMIST_QUESTIONS: AgronomistQuestion[] = [];
 
 export const DEFAULT_B2B_OFFERS: B2BOffer[] = [];
 
+export type ParcelStage = 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter' | 'Récolté';
+
 export interface ParcelGrowthRecord {
   id: string;
   parcelName: string;
   crop: string;
   sowingDate: string;
-  stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter';
+  stage: ParcelStage;
   estimatedHarvestDate: string;
   estimatedVolumeKg: number;
-  actualHarvestVolumeKg?: number;
+  actualHarvestVolumeKg?: number | null;
+  actualHarvestDate?: string | null;
+  yieldDropPercent?: number;
+  yieldDropAlert?: boolean;
   updatedAt: string;
+  synced?: boolean;
 }
+
 
 export interface PrefinancingDeal {
   id: string;
