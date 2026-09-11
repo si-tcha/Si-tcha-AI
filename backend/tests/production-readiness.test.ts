@@ -9,6 +9,14 @@ import { errorHandler } from '../src/middlewares/errorHandler.js';
 import { securityHeaders } from '../src/middlewares/security.js';
 import prisma from '../src/lib/prisma.js';
 import { gracefulShutdown } from '../src/lifecycle.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { validateApiUrl } from '../../scripts/validate-api-url.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 describe('Bloc 5 — Tests de Préparation Production Backend', () => {
   const baseValidProdEnv = {
@@ -148,6 +156,30 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(devConfig.allowedCorsOrigins).toEqual([]);
       expect(devConfig.TRUST_PROXY).toBe(false);
       expect(devConfig.ENABLE_API_DOCS).toBe(true);
+    });
+
+    it('Supporte TEST_DATABASE_URL et DATABASE_TEST_URL comme alternative à DATABASE_URL en mode test', () => {
+      // Test avec DATABASE_TEST_URL
+      const config1 = validateConfig({
+        NODE_ENV: 'test',
+        DATABASE_TEST_URL: 'postgresql://postgres:postgres@localhost:5432/test_db_1',
+      });
+      expect(config1.DATABASE_URL).toBe('postgresql://postgres:postgres@localhost:5432/test_db_1');
+
+      // Test avec TEST_DATABASE_URL
+      const config2 = validateConfig({
+        NODE_ENV: 'test',
+        TEST_DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/test_db_2',
+      });
+      expect(config2.DATABASE_URL).toBe('postgresql://postgres:postgres@localhost:5432/test_db_2');
+
+      // Priorité à TEST_DATABASE_URL sur DATABASE_TEST_URL si les deux sont définis
+      const config3 = validateConfig({
+        NODE_ENV: 'test',
+        TEST_DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/test_db_priority',
+        DATABASE_TEST_URL: 'postgresql://postgres:postgres@localhost:5432/test_db_other',
+      });
+      expect(config3.DATABASE_URL).toBe('postgresql://postgres:postgres@localhost:5432/test_db_priority');
     });
 
     it('Parse correctement les différentes valeurs de trust proxy', () => {
@@ -927,6 +959,118 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       expect(emittedLogs).toContain('connect'); // syscall
       expect(emittedLogs).toContain('500'); // statusCode
     });
+
+    it('Masquage des formats téléphoniques complexes dans les chaînes libres et flux Pino (astérisques, 00237, parenthèses, slashs, URLs)', async () => {
+      const { Writable } = await import('stream');
+      const pinoModule = await import('pino');
+      const pino = pinoModule.default || pinoModule;
+      const {
+        SENSITIVE_PATHS,
+        sanitizeErrorForLog,
+        sanitizeLogString,
+        sanitizeDataRecursively,
+      } = await import('../src/middlewares/logger.js');
+
+      // 1. Validation directe dans sanitizeLogString
+      expect(sanitizeLogString('Connexion pour 6*99112233')).toBe('Connexion pour 6******33');
+      expect(sanitizeLogString('Envoi SMS vers 00237699112233')).toBe('Envoi SMS vers +2376******33');
+      expect(sanitizeLogString('Contact: +237 (699) 112 233')).toBe('Contact: +2376******33');
+      expect(sanitizeLogString('Fichier log: /path/699/112/233/info')).toBe('Fichier log: /path/6******33/info');
+      expect(sanitizeLogString('URL: https://gw.cm?to=00237%20699%20112%20233')).toBe('URL: https://gw.cm?to=+2376******33');
+      expect(sanitizeLogString('URL: https://gw.cm?to=%2B237%20%28699%29%20112%20233')).toBe('URL: https://gw.cm?to=+2376******33');
+      expect(sanitizeLogString('URL: https://gw.cm?to=699%2F112%2F233')).toBe('URL: https://gw.cm?to=6******33');
+      expect(sanitizeLogString('URL: https://gw.cm?to=6%2A99112233')).toBe('URL: https://gw.cm?to=6******33');
+
+      // 2. Préservation stricte des identifiants techniques
+      const technicalStr =
+        'Commit: a75840da6b0fcab823f61361c7aee10f31476788, 8dd839ebf102, Port: 5432, Timestamp: 1711234567890, UUID: d9e843c0-0f04-4c8e-a6a2-4a0dfc8230b0';
+      expect(sanitizeLogString(technicalStr)).toBe(technicalStr);
+
+      // 3. Validation dans un flux Pino réel
+      let emittedLogs = '';
+      const stream = new Writable({
+        write(chunk, _encoding, callback) {
+          emittedLogs += chunk.toString();
+          callback();
+        },
+      });
+
+      const pinoTest = (pino as any)(
+        {
+          level: 'info',
+          redact: {
+            paths: SENSITIVE_PATHS,
+            censor: '[REDACTED]',
+          },
+          formatters: {
+            log(obj: Record<string, any>) {
+              return sanitizeDataRecursively(obj);
+            },
+          },
+          serializers: {
+            err: sanitizeErrorForLog,
+            error: sanitizeErrorForLog,
+          },
+          hooks: {
+            logMethod(inputArgs: any[], method: any) {
+              const sanitizedArgs = inputArgs.map((arg) => {
+                if (typeof arg === 'string') return sanitizeLogString(arg);
+                if (arg instanceof Error) return arg;
+                if (arg && typeof arg === 'object') return sanitizeDataRecursively(arg);
+                return arg;
+              });
+              return method.apply(this, sanitizedArgs);
+            },
+          },
+        },
+        stream
+      );
+
+      const complexPayload = {
+        freeMessage1: 'Connexion initiée pour 6*99112233',
+        freeMessage2: 'SMS dispatché vers 00237699112233',
+        freeMessage3: 'Téléphone au format +237 (699) 112 233',
+        freeMessage4: 'Sous-dossier 699/112/233 détecté',
+        urlMessage: 'Webhook: https://gw.cm?num=6%2A99112233&intl=%2B237%20%28699%29%20112%20233',
+      };
+
+      pinoTest.info(complexPayload, 'Log avec formats téléphoniques complexes');
+
+      // Erreur avec code Prisma et système
+      const techErr: any = new Error('Erreur base de données');
+      techErr.code = 'P2002';
+      techErr.statusCode = 500;
+      techErr.syscall = 'connect';
+      techErr.errno = -111;
+      techErr.stack = 'Error at connect (/app/db.ts:12:3?phone=6*99112233)';
+
+      pinoTest.error({ err: techErr }, 'Erreur système');
+
+      // Zod Error
+      pinoTest.warn({
+        validation: {
+          issues: [{ code: 'invalid_type', path: ['body', 'phone'], message: 'Expected string' }],
+        },
+      });
+
+      // Assertions d'absence des numéros bruts
+      expect(emittedLogs).not.toContain('6*99112233');
+      expect(emittedLogs).not.toContain('00237699112233');
+      expect(emittedLogs).not.toContain('+237 (699) 112 233');
+      expect(emittedLogs).not.toContain('699/112/233');
+      expect(emittedLogs).not.toContain('6%2A99112233');
+
+      // Assertions de présence des masques
+      expect(emittedLogs).toContain('6******33');
+      expect(emittedLogs).toContain('+2376******33');
+
+      // Assertions de préservation des codes techniques
+      expect(emittedLogs).toContain('P2002');
+      expect(emittedLogs).toContain('prismaCode');
+      expect(emittedLogs).toContain('invalid_type');
+      expect(emittedLogs).toContain('connect');
+      expect(emittedLogs).toContain('500');
+    });
   });
 
   describe('4. Healthcheck de processus et Readiness probe', () => {
@@ -1067,6 +1211,96 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
 
       expect(dummyServer.listening).toBe(false);
       expect(disconnectSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('8. Audit de conformité CI et scripts de validation', () => {
+    it('Vérifie que backend-ci.yml respecte strictement l’ordre requis et les variables PostgreSQL de test', () => {
+      const workflowPath = path.resolve(__dirname, '../../.github/workflows/backend-ci.yml');
+      const content = fs.readFileSync(workflowPath, 'utf8');
+
+      // 1. Démarrage PostgreSQL service
+      expect(content).toContain('postgres:');
+
+      // 2. Définition des variables DATABASE_URL, TEST_DATABASE_URL et DATABASE_TEST_URL avec la même URL
+      expect(content).toContain('DATABASE_URL: postgresql://test_user:test_password@localhost:5432/sitcha_test_db?schema=public');
+      expect(content).toContain('TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5432/sitcha_test_db?schema=public');
+      expect(content).toContain('DATABASE_TEST_URL: postgresql://test_user:test_password@localhost:5432/sitcha_test_db?schema=public');
+
+      // 3. Ordre réel des étapes : deploy -> status -> tsc -> test -> drift -> docker
+      const deployIndex = content.indexOf('Deploy Migrations to Disposable Test Database');
+      const statusIndex = content.indexOf('Verify Migration Consistency & Status');
+      const tscIndex = content.indexOf('TypeScript Compile Check');
+      const testIndex = content.indexOf('Run Tests');
+      const driftIndex = content.indexOf('Check for Prisma Schema Drift against Migrations');
+      const dockerIndex = content.indexOf('Build & Verify Final Production Docker Image');
+
+      expect(deployIndex).toBeGreaterThan(0);
+      expect(statusIndex).toBeGreaterThan(deployIndex);
+      expect(tscIndex).toBeGreaterThan(statusIndex);
+      expect(testIndex).toBeGreaterThan(tscIndex);
+      expect(driftIndex).toBeGreaterThan(testIndex);
+      expect(dockerIndex).toBeGreaterThan(driftIndex);
+    });
+
+    it('Le script validate-production-readiness.sh échoue immédiatement si EXPO_PUBLIC_API_URL est absent', () => {
+      const scriptPath = path.resolve(__dirname, '../../scripts/validate-production-readiness.sh');
+      const res = spawnSync('bash', [scriptPath], {
+        env: {
+          ...process.env,
+          EXPO_PUBLIC_API_URL: '',
+        },
+        encoding: 'utf8',
+      });
+
+      expect(res.status).not.toBe(0);
+      expect(res.stdout + res.stderr).toContain('EXPO_PUBLIC_API_URL est obligatoire pour valider la préparation production');
+    });
+
+    it('Le script validate-production-readiness.sh ne contient pas d’URL inventée en dur', () => {
+      const scriptPath = path.resolve(__dirname, '../../scripts/validate-production-readiness.sh');
+      const content = fs.readFileSync(scriptPath, 'utf8');
+
+      expect(content).not.toContain('api.sitcha.org');
+      expect(content).not.toContain('api-staging.sitcha.org');
+      expect(content).toContain('https://<API_HOST>/api');
+    });
+
+    it('Le script validate-api-url.mjs rejette toutes les variantes IPv6 privées, link-local, unique-local et IPv4-mapped', () => {
+      // Test des adresses interdites directement
+      const invalidUrls = [
+        'https://[fe80::1]/api',
+        'https://[fe90::1]/api',
+        'https://[fea0::1]/api',
+        'https://[febf::1]/api',
+        'https://[fc00::1]/api',
+        'https://[fc12::1]/api',
+        'https://[fd00::1]/api',
+        'https://[fdab::1]/api',
+        'https://[::ffff:127.0.0.1]/api',
+        'https://[::ffff:10.0.2.2]/api',
+        'https://[::ffff:192.168.1.1]/api',
+        'https://[::ffff:7f00:1]/api',
+        'https://[::ffff:a00:202]/api',
+        'https://[::ffff:c0a8:101]/api',
+        'https://[::1]/api',
+        'http://127.0.0.1:4000/api',
+      ];
+
+      for (const url of invalidUrls) {
+        expect(() => validateApiUrl(url)).toThrow();
+      }
+
+      // Test d’une URL valide de production
+      expect(() => validateApiUrl('https://api.example.com/api')).not.toThrow();
+
+      // Test CLI ponctuel
+      const validatorPath = path.resolve(__dirname, '../../scripts/validate-api-url.mjs');
+      const cliInvalid = spawnSync('node', [validatorPath, 'https://[fe80::1]/api'], { encoding: 'utf8' });
+      expect(cliInvalid.status).not.toBe(0);
+
+      const cliValid = spawnSync('node', [validatorPath, 'https://api.example.com/api'], { encoding: 'utf8' });
+      expect(cliValid.status).toBe(0);
     });
   });
 });

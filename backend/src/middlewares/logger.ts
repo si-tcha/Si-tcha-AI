@@ -81,17 +81,24 @@ export function maskPhone(phone?: string | null): string {
     return raw;
   }
 
-  // Normalisation des encodages URL (%2B, %20, %2D) et séparateurs
-  const normalized = raw.replace(/%2b/gi, '+').replace(/%20/gi, ' ').replace(/%2d/gi, '-');
+  // Normalisation des encodages URL (%2B, %20, %2D, %2F, %2A, %28, %29) et séparateurs
+  const normalized = raw
+    .replace(/%2b/gi, '+')
+    .replace(/%20/gi, ' ')
+    .replace(/%2d/gi, '-')
+    .replace(/%2f/gi, '/')
+    .replace(/%2a/gi, '*')
+    .replace(/%28/gi, '(')
+    .replace(/%29/gi, ')');
   const digits = normalized.replace(/\D/g, '');
 
-  // 1. Format international camerounais : 237 suivi de 9 chiffres commençant par 2 ou 6
-  if (digits.startsWith('237') && digits.length === 12 && /^[26]/.test(digits.slice(3))) {
-    const core = digits.slice(3);
-    return `+237${core[0]}******${core.slice(-2)}`;
-  }
+  // 1. Format international camerounais : 00237, +237 ou 237 suivi de 9 chiffres commençant par 2 ou 6
   if (digits.startsWith('00237') && digits.length === 14 && /^[26]/.test(digits.slice(5))) {
     const core = digits.slice(5);
+    return `+237${core[0]}******${core.slice(-2)}`;
+  }
+  if (digits.startsWith('237') && digits.length === 12 && /^[26]/.test(digits.slice(3))) {
+    const core = digits.slice(3);
     return `+237${core[0]}******${core.slice(-2)}`;
   }
 
@@ -131,12 +138,21 @@ export function sanitizeLogString(str?: string | null): string {
     // 5. Masquage de cookies de session
     .replace(/(session(?:_id)?=)[^;\s&]+/gi, '$1[REDACTED_COOKIE]');
 
-  // 6. Masquage des numéros de téléphone camerounais internationaux (+237 ou 237 ou %2B237 avec espaces/tirets/URL)
-  const intlRegex = /(?<!\d)(?:\+|%2B)?237[\s.\-_]*(?:%20|%2D)?[26](?:[\s.\-_]*(?:%20|%2D)?\d){8}(?!\d)/gi;
+  // Séparateurs de numéros de téléphone autorisés (espaces, tirets, points, slashs, astérisques, parenthèses et URL-encodés)
+  const SEP = '(?:[\\s.\\-_/*()]|%20|%2D|%2F|%2A|%28|%29)';
+
+  // 6. Masquage des numéros de téléphone camerounais internationaux (+237, 00237 ou 237 avec séparateurs et URL-encodages)
+  const intlRegex = new RegExp(
+    `(?<!\\d)(?:\\+|%2B|00)?237${SEP}*[26](?:${SEP}*\\d){8}(?!\\d)`,
+    'gi'
+  );
   res = res.replace(intlRegex, (match) => maskPhone(match));
 
-  // 7. Masquage des numéros de téléphone camerounais locaux (9 chiffres commençant par 2 ou 6, avec espaces/tirets/URL)
-  const localRegex = /(?<![\w\d])([26])(?:[\s.\-_]*(?:%20|%2D)?\d){8}(?![\w\d])/gi;
+  // 7. Masquage des numéros de téléphone camerounais locaux (9 chiffres commençant par 2 ou 6, avec séparateurs et URL-encodages)
+  const localRegex = new RegExp(
+    `(?<![\\w\\d])([26])(?:${SEP}*\\d){8}(?![\\w\\d])`,
+    'gi'
+  );
   res = res.replace(localRegex, (match) => maskPhone(match));
 
   return res;

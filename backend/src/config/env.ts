@@ -141,6 +141,14 @@ export function validateConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConf
   const nodeEnv = (rawEnv.NODE_ENV || 'development') as 'development' | 'test' | 'production';
   const defaultLogLevel = nodeEnv === 'production' ? 'info' : nodeEnv === 'test' ? 'warn' : 'debug';
 
+  const effectiveEnv: NodeJS.ProcessEnv = { ...rawEnv };
+  if (nodeEnv === 'test') {
+    effectiveEnv.DATABASE_URL =
+      effectiveEnv.DATABASE_URL ||
+      effectiveEnv.TEST_DATABASE_URL ||
+      effectiveEnv.DATABASE_TEST_URL;
+  }
+
   // Swagger docs : activé par défaut en dev, désactivé par défaut en prod et test
   const defaultEnableDocs = nodeEnv === 'development';
 
@@ -194,7 +202,7 @@ export function validateConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConf
     AFRICASTALKING_API_KEY: z.string().optional(),
   });
 
-  const parsed = schema.safeParse(rawEnv);
+  const parsed = schema.safeParse(effectiveEnv);
   if (!parsed.success) {
     const errorDetails = parsed.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
