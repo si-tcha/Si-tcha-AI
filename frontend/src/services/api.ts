@@ -336,6 +336,14 @@ export async function readStoredUser(): Promise<UserProfile | null> {
 let sessionMutationSeq = 0;
 let sessionWriteQueue: Promise<any> = Promise.resolve();
 
+/**
+ * Alloue un ticket de mutation de session strictement croissant.
+ * Constitue l'unique autorité monotone pour toute l'application.
+ */
+export function allocateSessionMutationTicket(): number {
+  return ++sessionMutationSeq;
+}
+
 export function getSessionMutationSeq(): number {
   return sessionMutationSeq;
 }
@@ -348,13 +356,13 @@ export function _resetSessionMutationSeqForTesting(initial = 0) {
 /**
  * Enregistre la session de manière atomique avec coordination latest-wins.
  * Ne met à jour l'état mémoire qu'après succès de la persistance.
- * Si une opération plus récente a débuté, l'écriture obsolète est ignorée.
+ * Si une opération plus récente a débuté, l'écriture obsolète est ignorée et retourne false.
  */
 export async function saveSession(
   token: string,
   user: UserProfile,
   explicitSeq?: number
-): Promise<void> {
+): Promise<boolean> {
   if (!token || !user) {
     throw new Error('Données de session incomplètes.');
   }
@@ -369,21 +377,23 @@ export async function saveSession(
     throw new Error('Données de session non conformes au schéma v1.');
   }
 
-  const seq = explicitSeq !== undefined ? explicitSeq : ++sessionMutationSeq;
+  const seq = explicitSeq !== undefined ? explicitSeq : allocateSessionMutationTicket();
   if (explicitSeq !== undefined && explicitSeq > sessionMutationSeq) {
     sessionMutationSeq = explicitSeq;
   }
 
   // Si une mutation de session plus récente a déjà débuté, rejeter immédiatement
   if (seq < sessionMutationSeq && explicitSeq !== undefined) {
-    return;
+    return false;
   }
 
   const serialized = JSON.stringify(sessionData);
+  let saved = false;
 
   const runTask = async () => {
-    // Vérification avant écriture
+    // Vérification avant écriture dans la file sérialisée
     if (seq < sessionMutationSeq && explicitSeq !== undefined) {
+      saved = false;
       return;
     }
 
@@ -402,34 +412,41 @@ export async function saveSession(
     // Mise à jour de l'état mémoire UNIQUEMENT si toujours la version la plus récente
     if (seq >= sessionMutationSeq) {
       memorySession = sessionData;
+      saved = true;
     }
   };
 
   const currentWrite = sessionWriteQueue.then(runTask, runTask);
-  sessionWriteQueue = currentWrite;
-  return currentWrite;
+  sessionWriteQueue = currentWrite.then(() => {}, () => {});
+  await currentWrite;
+  return saved;
 }
 
 /**
  * Supprime la session locale et l'état en mémoire avec coordination latest-wins.
+ * Retourne false si la suppression a été ignorée car obsolète.
  */
-export async function clearSession(explicitSeq?: number): Promise<void> {
-  const seq = explicitSeq !== undefined ? explicitSeq : ++sessionMutationSeq;
+export async function clearSession(explicitSeq?: number): Promise<boolean> {
+  const seq = explicitSeq !== undefined ? explicitSeq : allocateSessionMutationTicket();
   if (explicitSeq !== undefined && explicitSeq > sessionMutationSeq) {
     sessionMutationSeq = explicitSeq;
   }
 
   if (seq < sessionMutationSeq && explicitSeq !== undefined) {
-    return;
+    return false;
   }
+
+  let cleared = false;
 
   const runTask = async () => {
     if (seq < sessionMutationSeq && explicitSeq !== undefined) {
+      cleared = false;
       return;
     }
 
     if (seq >= sessionMutationSeq) {
       memorySession = null;
+      cleared = true;
     }
 
     if (Platform.OS === 'web') {
@@ -458,8 +475,60 @@ export async function clearSession(explicitSeq?: number): Promise<void> {
   };
 
   const currentClear = sessionWriteQueue.then(runTask, runTask);
-  sessionWriteQueue = currentClear;
-  return currentClear;
+  sessionWriteQueue = currentClear.then(() => {}, () => {});
+  await currentClear;
+  return cleared;
+}
+
+/**
+ * Supprime atomiquement la session uniquement si le token actif correspond au token attendu.
+ * La comparaison et l'effacement ont lieu dans la même opération sérialisée sans fenêtre de course.
+ */
+export async function clearSessionIfTokenMatches(expectedToken: string): Promise<boolean> {
+  let cleared = false;
+
+  const runTask = async () => {
+    // 1. Lire le token actuel dans la tâche sérialisée
+    const currentToken = memorySession?.token ?? (await readStoredSession())?.token;
+    if (currentToken !== expectedToken) {
+      cleared = false;
+      return;
+    }
+
+    // 2. Token correspondant : allouer une séquence et effacer
+    const seq = allocateSessionMutationTicket();
+    memorySession = null;
+    cleared = true;
+
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(SESSION_KEY);
+          for (const key of LEGACY_STORAGE_KEYS) {
+            localStorage.removeItem(key);
+          }
+        } catch (err) {
+          console.warn('Erreur localStorage clearSession:', err);
+        }
+      }
+    } else if (SecureStore) {
+      try {
+        await SecureStore.deleteItemAsync(SESSION_KEY);
+      } catch (err) {
+        console.warn('Erreur SecureStore clearSession:', err);
+      }
+      for (const key of LEGACY_STORAGE_KEYS) {
+        try {
+          await SecureStore.deleteItemAsync(key);
+        } catch {}
+      }
+    }
+  };
+
+  const currentClear = sessionWriteQueue.then(runTask, runTask);
+  sessionWriteQueue = currentClear.then(() => {}, () => {});
+  await currentClear;
+  return cleared;
 }
 
 // Aliases pour rétrocompatibilité
@@ -496,14 +565,12 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
     const requireOtp = Boolean(payload?.requireOtp);
 
     // Sur 401 sur route protégée :
-    // Invalider la session UNIQUEMENT si le token utilisé par cette requête est toujours le token de la session courante
+    // Invalider la session UNIQUEMENT si le token utilisé par cette requête est toujours le token de la session courante.
+    // L'effacement et le matching sont atomiques dans la même tâche sérialisée.
     if (response.status === 401 && token) {
-      const currentToken = await readToken();
-      if (currentToken === token) {
-        await clearSession();
-        if (unauthorizedHandler) {
-          unauthorizedHandler(token);
-        }
+      const cleared = await clearSessionIfTokenMatches(token);
+      if (cleared && unauthorizedHandler) {
+        unauthorizedHandler(token);
       }
     }
     // Sur 403 : ne PAS invalider le token ou déconnecter l'utilisateur

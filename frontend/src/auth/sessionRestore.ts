@@ -35,8 +35,8 @@ export type RestoreSessionResult =
 export interface SessionRestoreDeps {
   readSession: () => Promise<StoredSessionV1 | null>;
   getMe: () => Promise<{ user: UserProfile }>;
-  save: (token: string, user: UserProfile) => Promise<void>;
-  clear: () => Promise<void>;
+  save: (token: string, user: UserProfile) => Promise<boolean | void>;
+  clear: () => Promise<boolean | void>;
 }
 
 const defaultDeps: SessionRestoreDeps = {

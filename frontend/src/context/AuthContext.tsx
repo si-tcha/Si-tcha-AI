@@ -9,6 +9,7 @@ import {
   isNetworkError,
   ApiError,
   setUnauthorizedHandler,
+  allocateSessionMutationTicket,
 } from '@/services/api';
 import {
   performSessionRestore,
@@ -45,10 +46,18 @@ export interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
-// ─── COORDINATEUR DE SESSION ATOMIQUE (Latest-Wins) ──────────────────────────
-
+/**
+ * Coordinateur de production pour les opérations de session.
+ * Utilise l'autorité globale monotone de stockage pour tous les tickets de mutation.
+ */
 export class AuthSessionCoordinator {
-  private sessionOpSeq = 0;
+  private activeTicket = 0;
+  private get sessionOpSeq() {
+    return this.activeTicket;
+  }
+  private set sessionOpSeq(val: number) {
+    this.activeTicket = val;
+  }
   private session: AuthSessionState = {
     status: 'loading',
     user: null,
@@ -56,14 +65,15 @@ export class AuthSessionCoordinator {
     error: null,
   };
   private listeners = new Set<() => void>();
+  private snapshot: AuthSessionState;
 
   constructor() {
-    this.session = {
+    this.snapshot = Object.freeze({
       status: 'loading',
       user: null,
       token: null,
       error: null,
-    };
+    });
   }
 
   public subscribe = (listener: () => void) => {
@@ -74,30 +84,39 @@ export class AuthSessionCoordinator {
   };
 
   private notify() {
+    this.snapshot = Object.freeze({ ...this.session });
     for (const listener of this.listeners) {
       listener();
     }
   }
 
+  public getSnapshot = (): AuthSessionState => {
+    return this.snapshot;
+  };
+
+  public getServerSnapshot = (): AuthSessionState => {
+    return this.snapshot;
+  };
+
   public getState = (): AuthSessionState => {
-    return this.session;
+    return this.snapshot;
   };
 
   public getSessionOpSeq = (): number => {
-    return this.sessionOpSeq;
+    return this.activeTicket;
   };
 
   public commitSession = async (
-    opId: number,
+    ticket: number,
     nextSession: AuthSessionState,
     userToActivate: UserProfile | null,
     options?: { saveToken?: string | null; runSync?: boolean }
   ): Promise<boolean> => {
     // Si une opération plus récente a débuté, rejeter immédiatement
-    if (opId < this.sessionOpSeq) {
+    if (ticket < this.activeTicket) {
       return false;
     }
-    this.sessionOpSeq = Math.max(this.sessionOpSeq, opId);
+    this.activeTicket = ticket;
 
     if (userToActivate && userToActivate.role === 'buyer') {
       const buyerId = (userToActivate.buyerId || userToActivate.id || '').trim();
@@ -106,15 +125,20 @@ export class AuthSessionCoordinator {
         await cartStore.setBuyerId(buyerId);
 
         // Revérifier après l'attente asynchrone de cartStore
-        if (this.sessionOpSeq > opId) {
+        if (this.activeTicket > ticket) {
           return false;
         }
 
         if (options?.saveToken) {
-          await saveSession(options.saveToken, userToActivate, opId);
+          const saved = await saveSession(options.saveToken, userToActivate, ticket);
+          if (!saved) {
+            // L'écriture a été ignorée par le gestionnaire de stockage (obsolète) :
+            // Ne jamais committer l'état React pour éviter toute divergence
+            return false;
+          }
         }
 
-        if (this.sessionOpSeq > opId) {
+        if (this.activeTicket > ticket) {
           return false;
         }
 
@@ -129,10 +153,17 @@ export class AuthSessionCoordinator {
     }
 
     // Rôle non-acheteur, non-connecté ou déconnexion
+    if (options?.saveToken === null) {
+      const cleared = await clearSession(ticket);
+      if (!cleared) {
+        return false;
+      }
+    }
+
     cartStore.reset();
     dbService.setActiveBuyerId(null);
 
-    if (this.sessionOpSeq > opId) {
+    if (this.activeTicket > ticket) {
       return false;
     }
 
@@ -142,14 +173,15 @@ export class AuthSessionCoordinator {
   };
 
   public signIn = async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {
-    const opId = ++this.sessionOpSeq;
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
     const res = await apiClient.login(phone, pin, role);
-    if (this.sessionOpSeq !== opId) {
+    if (this.activeTicket !== ticket) {
       return { message: 'Opération de session obsolète', obsolete: true };
     }
     if (res.token && res.user) {
       const committed = await this.commitSession(
-        opId,
+        ticket,
         {
           status: 'authenticated',
           user: res.user,
@@ -167,14 +199,15 @@ export class AuthSessionCoordinator {
   };
 
   public completeOtp = async (phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> => {
-    const opId = ++this.sessionOpSeq;
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
     const res = await apiClient.verifyOtp(phone, code, role);
-    if (this.sessionOpSeq !== opId) {
+    if (this.activeTicket !== ticket) {
       return { message: 'Opération de session obsolète', obsolete: true };
     }
     if (res.token && res.user) {
       const committed = await this.commitSession(
-        opId,
+        ticket,
         {
           status: 'authenticated',
           user: res.user,
@@ -192,41 +225,42 @@ export class AuthSessionCoordinator {
   };
 
   public signOut = async (): Promise<void> => {
-    const opId = ++this.sessionOpSeq;
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
     try {
       await apiClient.logout();
     } catch {
       // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
-      if (this.sessionOpSeq === opId) {
-        await clearSession(opId);
-        cartStore.reset();
-        dbService.setActiveBuyerId(null);
-        this.session = {
+      await this.commitSession(
+        ticket,
+        {
           status: 'unauthenticated',
           user: null,
           token: null,
           error: null,
-        };
-        this.notify();
-      }
+        },
+        null,
+        { saveToken: null }
+      );
     }
   };
 
   public refreshUser = async (): Promise<RefreshUserResult> => {
-    const opId = ++this.sessionOpSeq;
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
     try {
       const res = await apiClient.getMe();
-      if (this.sessionOpSeq !== opId) {
+      if (this.activeTicket !== ticket) {
         return { type: 'obsolete' };
       }
       if (res.user) {
         const currentToken = await readToken();
-        if (this.sessionOpSeq !== opId) {
+        if (this.activeTicket !== ticket) {
           return { type: 'obsolete' };
         }
         const committed = await this.commitSession(
-          opId,
+          ticket,
           {
             status: 'authenticated',
             user: res.user,
@@ -243,7 +277,7 @@ export class AuthSessionCoordinator {
       }
       return { type: 'server_error', status: 500, message: 'Réponse utilisateur invalide' };
     } catch (err: any) {
-      if (this.sessionOpSeq !== opId) {
+      if (this.activeTicket !== ticket) {
         return { type: 'obsolete' };
       }
       if (err instanceof ApiError && err.status === 401) {
@@ -264,35 +298,36 @@ export class AuthSessionCoordinator {
   };
 
   public restoreSession = async (): Promise<void> => {
-    const opId = ++this.sessionOpSeq;
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
     this.session = { ...this.session, status: 'loading' };
     this.notify();
 
     try {
       const result = await performSessionRestore({
         save: async (token, user) => {
-          if (this.sessionOpSeq === opId) {
-            await saveSession(token, user, opId);
+          if (this.activeTicket === ticket) {
+            await saveSession(token, user, ticket);
           }
         },
         clear: async () => {
-          if (this.sessionOpSeq === opId) {
-            await clearSession(opId);
+          if (this.activeTicket === ticket) {
+            await clearSession(ticket);
           }
         },
       });
-      if (this.sessionOpSeq !== opId) return;
+      if (this.activeTicket !== ticket) return;
 
       const nextSession = resolveRestoreSessionState(result);
-      if (nextSession.status === 'authenticated' && nextSession.user) {
-        await this.commitSession(opId, nextSession, nextSession.user, { runSync: true });
+      if ((nextSession.status === 'authenticated' || nextSession.status === 'offline') && nextSession.user) {
+        await this.commitSession(ticket, nextSession, nextSession.user, { runSync: nextSession.status === 'authenticated' });
       } else {
-        await this.commitSession(opId, nextSession, null);
+        await this.commitSession(ticket, nextSession, null);
       }
     } catch (err: any) {
-      if (this.sessionOpSeq !== opId) return;
+      if (this.activeTicket !== ticket) return;
       await this.commitSession(
-        opId,
+        ticket,
         {
           status: 'storage_error',
           user: null,
@@ -309,19 +344,19 @@ export class AuthSessionCoordinator {
     if (evictedToken && this.session.token && this.session.token !== evictedToken) {
       return;
     }
-    const opId = ++this.sessionOpSeq;
-    await clearSession(opId);
-    if (this.sessionOpSeq === opId) {
-      cartStore.reset();
-      dbService.setActiveBuyerId(null);
-      this.session = {
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
+    await this.commitSession(
+      ticket,
+      {
         status: 'unauthenticated',
         user: null,
         token: null,
-        error: null,
-      };
-      this.notify();
-    }
+        error: { message: 'Session expirée. Veuillez vous reconnecter.' },
+      },
+      null,
+      { saveToken: null }
+    );
   };
 }
 
@@ -334,7 +369,11 @@ export function useAuthProviderState(): AuthContextType {
   }
   const coordinator = coordinatorRef.current;
 
-  const session = useSyncExternalStore(coordinator.subscribe, coordinator.getState);
+  const session = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getServerSnapshot
+  );
 
   useEffect(() => {
     setUnauthorizedHandler((token) => {
