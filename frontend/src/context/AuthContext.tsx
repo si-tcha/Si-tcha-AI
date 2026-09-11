@@ -10,6 +10,7 @@ import {
   ApiError,
   setUnauthorizedHandler,
   allocateSessionMutationTicket,
+  getSessionMutationSeq,
 } from '@/services/api';
 import {
   performSessionRestore,
@@ -339,14 +340,19 @@ export class AuthSessionCoordinator {
     }
   };
 
-  public handleUnauthorized = async (evictedToken?: string): Promise<void> => {
+  public handleUnauthorized = async (evictedToken?: string, requestTicket?: number): Promise<boolean> => {
+    // Si une mutation de session plus récente a déjà débuté, ne jamais superséder
+    const currentSeq = getSessionMutationSeq();
+    if (requestTicket !== undefined && (requestTicket < this.activeTicket || requestTicket < currentSeq)) {
+      return false;
+    }
     // Si le 401 concerne un ancien token différent du token actuellement en session, ignorer
     if (evictedToken && this.session.token && this.session.token !== evictedToken) {
-      return;
+      return false;
     }
     const ticket = allocateSessionMutationTicket();
     this.activeTicket = ticket;
-    await this.commitSession(
+    return await this.commitSession(
       ticket,
       {
         status: 'unauthenticated',
@@ -376,8 +382,8 @@ export function useAuthProviderState(): AuthContextType {
   );
 
   useEffect(() => {
-    setUnauthorizedHandler((token) => {
-      coordinator.handleUnauthorized(token);
+    setUnauthorizedHandler((token, ticket) => {
+      coordinator.handleUnauthorized(token, ticket);
     });
 
     coordinator.restoreSession();

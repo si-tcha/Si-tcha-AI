@@ -184,7 +184,7 @@ export function _resetMemorySessionForTesting() {
   memorySession = null;
 }
 
-type UnauthorizedHandler = (evictedToken?: string) => void;
+type UnauthorizedHandler = (evictedToken?: string, requestTicket?: number) => void;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
@@ -424,7 +424,7 @@ export async function saveSession(
 
 /**
  * Supprime la session locale et l'état en mémoire avec coordination latest-wins.
- * Retourne false si la suppression a été ignorée car obsolète.
+ * Retourne false si la suppression a été ignorée car obsolète ou en cas d'échec de suppression persistante.
  */
 export async function clearSession(explicitSeq?: number): Promise<boolean> {
   const seq = explicitSeq !== undefined ? explicitSeq : allocateSessionMutationTicket();
@@ -444,91 +444,132 @@ export async function clearSession(explicitSeq?: number): Promise<boolean> {
       return;
     }
 
-    if (seq >= sessionMutationSeq) {
-      memorySession = null;
-      cleared = true;
+    // 1. Suppression critique et stricte de SESSION_KEY (ne pas avaler l'erreur)
+    if (Platform.OS === 'web') {
+      if (typeof localStorage === 'undefined' || !localStorage) {
+        throw new Error('Stockage persistant indisponible: localStorage non disponible.');
+      }
+      localStorage.removeItem(SESSION_KEY);
+    } else {
+      if (!SecureStore || typeof SecureStore.deleteItemAsync !== 'function') {
+        throw new Error('Stockage persistant indisponible: SecureStore non disponible.');
+      }
+      await SecureStore.deleteItemAsync(SESSION_KEY);
     }
 
+    // 2. Nettoyage best-effort des clés secondaires
     if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.removeItem(SESSION_KEY);
-          for (const key of LEGACY_STORAGE_KEYS) {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        for (const key of LEGACY_STORAGE_KEYS) {
+          try {
             localStorage.removeItem(key);
-          }
-        } catch (err) {
-          console.warn('Erreur localStorage clearSession:', err);
+          } catch {}
         }
       }
     } else if (SecureStore) {
-      try {
-        await SecureStore.deleteItemAsync(SESSION_KEY);
-      } catch (err) {
-        console.warn('Erreur SecureStore clearSession:', err);
-      }
       for (const key of LEGACY_STORAGE_KEYS) {
         try {
           await SecureStore.deleteItemAsync(key);
         } catch {}
       }
     }
+
+    // 3. Mise à jour de memorySession UNIQUEMENT après succès de la persistance canonique
+    if (seq >= sessionMutationSeq) {
+      memorySession = null;
+      cleared = true;
+    }
   };
 
   const currentClear = sessionWriteQueue.then(runTask, runTask);
   sessionWriteQueue = currentClear.then(() => {}, () => {});
-  await currentClear;
-  return cleared;
+
+  try {
+    await currentClear;
+    return cleared;
+  } catch (err) {
+    // Échec critique lors de la suppression de SESSION_KEY :
+    // memorySession n'a pas été écrasé pour éviter la divergence, et on retourne false
+    return false;
+  }
 }
 
 /**
- * Supprime atomiquement la session uniquement si le token actif correspond au token attendu.
+ * Supprime atomiquement la session uniquement si le token actif correspond au token attendu
+ * ET qu'aucune mutation de session plus récente n'a débuté (expectedTicket >= sessionMutationSeq).
  * La comparaison et l'effacement ont lieu dans la même opération sérialisée sans fenêtre de course.
  */
-export async function clearSessionIfTokenMatches(expectedToken: string): Promise<boolean> {
+export async function clearSessionIfTokenMatches(
+  expectedToken: string,
+  expectedTicket?: number
+): Promise<boolean> {
   let cleared = false;
 
   const runTask = async () => {
-    // 1. Lire le token actuel dans la tâche sérialisée
+    // 1. Si un ticket a été alloué après cette requête, ignorer immédiatement l'invalidation obsolète
+    if (expectedTicket !== undefined && expectedTicket < sessionMutationSeq) {
+      cleared = false;
+      return;
+    }
+
+    // 2. Lire le token actuel dans la tâche sérialisée
     const currentToken = memorySession?.token ?? (await readStoredSession())?.token;
     if (currentToken !== expectedToken) {
       cleared = false;
       return;
     }
 
-    // 2. Token correspondant : allouer une séquence et effacer
-    const seq = allocateSessionMutationTicket();
-    memorySession = null;
-    cleared = true;
+    // Revérifier après lecture de session
+    if (expectedTicket !== undefined && expectedTicket < sessionMutationSeq) {
+      cleared = false;
+      return;
+    }
 
+    // 3. Suppression critique et stricte de SESSION_KEY
     if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.removeItem(SESSION_KEY);
-          for (const key of LEGACY_STORAGE_KEYS) {
+      if (typeof localStorage === 'undefined' || !localStorage) {
+        throw new Error('Stockage persistant indisponible: localStorage non disponible.');
+      }
+      localStorage.removeItem(SESSION_KEY);
+    } else {
+      if (!SecureStore || typeof SecureStore.deleteItemAsync !== 'function') {
+        throw new Error('Stockage persistant indisponible: SecureStore non disponible.');
+      }
+      await SecureStore.deleteItemAsync(SESSION_KEY);
+    }
+
+    // 4. Nettoyage best-effort des clés secondaires
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        for (const key of LEGACY_STORAGE_KEYS) {
+          try {
             localStorage.removeItem(key);
-          }
-        } catch (err) {
-          console.warn('Erreur localStorage clearSession:', err);
+          } catch {}
         }
       }
     } else if (SecureStore) {
-      try {
-        await SecureStore.deleteItemAsync(SESSION_KEY);
-      } catch (err) {
-        console.warn('Erreur SecureStore clearSession:', err);
-      }
       for (const key of LEGACY_STORAGE_KEYS) {
         try {
           await SecureStore.deleteItemAsync(key);
         } catch {}
       }
     }
+
+    // 5. Allouer une séquence et effacer la session en mémoire UNIQUEMENT après succès persistant
+    allocateSessionMutationTicket();
+    memorySession = null;
+    cleared = true;
   };
 
   const currentClear = sessionWriteQueue.then(runTask, runTask);
   sessionWriteQueue = currentClear.then(() => {}, () => {});
-  await currentClear;
-  return cleared;
+
+  try {
+    await currentClear;
+    return cleared;
+  } catch (err) {
+    return false;
+  }
 }
 
 // Aliases pour rétrocompatibilité
@@ -537,6 +578,7 @@ export const clearRole = clearSession;
 
 export async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
   const token = await readToken();
+  const requestTicket = getSessionMutationSeq();
   const baseUrl = getApiBaseUrl();
   let response: Response;
 
@@ -564,13 +606,18 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
       (Array.isArray(payload?.errors) ? payload.errors.map((e: any) => e.message || e).join(', ') : 'Erreur API SI-TCHA.');
     const requireOtp = Boolean(payload?.requireOtp);
 
+    // Ne jamais déclencher d’invalidation globale sur 401 pour les routes d’authentification publique :
+    // /auth/login, /auth/verify-otp, /auth/resend-otp, /auth/register
+    // Un échec de tentative de connexion ne doit jamais déconnecter une session existante.
+    const isPublicAuthEndpoint = /^\/?auth\/(login|verify-otp|resend-otp|register)(\/|\?|$)/.test(path);
+
     // Sur 401 sur route protégée :
-    // Invalider la session UNIQUEMENT si le token utilisé par cette requête est toujours le token de la session courante.
-    // L'effacement et le matching sont atomiques dans la même tâche sérialisée.
-    if (response.status === 401 && token) {
-      const cleared = await clearSessionIfTokenMatches(token);
+    // Invalider la session UNIQUEMENT si le token utilisé par cette requête est toujours le token de la session courante
+    // ET qu'aucune mutation de session plus récente n'a commencé.
+    if (response.status === 401 && token && !isPublicAuthEndpoint) {
+      const cleared = await clearSessionIfTokenMatches(token, requestTicket);
       if (cleared && unauthorizedHandler) {
-        unauthorizedHandler(token);
+        unauthorizedHandler(token, requestTicket);
       }
     }
     // Sur 403 : ne PAS invalider le token ou déconnecter l'utilisateur
