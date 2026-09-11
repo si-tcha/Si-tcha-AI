@@ -2,11 +2,9 @@
 -- Tables B2BOfferEntry, ParcelEntry (+ champ actualHarvestDate),
 -- PrefinancingEntry, TrustRatingEntry, GicNeedEntry et OtpCode.
 --
--- NOTE DE RÉCONCILIATION : La colonne GIC.id est de type TEXT dans la DB
--- réelle (migration initiale 20260602175753_init), alors que schema.prisma
--- la déclare BigInt. Les FK vers GIC utilisent donc TEXT pour correspondre
--- à la DB réelle. Ce désalignement est un blocage documenté entre le schéma
--- Prisma et la DB existante ; il ne sera pas résolu dans ce bloc.
+-- Cette migration s'exécute après 20260909000000_reconcile_schema_forward_only,
+-- qui rétablit les identifiants canoniques GIC/Acheteur en BIGINT. Les clés
+-- étrangères créées ici doivent donc employer le même type que schema.prisma.
 
 -- -----------------------------------------------------------------------
 -- 1. B2BOfferEntry
@@ -21,7 +19,7 @@ CREATE TABLE IF NOT EXISTS "B2BOfferEntry" (
     "location"        VARCHAR(200) NOT NULL,
     "contact"         VARCHAR(50)  NOT NULL,
     "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "gicId"           TEXT         NOT NULL,
+    "gicId"           BIGINT       NOT NULL,
     CONSTRAINT "B2BOfferEntry_pkey" PRIMARY KEY ("id")
 );
 
@@ -52,7 +50,7 @@ CREATE TABLE IF NOT EXISTS "ParcelEntry" (
     "actualHarvestVolumeKg" DOUBLE PRECISION,
     "actualHarvestDate"     VARCHAR(50),
     "updatedAt"             TIMESTAMP(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "gicId"                 TEXT             NOT NULL,
+    "gicId"                 BIGINT           NOT NULL,
     CONSTRAINT "ParcelEntry_pkey" PRIMARY KEY ("id")
 );
 
@@ -87,8 +85,8 @@ CREATE TABLE IF NOT EXISTS "PrefinancingEntry" (
     "reservedVolumeKg" DOUBLE PRECISION NOT NULL,
     "status"           VARCHAR(50)      NOT NULL DEFAULT 'propose',
     "createdAt"        TIMESTAMP(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "acheteurId"       TEXT,
-    "gicId"            TEXT,
+    "acheteurId"       BIGINT,
+    "gicId"            BIGINT,
     CONSTRAINT "PrefinancingEntry_pkey" PRIMARY KEY ("id")
 );
 
@@ -115,7 +113,7 @@ CREATE TABLE IF NOT EXISTS "GicNeedEntry" (
     "description" TEXT         NOT NULL,
     "updatedAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "authorRole"  VARCHAR(50)  NOT NULL DEFAULT 'member',
-    "gicId"       TEXT         NOT NULL,
+    "gicId"       BIGINT       NOT NULL,
     CONSTRAINT "GicNeedEntry_pkey" PRIMARY KEY ("id")
 );
 
