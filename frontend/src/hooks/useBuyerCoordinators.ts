@@ -3,9 +3,12 @@ import { dbService, OrderRecord, ProductOffer, AlertPreferences, CartItemRecord 
 import { cartStore } from '@/services/cart-store';
 import { isNetworkError } from '@/services/api';
 
+const EMPTY_ORDERS: OrderRecord[] = Object.freeze([]) as any;
+const DEFAULT_PREFERENCES: AlertPreferences = Object.freeze({ productNames: [], bassins: [] }) as any;
+
 // ─── 1. COORDINATEUR DES COMMANDES ACHETEUR (orders.tsx) ──────────────────────
 
-export interface BuyerOrdersState {
+export interface BuyerOrdersStoreState {
   orders: OrderRecord[];
   loadedBuyerId: string | null;
   selectedOrder: OrderRecord | null;
@@ -15,10 +18,12 @@ export interface BuyerOrdersState {
   serverError: string | null;
 }
 
+export type BuyerOrdersState = BuyerOrdersStoreState & { isDataValid?: boolean };
+
 export class BuyerOrdersCoordinator {
-  private buyerId: string | null;
-  private authLoading: boolean;
-  private authenticated: boolean;
+  private buyerId: string | null = null;
+  private authLoading = false;
+  private authenticated = false;
 
   // Séquences indépendantes par nature d'opération
   private loadOrdersSeq = 0;
@@ -34,15 +39,28 @@ export class BuyerOrdersCoordinator {
   private serverError: string | null = null;
 
   private listeners = new Set<() => void>();
+  private snapshot: BuyerOrdersStoreState;
+
+  // Déduplication sous Strict Mode & requêtes en vol
+  private inFlightPromise: Promise<void> | null = null;
+  private inFlightBuyerId: string | null = null;
+  private inFlightGen = -1;
+  private isInitialized = false;
 
   constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
-    if (buyerId && !authLoading && authenticated) {
-      this.isLoading = true;
-      this.loadOrders();
-    }
+    this.snapshot = Object.freeze({
+      orders: EMPTY_ORDERS,
+      loadedBuyerId: null,
+      selectedOrder: null,
+      ratingOrder: null,
+      isLoading: Boolean(buyerId && !authLoading && authenticated),
+      isOffline: false,
+      serverError: null,
+    });
+    // Pureté React : aucun effet ni appel réseau dans le constructeur
   }
 
   public subscribe = (listener: () => void) => {
@@ -53,34 +71,36 @@ export class BuyerOrdersCoordinator {
   };
 
   private notify() {
+    this.snapshot = Object.freeze({
+      orders: this.rawOrders.length ? [...this.rawOrders] : EMPTY_ORDERS,
+      loadedBuyerId: this.loadedBuyerId,
+      selectedOrder: this.selectedOrder,
+      ratingOrder: this.ratingOrder,
+      isLoading: this.isLoading,
+      isOffline: this.isOffline,
+      serverError: this.serverError,
+    });
     for (const listener of this.listeners) {
       listener();
     }
   }
 
-  // Masquage synchrone immédiat : si l'acheteur actif diffère de celui qui a chargé les données, masquer sans attendre useEffect
-  public getState = (): BuyerOrdersState => {
-    const isContextValid = Boolean(
-      this.buyerId &&
-      !this.authLoading &&
-      this.authenticated &&
-      this.loadedBuyerId === this.buyerId
-    );
+  public getSnapshot = (): BuyerOrdersStoreState => {
+    return this.snapshot;
+  };
 
-    return {
-      orders: isContextValid ? this.rawOrders : [],
-      loadedBuyerId: this.loadedBuyerId,
-      selectedOrder: isContextValid ? this.selectedOrder : null,
-      ratingOrder: isContextValid ? this.ratingOrder : null,
-      isLoading: this.isLoading,
-      isOffline: this.isOffline,
-      serverError: this.serverError,
-    };
+  public getServerSnapshot = (): BuyerOrdersStoreState => {
+    return this.snapshot;
+  };
+
+  public getState = (): BuyerOrdersState => {
+    return this.snapshot;
   };
 
   public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
-    const activeBuyerChanged = this.buyerId !== buyerId;
-    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
+    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
       return;
@@ -90,13 +110,14 @@ export class BuyerOrdersCoordinator {
     this.authLoading = authLoading;
     this.authenticated = authenticated;
 
-    // Détecter tout changement de buyerId (y compris A valide -> B valide)
-    this.sessionGen++;
-    this.rawOrders = [];
-    this.loadedBuyerId = null;
-    this.selectedOrder = null;
-    this.ratingOrder = null;
-    this.serverError = null;
+    if (activeBuyerChanged) {
+      this.sessionGen++;
+      this.rawOrders = [];
+      this.loadedBuyerId = null;
+      this.selectedOrder = null;
+      this.ratingOrder = null;
+      this.serverError = null;
+    }
 
     if (buyerId && !authLoading && authenticated) {
       this.isLoading = true;
@@ -118,13 +139,22 @@ export class BuyerOrdersCoordinator {
     this.notify();
   };
 
-  public loadOrders = async (options?: { onExpired?: () => void; onError?: (msg: string) => void }) => {
+  public loadOrders = async (options?: { onExpired?: () => void; onError?: (msg: string) => void }): Promise<void> => {
     if (this.authLoading || !this.buyerId || !this.authenticated) {
       this.rawOrders = [];
       this.loadedBuyerId = null;
       this.isLoading = false;
       this.notify();
       return;
+    }
+
+    // Déduplication sous Strict Mode si une requête identique est déjà en cours
+    if (
+      this.inFlightPromise &&
+      this.inFlightBuyerId === this.buyerId &&
+      this.inFlightGen === this.sessionGen
+    ) {
+      return this.inFlightPromise;
     }
 
     const reqId = ++this.loadOrdersSeq;
@@ -144,46 +174,58 @@ export class BuyerOrdersCoordinator {
       !this.authenticated ||
       dbService.getContextGeneration() !== capturedDbGen;
 
-    try {
-      await dbService.initDatabase();
-      if (isStale()) return;
+    const task = (async () => {
+      try {
+        await dbService.initDatabase();
+        if (isStale()) return;
 
-      const loaded = await dbService.getOrders(true);
-      if (isStale()) return;
+        const loaded = await dbService.getOrders(true);
+        if (isStale()) return;
 
-      this.rawOrders = loaded;
-      this.loadedBuyerId = capturedBuyerId;
-      this.isOffline = !dbService.isLastOrdersSyncSuccessful();
-    } catch (err: any) {
-      if (isStale()) return;
+        this.rawOrders = loaded;
+        this.loadedBuyerId = capturedBuyerId;
+        this.isOffline = !dbService.isLastOrdersSyncSuccessful();
+      } catch (err: any) {
+        if (isStale()) return;
 
-      if (err?.status === 401) {
-        options?.onExpired?.();
-        return;
-      }
-
-      if (isNetworkError(err)) {
-        try {
-          const cached = await dbService.getOrders(false);
-          if (isStale()) return;
-          this.rawOrders = cached;
-          this.loadedBuyerId = capturedBuyerId;
-          this.isOffline = true;
-        } catch {
-          if (isStale()) return;
-          this.serverError = 'Impossible de charger les commandes hors ligne.';
+        if (err?.status === 401) {
+          options?.onExpired?.();
+          return;
         }
-      } else {
-        const msg = err?.message || 'Erreur lors du chargement des commandes.';
-        this.serverError = msg;
-        options?.onError?.(msg);
+
+        if (isNetworkError(err)) {
+          try {
+            const cached = await dbService.getOrders(false);
+            if (isStale()) return;
+            this.rawOrders = cached;
+            this.loadedBuyerId = capturedBuyerId;
+            this.isOffline = true;
+          } catch {
+            if (isStale()) return;
+            this.serverError = 'Impossible de charger les commandes hors ligne.';
+          }
+        } else {
+          const msg = err?.message || 'Erreur lors du chargement des commandes.';
+          this.serverError = msg;
+          options?.onError?.(msg);
+        }
+      } finally {
+        if (!isStale()) {
+          this.isLoading = false;
+          this.notify();
+        }
+        if (this.inFlightBuyerId === capturedBuyerId && this.inFlightGen === capturedSessionGen) {
+          this.inFlightPromise = null;
+          this.inFlightBuyerId = null;
+        }
       }
-    } finally {
-      if (!isStale()) {
-        this.isLoading = false;
-        this.notify();
-      }
-    }
+    })();
+
+    this.inFlightPromise = task;
+    this.inFlightBuyerId = capturedBuyerId;
+    this.inFlightGen = capturedSessionGen;
+
+    return task;
   };
 
   public submitRating = async (
@@ -192,7 +234,7 @@ export class BuyerOrdersCoordinator {
     comment: string,
     callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }
   ): Promise<boolean> => {
-    if (!order || stars === 0 || this.authLoading || !this.buyerId || !this.authenticated) {
+    if (this.authLoading || !this.buyerId || !this.authenticated) {
       return false;
     }
 
@@ -240,14 +282,33 @@ export function useBuyerOrdersCoordinator(
   }
   const coordinator = coordinatorRef.current;
 
-  const state = useSyncExternalStore(coordinator.subscribe, coordinator.getState);
+  const rawState = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getServerSnapshot
+  );
 
   useEffect(() => {
     coordinator.updateSession(buyerId, authLoading, authenticated);
   }, [coordinator, buyerId, authLoading, authenticated]);
 
+  // DERIVATION SYNCHRONE IMMEDIATE AVEC LES PROPS COURANTES (GARANTIE PREMIER RENDU A -> B)
+  const isDataValid = Boolean(
+    !authLoading &&
+    authenticated &&
+    buyerId &&
+    rawState.loadedBuyerId === buyerId
+  );
+
   return {
-    ...state,
+    orders: isDataValid ? rawState.orders : EMPTY_ORDERS,
+    loadedBuyerId: isDataValid ? rawState.loadedBuyerId : null,
+    selectedOrder: isDataValid ? rawState.selectedOrder : null,
+    ratingOrder: isDataValid ? rawState.ratingOrder : null,
+    isLoading: isDataValid ? rawState.isLoading : Boolean(buyerId && !authLoading && authenticated),
+    isOffline: isDataValid ? rawState.isOffline : false,
+    serverError: isDataValid ? rawState.serverError : null,
+    isDataValid,
     loadOrders: coordinator.loadOrders,
     submitRating: coordinator.submitRating,
     setSelectedOrder: coordinator.setSelectedOrder,
@@ -257,38 +318,49 @@ export function useBuyerOrdersCoordinator(
 
 // ─── 2. COORDINATEUR DES ALERTES RÉCOLTES (alerts.tsx) ────────────────────────
 
-export interface BuyerAlertsState {
+export interface BuyerAlertsStoreState {
   prefs: AlertPreferences;
   matchCount: number;
   isLoading: boolean;
-  isDataValid: boolean;
+  loadedBuyerId: string | null;
 }
 
+export type BuyerAlertsState = BuyerAlertsStoreState & { isDataValid: boolean };
+
 export class BuyerAlertsCoordinator {
-  private buyerId: string | null;
-  private authLoading: boolean;
-  private authenticated: boolean;
+  private buyerId: string | null = null;
+  private authLoading = false;
+  private authenticated = false;
 
   // Séquences séparées : la sauvegarde ne bloque ni n'annule le chargement
   private loadAlertsSeq = 0;
   private saveAlertsSeq = 0;
   private sessionGen = 0;
 
-  private rawPrefs: AlertPreferences = { productNames: [], bassins: [] };
+  private rawPrefs: AlertPreferences = DEFAULT_PREFERENCES;
   private rawMatchCount = 0;
   private loadedBuyerId: string | null = null;
   private isLoading = false;
 
   private listeners = new Set<() => void>();
+  private snapshot: BuyerAlertsStoreState;
+
+  private inFlightPromise: Promise<void> | null = null;
+  private inFlightBuyerId: string | null = null;
+  private inFlightGen = -1;
+  private isInitialized = false;
 
   constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
-    if (buyerId && !authLoading && authenticated) {
-      this.isLoading = true;
-      this.loadAlerts();
-    }
+    this.snapshot = Object.freeze({
+      prefs: DEFAULT_PREFERENCES,
+      matchCount: 0,
+      isLoading: Boolean(buyerId && !authLoading && authenticated),
+      loadedBuyerId: null,
+    });
+    // Pureté React : aucun effet ni appel réseau dans le constructeur
   }
 
   public subscribe = (listener: () => void) => {
@@ -299,12 +371,25 @@ export class BuyerAlertsCoordinator {
   };
 
   private notify() {
+    this.snapshot = Object.freeze({
+      prefs: this.rawPrefs,
+      matchCount: this.rawMatchCount,
+      isLoading: this.isLoading,
+      loadedBuyerId: this.loadedBuyerId,
+    });
     for (const listener of this.listeners) {
       listener();
     }
   }
 
-  // Masquage synchrone immédiat lors d'un switch utilisateur
+  public getSnapshot = (): BuyerAlertsStoreState => {
+    return this.snapshot;
+  };
+
+  public getServerSnapshot = (): BuyerAlertsStoreState => {
+    return this.snapshot;
+  };
+
   public getState = (): BuyerAlertsState => {
     const isDataValid = Boolean(
       this.buyerId &&
@@ -312,11 +397,10 @@ export class BuyerAlertsCoordinator {
       this.authenticated &&
       this.loadedBuyerId === this.buyerId
     );
-
     return {
-      prefs: isDataValid ? this.rawPrefs : { productNames: [], bassins: [] },
-      matchCount: isDataValid ? this.rawMatchCount : 0,
-      isLoading: this.isLoading,
+      ...this.snapshot,
+      prefs: isDataValid ? this.snapshot.prefs : DEFAULT_PREFERENCES,
+      matchCount: isDataValid ? this.snapshot.matchCount : 0,
       isDataValid,
     };
   };
@@ -331,8 +415,9 @@ export class BuyerAlertsCoordinator {
   };
 
   public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
-    const activeBuyerChanged = this.buyerId !== buyerId;
-    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
+    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
       return;
@@ -342,10 +427,12 @@ export class BuyerAlertsCoordinator {
     this.authLoading = authLoading;
     this.authenticated = authenticated;
 
-    this.sessionGen++;
-    this.rawPrefs = { productNames: [], bassins: [] };
-    this.rawMatchCount = 0;
-    this.loadedBuyerId = null;
+    if (activeBuyerChanged) {
+      this.sessionGen++;
+      this.rawPrefs = DEFAULT_PREFERENCES;
+      this.rawMatchCount = 0;
+      this.loadedBuyerId = null;
+    }
 
     if (buyerId && !authLoading && authenticated) {
       this.isLoading = true;
@@ -357,11 +444,19 @@ export class BuyerAlertsCoordinator {
     }
   }
 
-  public loadAlerts = async () => {
+  public loadAlerts = async (): Promise<void> => {
     if (this.authLoading || !this.buyerId || !this.authenticated) {
       this.isLoading = false;
       this.notify();
       return;
+    }
+
+    if (
+      this.inFlightPromise &&
+      this.inFlightBuyerId === this.buyerId &&
+      this.inFlightGen === this.sessionGen
+    ) {
+      return this.inFlightPromise;
     }
 
     const reqId = ++this.loadAlertsSeq;
@@ -380,27 +475,39 @@ export class BuyerAlertsCoordinator {
       !this.authenticated ||
       dbService.getContextGeneration() !== capturedDbGen;
 
-    try {
-      await dbService.initDatabase();
-      if (isStale()) return;
+    const task = (async () => {
+      try {
+        await dbService.initDatabase();
+        if (isStale()) return;
 
-      const stored = await dbService.getAlertPreferences();
-      if (isStale()) return;
+        const stored = await dbService.getAlertPreferences();
+        if (isStale()) return;
 
-      const count = await dbService.getMatchingAlertCount();
-      if (isStale()) return;
+        const count = await dbService.getMatchingAlertCount();
+        if (isStale()) return;
 
-      this.rawPrefs = stored;
-      this.rawMatchCount = count;
-      this.loadedBuyerId = capturedBuyerId;
-    } catch (err) {
-      console.warn('Erreur chargement alertes:', err);
-    } finally {
-      if (!isStale()) {
-        this.isLoading = false;
-        this.notify();
+        this.rawPrefs = stored;
+        this.rawMatchCount = count;
+        this.loadedBuyerId = capturedBuyerId;
+      } catch (err) {
+        console.warn('Erreur chargement alertes:', err);
+      } finally {
+        if (!isStale()) {
+          this.isLoading = false;
+          this.notify();
+        }
+        if (this.inFlightBuyerId === capturedBuyerId && this.inFlightGen === capturedSessionGen) {
+          this.inFlightPromise = null;
+          this.inFlightBuyerId = null;
+        }
       }
-    }
+    })();
+
+    this.inFlightPromise = task;
+    this.inFlightBuyerId = capturedBuyerId;
+    this.inFlightGen = capturedSessionGen;
+
+    return task;
   };
 
   public saveAlerts = async (
@@ -457,14 +564,28 @@ export function useBuyerAlertsCoordinator(
   }
   const coordinator = coordinatorRef.current;
 
-  const state = useSyncExternalStore(coordinator.subscribe, coordinator.getState);
+  const rawState = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getServerSnapshot
+  );
 
   useEffect(() => {
     coordinator.updateSession(buyerId, authLoading, authenticated);
   }, [coordinator, buyerId, authLoading, authenticated]);
 
+  const isDataValid = Boolean(
+    !authLoading &&
+    authenticated &&
+    buyerId &&
+    rawState.loadedBuyerId === buyerId
+  );
+
   return {
-    ...state,
+    prefs: isDataValid ? rawState.prefs : DEFAULT_PREFERENCES,
+    matchCount: isDataValid ? rawState.matchCount : 0,
+    isLoading: isDataValid ? rawState.isLoading : Boolean(buyerId && !authLoading && authenticated),
+    isDataValid,
     setPrefs: coordinator.setPrefs,
     loadAlerts: coordinator.loadAlerts,
     saveAlerts: coordinator.saveAlerts,
@@ -473,35 +594,58 @@ export function useBuyerAlertsCoordinator(
 
 // ─── 3. COORDINATEUR DE VALIDATION DU PANIER (checkout.tsx) ───────────────────
 
+const EMPTY_CART: CartItemRecord[] = Object.freeze([]) as any;
+const EMPTY_PRODUCTS: ProductOffer[] = Object.freeze([]) as any;
+
+export interface BuyerCheckoutStoreState {
+  busy: boolean;
+  products: ProductOffer[];
+  isLoadingProducts: boolean;
+  loadedBuyerId: string | null;
+}
+
 export interface BuyerCheckoutState {
   isCartAligned: boolean;
   effectiveCart: CartItemRecord[];
   effectiveTotalAmount: number;
   busy: boolean;
   products: ProductOffer[];
+  isLoading: boolean;
 }
 
 export class BuyerCheckoutCoordinator {
-  private buyerId: string | null;
-  private authLoading: boolean;
-  private authenticated: boolean;
+  private buyerId: string | null = null;
+  private authLoading = false;
+  private authenticated = false;
 
   private loadProductsSeq = 0;
   private confirmOrderSeq = 0;
   private sessionGen = 0;
 
   private busy = false;
-  private products: ProductOffer[] = [];
+  private products: ProductOffer[] = EMPTY_PRODUCTS;
+  private isLoadingProducts = false;
+  private loadedBuyerId: string | null = null;
 
   private listeners = new Set<() => void>();
+  private snapshot: BuyerCheckoutStoreState;
+
+  private inFlightPromise: Promise<void> | null = null;
+  private inFlightBuyerId: string | null = null;
+  private inFlightGen = -1;
+  private isInitialized = false;
 
   constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
-    if (buyerId && !authLoading && authenticated) {
-      this.loadProducts();
-    }
+    this.snapshot = Object.freeze({
+      busy: false,
+      products: EMPTY_PRODUCTS,
+      isLoadingProducts: Boolean(buyerId && !authLoading && authenticated),
+      loadedBuyerId: null,
+    });
+    // Pureté React : aucun appel dans le constructeur
   }
 
   public subscribe = (listener: () => void) => {
@@ -512,10 +656,24 @@ export class BuyerCheckoutCoordinator {
   };
 
   private notify() {
+    this.snapshot = Object.freeze({
+      busy: this.busy,
+      products: this.products.length ? [...this.products] : EMPTY_PRODUCTS,
+      isLoadingProducts: this.isLoadingProducts,
+      loadedBuyerId: this.loadedBuyerId,
+    });
     for (const listener of this.listeners) {
       listener();
     }
   }
+
+  public getSnapshot = (): BuyerCheckoutStoreState => {
+    return this.snapshot;
+  };
+
+  public getServerSnapshot = (): BuyerCheckoutStoreState => {
+    return this.snapshot;
+  };
 
   public getState = (cart: CartItemRecord[] = [], totalAmount = 0): BuyerCheckoutState => {
     const isCartAligned = Boolean(
@@ -525,18 +683,27 @@ export class BuyerCheckoutCoordinator {
       cartStore.getBuyerId() === this.buyerId
     );
 
+    const isBusy = Boolean(
+      this.busy &&
+      this.loadedBuyerId === this.buyerId &&
+      !this.authLoading &&
+      this.authenticated
+    );
+
     return {
       isCartAligned,
-      effectiveCart: isCartAligned ? cart : [],
+      effectiveCart: isCartAligned ? cart : EMPTY_CART,
       effectiveTotalAmount: isCartAligned ? totalAmount : 0,
-      busy: this.busy,
-      products: this.products,
+      busy: isBusy,
+      products: this.snapshot.products,
+      isLoading: this.snapshot.isLoadingProducts,
     };
   };
 
   public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
-    const activeBuyerChanged = this.buyerId !== buyerId;
-    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
+    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
       return;
@@ -546,25 +713,45 @@ export class BuyerCheckoutCoordinator {
     this.authLoading = authLoading;
     this.authenticated = authenticated;
 
-    this.sessionGen++;
-    // Remettre immédiatement busy à false lors du changement de contexte
-    this.busy = false;
+    if (activeBuyerChanged) {
+      this.sessionGen++;
+      // Remettre immédiatement busy à false lors du changement de contexte
+      this.busy = false;
+      this.loadedBuyerId = null;
+    }
 
     if (buyerId && !authLoading && authenticated) {
+      this.isLoadingProducts = true;
       this.notify();
       this.loadProducts();
     } else {
+      this.isLoadingProducts = false;
       this.notify();
     }
   }
 
-  public loadProducts = async () => {
-    if (this.authLoading || !this.buyerId || !this.authenticated) return;
+  public loadProducts = async (): Promise<void> => {
+    if (this.authLoading || !this.buyerId || !this.authenticated) {
+      this.isLoadingProducts = false;
+      this.notify();
+      return;
+    }
+
+    if (
+      this.inFlightPromise &&
+      this.inFlightBuyerId === this.buyerId &&
+      this.inFlightGen === this.sessionGen
+    ) {
+      return this.inFlightPromise;
+    }
 
     const reqId = ++this.loadProductsSeq;
     const capturedSessionGen = this.sessionGen;
     const capturedBuyerId = this.buyerId;
     const capturedDbGen = dbService.getContextGeneration();
+
+    this.isLoadingProducts = true;
+    this.notify();
 
     const isStale = () =>
       this.loadProductsSeq !== reqId ||
@@ -574,14 +761,31 @@ export class BuyerCheckoutCoordinator {
       !this.authenticated ||
       dbService.getContextGeneration() !== capturedDbGen;
 
-    try {
-      const items = await dbService.getProducts();
-      if (isStale()) return;
-      this.products = items;
-      this.notify();
-    } catch {
-      // Ignorer les erreurs d'affichage catalogue
-    }
+    const task = (async () => {
+      try {
+        const items = await dbService.getProducts();
+        if (isStale()) return;
+        this.products = items;
+        this.loadedBuyerId = capturedBuyerId;
+      } catch {
+        // Ignorer les erreurs d'affichage catalogue
+      } finally {
+        if (!isStale()) {
+          this.isLoadingProducts = false;
+          this.notify();
+        }
+        if (this.inFlightBuyerId === capturedBuyerId && this.inFlightGen === capturedSessionGen) {
+          this.inFlightPromise = null;
+          this.inFlightBuyerId = null;
+        }
+      }
+    })();
+
+    this.inFlightPromise = task;
+    this.inFlightBuyerId = capturedBuyerId;
+    this.inFlightGen = capturedSessionGen;
+
+    return task;
   };
 
   public confirmOrder = async (
@@ -607,6 +811,7 @@ export class BuyerCheckoutCoordinator {
     const capturedDbGen = dbService.getContextGeneration();
 
     this.busy = true;
+    this.loadedBuyerId = capturedBuyerId;
     this.notify();
 
     const isStale = () =>
@@ -653,32 +858,60 @@ export function useBuyerCheckoutCoordinator(
   }
   const coordinator = coordinatorRef.current;
 
-  const getSnapshot = useCallback(
-    () => coordinator.getState(cart, totalAmount),
-    [coordinator, cart, totalAmount]
+  const rawState = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getServerSnapshot
   );
-  const state = useSyncExternalStore(coordinator.subscribe, getSnapshot);
 
   useEffect(() => {
     coordinator.updateSession(buyerId, authLoading, authenticated);
   }, [coordinator, buyerId, authLoading, authenticated]);
 
+  // Synchronous guard for cart alignment
+  const isCartAligned = Boolean(
+    !authLoading &&
+    authenticated &&
+    buyerId &&
+    cartStore.getBuyerId() === buyerId
+  );
+
+  // Busy de A ne doit JAMAIS bloquer B
+  const isBusy = Boolean(
+    rawState.busy &&
+    rawState.loadedBuyerId === buyerId &&
+    !authLoading &&
+    authenticated
+  );
+
   const confirmOrder = useCallback(
     (
       orderType: any,
       callbacks: { onSuccess: () => void; onError: (err: any) => void }
-    ) => coordinator.confirmOrder(orderType, refreshCart, callbacks, cart),
-    [coordinator, refreshCart, cart]
+    ) => coordinator.confirmOrder(orderType, refreshCart, callbacks, isCartAligned ? cart : []),
+    [coordinator, refreshCart, isCartAligned, cart]
   );
 
   return {
-    ...state,
+    isCartAligned,
+    effectiveCart: isCartAligned ? cart : EMPTY_CART,
+    effectiveTotalAmount: isCartAligned ? totalAmount : 0,
+    busy: isBusy,
+    products: rawState.products,
+    isLoading: rawState.isLoadingProducts,
     loadProducts: coordinator.loadProducts,
     confirmOrder,
   };
 }
 
 // ─── 4. COORDINATEUR DE L'ACCUEIL ACHETEUR (home.tsx) ─────────────────────────
+
+export interface BuyerHomeStoreState {
+  products: ProductOffer[];
+  isLoading: boolean;
+  rawAlertCount: number;
+  loadedAlertBuyerId: string | null;
+}
 
 export interface BuyerHomeState {
   isCartAligned: boolean;
@@ -689,9 +922,9 @@ export interface BuyerHomeState {
 }
 
 export class BuyerHomeCoordinator {
-  private buyerId: string | null;
-  private authLoading: boolean;
-  private authenticated: boolean;
+  private buyerId: string | null = null;
+  private authLoading = false;
+  private authenticated = false;
 
   // Séquences indépendantes : l'ajout au panier ne bloque pas la synchro silencieuse
   private syncSeq = 0;
@@ -700,19 +933,28 @@ export class BuyerHomeCoordinator {
 
   private rawAlertCount = 0;
   private loadedAlertBuyerId: string | null = null;
-  private products: ProductOffer[] = [];
+  private products: ProductOffer[] = EMPTY_PRODUCTS;
   private isLoading = false;
 
   private listeners = new Set<() => void>();
+  private snapshot: BuyerHomeStoreState;
+
+  private inFlightPromise: Promise<void> | null = null;
+  private inFlightBuyerId: string | null = null;
+  private inFlightGen = -1;
+  private isInitialized = false;
 
   constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
-    if (!authLoading) {
-      this.isLoading = true;
-      this.silentSync();
-    }
+    this.snapshot = Object.freeze({
+      products: EMPTY_PRODUCTS,
+      isLoading: !authLoading,
+      rawAlertCount: 0,
+      loadedAlertBuyerId: null,
+    });
+    // Pureté React : aucun appel dans le constructeur
   }
 
   public subscribe = (listener: () => void) => {
@@ -723,10 +965,24 @@ export class BuyerHomeCoordinator {
   };
 
   private notify() {
+    this.snapshot = Object.freeze({
+      products: this.products.length ? [...this.products] : EMPTY_PRODUCTS,
+      isLoading: this.isLoading,
+      rawAlertCount: this.rawAlertCount,
+      loadedAlertBuyerId: this.loadedAlertBuyerId,
+    });
     for (const listener of this.listeners) {
       listener();
     }
   }
+
+  public getSnapshot = (): BuyerHomeStoreState => {
+    return this.snapshot;
+  };
+
+  public getServerSnapshot = (): BuyerHomeStoreState => {
+    return this.snapshot;
+  };
 
   public getState = (cartCount = 0): BuyerHomeState => {
     const isCartAligned = Boolean(
@@ -736,7 +992,6 @@ export class BuyerHomeCoordinator {
       cartStore.getBuyerId() === this.buyerId
     );
 
-    // Associer alertCount à l'acheteur qui l'a chargé, ne jamais afficher le compteur de A à B
     const isAlertAligned = Boolean(
       !this.authLoading &&
       this.buyerId &&
@@ -748,14 +1003,15 @@ export class BuyerHomeCoordinator {
       isCartAligned,
       effectiveCartCount: isCartAligned ? cartCount : 0,
       alertCount: isAlertAligned ? this.rawAlertCount : 0,
-      products: this.products,
-      isLoading: this.isLoading,
+      products: this.snapshot.products,
+      isLoading: this.snapshot.isLoading,
     };
   };
 
   public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
-    const activeBuyerChanged = this.buyerId !== buyerId;
-    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
+    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
       return;
@@ -765,10 +1021,12 @@ export class BuyerHomeCoordinator {
     this.authLoading = authLoading;
     this.authenticated = authenticated;
 
-    this.sessionGen++;
-    // Compteur d'alertes A déjà affiché, bascule directe vers B : zéro immédiatement !
-    this.rawAlertCount = 0;
-    this.loadedAlertBuyerId = null;
+    if (activeBuyerChanged) {
+      this.sessionGen++;
+      // Compteur d'alertes A déjà affiché, bascule directe vers B : zéro immédiatement !
+      this.rawAlertCount = 0;
+      this.loadedAlertBuyerId = null;
+    }
 
     if (!authLoading) {
       this.isLoading = true;
@@ -780,11 +1038,22 @@ export class BuyerHomeCoordinator {
     }
   }
 
-  public silentSync = async () => {
+  public silentSync = async (): Promise<void> => {
+    if (
+      this.inFlightPromise &&
+      this.inFlightBuyerId === this.buyerId &&
+      this.inFlightGen === this.sessionGen
+    ) {
+      return this.inFlightPromise;
+    }
+
     const reqId = ++this.syncSeq;
     const capturedSessionGen = this.sessionGen;
     const capturedBuyerId = this.buyerId;
     const capturedDbGen = dbService.getContextGeneration();
+
+    this.isLoading = true;
+    this.notify();
 
     const isStale = () =>
       this.syncSeq !== reqId ||
@@ -794,38 +1063,49 @@ export class BuyerHomeCoordinator {
       !this.authenticated ||
       dbService.getContextGeneration() !== capturedDbGen;
 
-    try {
-      await dbService.initDatabase();
-      if (isStale()) return;
-
-      await dbService.syncPublicData().catch(() => {});
-      if (isStale()) return;
-
-      if (capturedBuyerId && !this.authLoading && this.authenticated) {
-        await dbService.syncBuyerData(capturedBuyerId).catch(() => {});
+    const task = (async () => {
+      try {
+        await dbService.initDatabase();
         if (isStale()) return;
-      }
 
-      const [offers, matches] = await Promise.all([
-        dbService.getProducts(),
-        capturedBuyerId && !this.authLoading && this.authenticated
-          ? dbService.getMatchingAlertCount().catch(() => 0)
-          : Promise.resolve(0),
-      ]);
-      if (isStale()) return;
+        await dbService.syncPublicData().catch(() => {});
+        if (isStale()) return;
 
-      this.rawAlertCount = matches;
-      this.loadedAlertBuyerId = capturedBuyerId;
-      this.products = offers;
-      this.notify();
-    } catch (err) {
-      console.warn('Erreur synchro silencieuse acheteur:', err);
-    } finally {
-      if (!isStale()) {
-        this.isLoading = false;
-        this.notify();
+        if (capturedBuyerId && !this.authLoading && this.authenticated) {
+          await dbService.syncBuyerData(capturedBuyerId).catch(() => {});
+          if (isStale()) return;
+        }
+
+        const [offers, matches] = await Promise.all([
+          dbService.getProducts(),
+          capturedBuyerId && !this.authLoading && this.authenticated
+            ? dbService.getMatchingAlertCount().catch(() => 0)
+            : Promise.resolve(0),
+        ]);
+        if (isStale()) return;
+
+        this.rawAlertCount = matches;
+        this.loadedAlertBuyerId = capturedBuyerId;
+        this.products = offers;
+      } catch (err) {
+        console.warn('Erreur synchro silencieuse acheteur:', err);
+      } finally {
+        if (!isStale()) {
+          this.isLoading = false;
+          this.notify();
+        }
+        if (this.inFlightBuyerId === capturedBuyerId && this.inFlightGen === capturedSessionGen) {
+          this.inFlightPromise = null;
+          this.inFlightBuyerId = null;
+        }
       }
-    }
+    })();
+
+    this.inFlightPromise = task;
+    this.inFlightBuyerId = capturedBuyerId;
+    this.inFlightGen = capturedSessionGen;
+
+    return task;
   };
 
   public handleAddToCartSafe = async (
@@ -882,15 +1162,29 @@ export function useBuyerHomeCoordinator(
   }
   const coordinator = coordinatorRef.current;
 
-  const getSnapshot = useCallback(
-    () => coordinator.getState(cartCount),
-    [coordinator, cartCount]
+  const rawState = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getServerSnapshot
   );
-  const state = useSyncExternalStore(coordinator.subscribe, getSnapshot);
 
   useEffect(() => {
     coordinator.updateSession(buyerId, authLoading, authenticated);
   }, [coordinator, buyerId, authLoading, authenticated]);
+
+  const isCartAligned = Boolean(
+    !authLoading &&
+    authenticated &&
+    buyerId &&
+    cartStore.getBuyerId() === buyerId
+  );
+
+  const isAlertAligned = Boolean(
+    !authLoading &&
+    authenticated &&
+    buyerId &&
+    rawState.loadedAlertBuyerId === buyerId
+  );
 
   const handleAddToCartSafe = useCallback(
     (product: ProductOffer, callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }) =>
@@ -899,7 +1193,11 @@ export function useBuyerHomeCoordinator(
   );
 
   return {
-    ...state,
+    isCartAligned,
+    effectiveCartCount: isCartAligned ? cartCount : 0,
+    alertCount: isAlertAligned ? rawState.rawAlertCount : 0,
+    products: rawState.products,
+    isLoading: rawState.isLoading,
     silentSync: coordinator.silentSync,
     handleAddToCartSafe,
   };
