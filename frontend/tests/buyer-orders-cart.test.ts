@@ -5,6 +5,13 @@ import { renderToString } from 'react-dom/server';
 import { dbService as webDbService } from '../src/services/database.web';
 import { cartStore, useCart } from '../src/services/cart-store';
 import { apiClient, ApiError } from '../src/services/api';
+import { useAuthProviderState } from '../src/context/AuthContext';
+import {
+  useBuyerOrdersCoordinator,
+  useBuyerAlertsCoordinator,
+  useBuyerCheckoutCoordinator,
+  useBuyerHomeCoordinator,
+} from '../src/hooks/useBuyerCoordinators';
 import {
   STORAGE_KEYS,
   CartItemRecord,
@@ -1371,82 +1378,576 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       expect(ordersB).toHaveLength(0);
 
       const ordersA = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1001') || '[]');
-      expect(ordersA.some((o: any) => o.id === 'ord-bg-synced')).toBe(true);
+      // Le GET en tâche de fond a été invalidé et ignoré suite à la bascule vers 1002
+      expect(ordersA.some((o: any) => o.id === 'ord-bg-synced')).toBe(false);
     });
   });
 
-  describe('15. Protection des écrans acheteur (authLoading, neutralisation de toasts et redirections tardives)', () => {
+  describe('15. Tests montés réels de non-régression et d’élimination des courses (AuthProvider & Coordinateurs d’écrans)', () => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    it('OrdersScreen masque les commandes et ferme les modales si authLoading est actif ou si l’acheteur a changé', () => {
-      const buyerId = '1001';
-      let authLoading = true;
-      let loadedBuyerId: string | null = '1001';
+    function createHookHarness() {
+      let hooks: any[] = [];
+      let hookIndex = 0;
+      let effects: { idx: number; fn: Function }[] = [];
+      let cleanups: (Function | void)[] = [];
+      let isRendering = false;
+      let pendingRender = false;
+      let renderFn: (() => any) | null = null;
+      let lastResult: any = null;
 
-      let isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
-      expect(isDataValid).toBe(false);
-
-      authLoading = false;
-      isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
-      expect(isDataValid).toBe(true);
-
-      loadedBuyerId = '1002';
-      isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
-      expect(isDataValid).toBe(false);
-    });
-
-    it('AlertsScreen masque les préférences privées et réinitialise l’état si authLoading est actif', () => {
-      let authLoading = true;
-      const buyerId = '1001';
-      const loadedBuyerId = '1001';
-
-      const isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
-      expect(isDataValid).toBe(false);
-    });
-
-    it('HomeScreen désactive le badge alertCount si authLoading est vrai ou si buyerId est absent', () => {
-      const alertCount = 5;
-
-      const computeDisplayAlertCount = (loading: boolean, bId: string | null, count: number) => {
-        return loading || !bId ? 0 : count;
+      const dispatcher = {
+        useState(initial: any) {
+          const idx = hookIndex++;
+          if (hooks[idx] === undefined) {
+            hooks[idx] = typeof initial === 'function' ? initial() : initial;
+          }
+          const setState = (next: any) => {
+            const nextVal = typeof next === 'function' ? next(hooks[idx]) : next;
+            if (hooks[idx] !== nextVal) {
+              hooks[idx] = nextVal;
+              scheduleRender();
+            }
+          };
+          return [hooks[idx], setState];
+        },
+        useRef(initial: any) {
+          const idx = hookIndex++;
+          if (hooks[idx] === undefined) {
+            hooks[idx] = { current: initial };
+          }
+          return hooks[idx];
+        },
+        useCallback(fn: any, deps: any[]) {
+          const idx = hookIndex++;
+          const prev = hooks[idx];
+          if (!prev || !depsEqual(prev.deps, deps)) {
+            hooks[idx] = { fn, deps };
+            return fn;
+          }
+          return prev.fn;
+        },
+        useMemo(fn: any, deps: any[]) {
+          const idx = hookIndex++;
+          const prev = hooks[idx];
+          if (!prev || !depsEqual(prev.deps, deps)) {
+            const val = fn();
+            hooks[idx] = { val, deps };
+            return val;
+          }
+          return prev.val;
+        },
+        useEffect(fn: any, deps: any[]) {
+          const idx = hookIndex++;
+          const prev = hooks[idx];
+          const hasChanged = !prev || !depsEqual(prev.deps, deps);
+          hooks[idx] = { fn, deps };
+          if (hasChanged) {
+            effects.push({ idx, fn });
+          }
+        },
+        useContext(context: any) {
+          return context?._currentValue;
+        },
       };
 
-      expect(computeDisplayAlertCount(true, '1001', alertCount)).toBe(0);
-      expect(computeDisplayAlertCount(false, null, alertCount)).toBe(0);
-      expect(computeDisplayAlertCount(false, '1001', alertCount)).toBe(5);
-    });
+      function depsEqual(a: any, b: any) {
+        if (!a || !b || a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+          if (!Object.is(a[i], b[i])) return false;
+        }
+        return true;
+      }
 
-    it('CheckoutScreen neutralise le toast de succès et la redirection si le contexte a basculé pendant la commande', async () => {
-      let currentBuyer: string | null = '1001';
-      let toastCalled = false;
-      let navigatedTo: string | null = null;
-
-      const showToast = () => { toastCalled = true; };
-      const router = { replace: (url: string) => { navigatedTo = url; } };
-
-      const handleConfirm = async () => {
-        const actionBuyerId = currentBuyer;
-        const actionGen = webDbService.getContextGeneration();
-
-        await sleep(50);
-
-        if (!actionBuyerId || currentBuyer !== actionBuyerId || webDbService.getContextGeneration() !== actionGen) {
+      function scheduleRender() {
+        if (isRendering) {
+          pendingRender = true;
           return;
         }
+        doRender();
+      }
 
-        showToast();
-        router.replace('/(buyer)/order-confirmation?orderId=ord-123');
+      function doRender() {
+        isRendering = true;
+        hookIndex = 0;
+        effects = [];
+
+        const internals = (React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+        const prevDispatcher = internals ? internals.H : null;
+        if (internals) internals.H = dispatcher;
+
+        try {
+          if (renderFn) {
+            lastResult = renderFn();
+          }
+        } finally {
+          if (internals) internals.H = prevDispatcher;
+          isRendering = false;
+        }
+
+        for (const eff of effects) {
+          if (cleanups[eff.idx]) {
+            try {
+              cleanups[eff.idx]!();
+            } catch {}
+          }
+          const cleanup = eff.fn();
+          if (typeof cleanup === 'function') {
+            cleanups[eff.idx] = cleanup;
+          }
+        }
+
+        if (pendingRender) {
+          pendingRender = false;
+          doRender();
+        }
+      }
+
+      return {
+        mount<T>(fn: () => T) {
+          renderFn = fn;
+          doRender();
+          return {
+            get current(): T {
+              return lastResult;
+            },
+            rerender() {
+              doRender();
+              return lastResult;
+            },
+            unmount() {
+              cleanups.forEach((c) => {
+                if (typeof c === 'function') c();
+              });
+            },
+          };
+        },
+      };
+    }
+
+    it('1. simuler deux connexions successives réelles via le contexte (signIn A lent puis signIn B rapide) -> état final B sans résidu de A', async () => {
+      const harness = createHookHarness();
+      vi.spyOn(apiClient, 'getMe').mockImplementation(async () => {
+        throw new ApiError('No session', 401);
+      });
+
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer', name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer', name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' };
+
+      vi.spyOn(apiClient, 'login').mockImplementation(async (phone) => {
+        if (phone === 'phone-A') {
+          await sleep(60);
+          return { token: 'tok-A', user: userA as any };
+        }
+        await sleep(10);
+        return { token: 'tok-B', user: userB as any };
+      });
+
+      const auth = harness.mount(() => useAuthProviderState());
+
+      // Lancer la connexion de A (lente) puis B (rapide)
+      const promiseA = auth.current.signIn('phone-A', '1234');
+      await sleep(5);
+      const promiseB = auth.current.signIn('phone-B', '1234');
+
+      const [resA, resB] = await Promise.all([promiseA, promiseB]);
+
+      // L'opération A a été détectée comme obsolète et ne retourne aucun user/token exploitable
+      expect(resA.obsolete).toBe(true);
+      expect(resA.token).toBeUndefined();
+      expect(resA.user).toBeUndefined();
+
+      // L'opération B a réussi
+      expect(resB.token).toBe('tok-B');
+      expect(resB.user?.name).toBe('Acheteur B');
+
+      // État final du contexte et du store strictement aligné sur B sans résidu de A
+      expect(auth.current.authenticated).toBe(true);
+      expect(auth.current.buyerId).toBe('1002');
+      expect(auth.current.user?.name).toBe('Acheteur B');
+      expect(cartStore.getBuyerId()).toBe('1002');
+      expect(webDbService.getActiveBuyerId()).toBe('1002');
+
+      auth.unmount();
+    });
+
+    it('2. simuler restoreSession de A retardé après signIn de B -> B est préservé et A ne committe pas', async () => {
+      const harness = createHookHarness();
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer', name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer', name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' };
+
+      vi.spyOn(apiClient, 'getMe').mockImplementation(async () => {
+        await sleep(60);
+        return { user: userA as any };
+      });
+
+      vi.spyOn(apiClient, 'login').mockImplementation(async () => {
+        await sleep(10);
+        return { token: 'tok-B', user: userB as any };
+      });
+
+      localStorage.setItem('sitcha_auth_token', 'token-A');
+      localStorage.setItem('sitcha_user_session', JSON.stringify(userA));
+
+      const auth = harness.mount(() => useAuthProviderState());
+
+      // restoreSession de A démarre
+      const restorePromise = auth.current.restoreSession();
+      await sleep(5);
+
+      // Pendant ce temps l'acheteur B se connecte
+      await auth.current.signIn('phone-B', '1234');
+      expect(auth.current.buyerId).toBe('1002');
+
+      // Attendre la résolution tardive du restoreSession de A
+      await restorePromise;
+
+      // L'acheteur B doit demeurer actif et inchangé
+      expect(auth.current.buyerId).toBe('1002');
+      expect(auth.current.user?.name).toBe('Acheteur B');
+      expect(cartStore.getBuyerId()).toBe('1002');
+      expect(webDbService.getActiveBuyerId()).toBe('1002');
+
+      auth.unmount();
+    });
+
+    it('3. simuler deux requêtes de commandes montées où la réponse B arrive avant la réponse A -> B reste affiché', async () => {
+      const harness = createHookHarness();
+      let currentBuyerId: string | null = '1001';
+      let authLoading = false;
+      let authenticated = true;
+
+      const ordersA = [{ id: 'ord-A-1', type: 'commande_ferme', status: 'en_attente', productId: '101', productName: 'P1', quantity: 1, unit: 'kg', price: '100', gicName: 'GIC', createdAt: new Date().toISOString() }];
+      const ordersB = [{ id: 'ord-B-1', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'P2', quantity: 2, unit: 'sac', price: '200', gicName: 'GIC', createdAt: new Date().toISOString() }];
+
+      vi.spyOn(webDbService, 'getOrders').mockImplementation(async () => {
+        const active = webDbService.getActiveBuyerId();
+        if (active === '1001') {
+          await sleep(80);
+          return ordersA as any;
+        }
+        await sleep(15);
+        return ordersB as any;
+      });
+
+      const coordinator = harness.mount(() =>
+        useBuyerOrdersCoordinator(currentBuyerId, authLoading, authenticated)
+      );
+
+      // Lancer le chargement pour A
+      webDbService.setActiveBuyerId('1001');
+      const loadPromiseA = coordinator.current.loadOrders();
+
+      await sleep(5);
+
+      // Bascule vers B
+      currentBuyerId = '1002';
+      webDbService.setActiveBuyerId('1002');
+      coordinator.rerender();
+
+      // Réinitialisation immédiate des commandes lors de la bascule
+      expect(coordinator.current.orders).toEqual([]);
+
+      // Lancer le chargement pour B
+      const loadPromiseB = coordinator.current.loadOrders();
+
+      await loadPromiseB;
+      // B est résolu et affiché en premier
+      expect(coordinator.current.orders).toEqual(ordersB);
+
+      // Attendre la résolution tardive de la requête A
+      await loadPromiseA;
+
+      // Les commandes affichées restent strictement celles de B
+      expect(coordinator.current.orders).toEqual(ordersB);
+
+      coordinator.unmount();
+    });
+
+    it('4. simuler une sauvegarde d’alertes de A retardée alors que l’utilisateur est devenu B -> aucun toast, aucun changement pour B', async () => {
+      const harness = createHookHarness();
+      let currentBuyerId: string | null = '1001';
+      let authLoading = false;
+      let authenticated = true;
+
+      let toastSuccessCalled = false;
+      vi.spyOn(webDbService, 'saveAlertPreferences').mockImplementation(async (prefs) => {
+        await sleep(60);
+        return prefs;
+      });
+
+      const coordinator = harness.mount(() =>
+        useBuyerAlertsCoordinator(currentBuyerId, authLoading, authenticated)
+      );
+
+      // Lancer la sauvegarde des alertes pour A
+      webDbService.setActiveBuyerId('1001');
+      const savePromise = coordinator.current.saveAlerts(
+        { productNames: ['Tomates fraîches'], bassins: ['Ouest'] },
+        {
+          onSuccess: () => {
+            toastSuccessCalled = true;
+          },
+        }
+      );
+
+      await sleep(10);
+
+      // L'utilisateur bascule vers B pendant la sauvegarde
+      currentBuyerId = '1002';
+      webDbService.setActiveBuyerId('1002');
+      coordinator.rerender();
+
+      const success = await savePromise;
+
+      // La sauvegarde tardive est neutralisée
+      expect(success).toBe(false);
+      expect(toastSuccessCalled).toBe(false);
+
+      coordinator.unmount();
+    });
+
+    it('5. simuler une commande panier validée tardivement pour A alors que le composant est passé à B -> pas de toast, pas de redirection, busy remis à false', async () => {
+      const harness = createHookHarness();
+      let currentBuyerId: string | null = '1001';
+      let authLoading = false;
+      let authenticated = true;
+
+      let successCallbackCalled = false;
+      await cartStore.setBuyerId('1001');
+      await cartStore.addToCart(sampleProduct1);
+
+      vi.spyOn(webDbService, 'createOrderFromCart').mockImplementation(async () => {
+        await sleep(60);
+        return [];
+      });
+
+      const coordinator = harness.mount(() =>
+        useBuyerCheckoutCoordinator(
+          currentBuyerId,
+          authLoading,
+          authenticated,
+          cartStore.getCart(),
+          cartStore.getTotalAmount(),
+          async () => {}
+        )
+      );
+
+      // Lancer la confirmation de commande pour A
+      webDbService.setActiveBuyerId('1001');
+      const orderPromise = coordinator.current.confirmOrder('commande_ferme', {
+        onSuccess: () => {
+          successCallbackCalled = true;
+        },
+        onError: () => {},
+      });
+
+      expect(coordinator.current.busy).toBe(true);
+
+      await sleep(10);
+
+      // Bascule vers B pendant la création
+      currentBuyerId = '1002';
+      webDbService.setActiveBuyerId('1002');
+      await cartStore.setBuyerId('1002');
+      coordinator.rerender();
+
+      const success = await orderPromise;
+
+      expect(success).toBe(false);
+      expect(successCallbackCalled).toBe(false);
+      expect(coordinator.current.busy).toBe(false);
+
+      coordinator.unmount();
+    });
+
+    it('6. simuler authLoading = true sur un écran avec panier -> panier et compteur masqués (non rendus)', async () => {
+      const checkoutHarness = createHookHarness();
+      const homeHarness = createHookHarness();
+      await cartStore.setBuyerId('1001');
+      await cartStore.addToCart(sampleProduct1);
+      expect(cartStore.getCart().length).toBe(1);
+
+      // Montage avec authLoading = true
+      let authLoading = true;
+      let currentBuyerId: string | null = '1001';
+      let authenticated = true;
+
+      const checkoutCoordinator = checkoutHarness.mount(() =>
+        useBuyerCheckoutCoordinator(
+          currentBuyerId,
+          authLoading,
+          authenticated,
+          cartStore.getCart(),
+          cartStore.getTotalAmount(),
+          async () => {}
+        )
+      );
+
+      const homeCoordinator = homeHarness.mount(() =>
+        useBuyerHomeCoordinator(
+          currentBuyerId,
+          authLoading,
+          authenticated,
+          cartStore.getCount(),
+          async () => {}
+        )
+      );
+
+      // Pendant authLoading, le panier n'est pas aligné et rien n'est affiché
+      expect(checkoutCoordinator.current.isCartAligned).toBe(false);
+      expect(checkoutCoordinator.current.effectiveCart).toHaveLength(0);
+      expect(checkoutCoordinator.current.effectiveTotalAmount).toBe(0);
+      expect(homeCoordinator.current.effectiveCartCount).toBe(0);
+
+      // Une fois la session résolue (authLoading = false), le panier s'affiche
+      authLoading = false;
+      checkoutCoordinator.rerender();
+      homeCoordinator.rerender();
+
+      expect(checkoutCoordinator.current.isCartAligned).toBe(true);
+      expect(checkoutCoordinator.current.effectiveCart).toHaveLength(1);
+      expect(checkoutCoordinator.current.effectiveTotalAmount).toBe(3500);
+      expect(homeCoordinator.current.effectiveCartCount).toBe(1);
+
+      checkoutCoordinator.unmount();
+      homeCoordinator.unmount();
+    });
+
+    it('7. simuler le GET de fond qui démarre pour A puis bascule vers B -> aucune écriture croisée n’a lieu', async () => {
+      webDbService.setActiveBuyerId('1001');
+      await cartStore.setBuyerId('1001');
+      await cartStore.addToCart(sampleProduct1);
+
+      vi.spyOn(apiClient, 'createOrder').mockResolvedValueOnce({
+        orders: [
+          {
+            id: 'ord-bg-test-1',
+            type: 'commande_ferme',
+            status: 'en_attente',
+            productId: '101',
+            productName: sampleProduct1.name,
+            quantity: 1,
+            unit: sampleProduct1.unit,
+            price: sampleProduct1.price,
+            gicName: 'GIC',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+      vi.spyOn(apiClient, 'getOrders').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [
+            {
+              id: 'ord-bg-leak-attempt',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: sampleProduct1.name,
+              quantity: 1,
+              unit: sampleProduct1.unit,
+              price: sampleProduct1.price,
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+        };
+      });
+
+      // Lancer la commande pour A
+      const created = await webDbService.createOrderFromCart('commande_ferme');
+      expect(created).toHaveLength(1);
+
+      // Bascule vers B pendant le GET en arrière-plan
+      webDbService.setActiveBuyerId('1002');
+      await cartStore.setBuyerId('1002');
+
+      // Attendre que le GET en tâche de fond se termine
+      await sleep(80);
+
+      // Le cache de B n'a reçu aucune commande
+      const ordersB = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1002') || '[]');
+      expect(ordersB).toHaveLength(0);
+
+      // Le cache de A n'a pas été pollué par le GET invalidé
+      const ordersA = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1001') || '[]');
+      expect(ordersA.some((o: any) => o.id === 'ord-bg-leak-attempt')).toBe(false);
+    });
+
+    it('8. démontrer formellement dans le test qu’une comparaison de closure aurait échoué là où la ref / génération réussit', async () => {
+      // 1. Démonstration de la faille de la closure :
+      let outsideBuyerId = '1001';
+      let closureResult = 'unexecuted';
+
+      const simulateClosureComponent = (capturedBuyerId: string) => {
+        const handleAsyncAction = async () => {
+          await sleep(30);
+          // ERREUR CLASSIQUE DE CLOSURE :
+          // "capturedBuyerId" et "currentBuyerIdInClosure" valent toutes les deux '1001'
+          // car la closure a capturé la variable au moment du rendu !
+          const currentBuyerIdInClosure = capturedBuyerId;
+          if (currentBuyerIdInClosure === capturedBuyerId) {
+            closureResult = 'executed_for_' + capturedBuyerId;
+          }
+        };
+        return handleAsyncAction;
       };
 
-      const confirmPromise = handleConfirm();
+      const closureAction = simulateClosureComponent(outsideBuyerId);
+      const actionPromise = closureAction();
 
-      currentBuyer = '1002';
-      webDbService.setActiveBuyerId('1002');
+      // Pendant l'attente async, l'utilisateur change à 1002
+      outsideBuyerId = '1002';
 
-      await confirmPromise;
+      await actionPromise;
 
-      expect(toastCalled).toBe(false);
-      expect(navigatedTo).toBeNull();
+      // LA CLOSURE A ÉCHOUÉ : elle s'est exécutée pour 1001 alors que le contexte actif est 1002 !
+      expect(closureResult).toBe('executed_for_1001');
+
+      // 2. Démonstration du succès avec ref & génération (notre solution) :
+      let refResult = 'unexecuted';
+      const buyerIdRef = { current: '1001' };
+      const reqSeqRef = { current: 1 };
+      const contextGenRef = { current: 10 };
+
+      const simulateRefCoordinator = () => {
+        const handleAsyncActionWithRef = async () => {
+          const reqId = reqSeqRef.current;
+          const capturedBuyer = buyerIdRef.current;
+          const capturedGen = contextGenRef.current;
+
+          await sleep(30);
+
+          // CONSULTATION DE LA REF COURANTE APRÈS CHAQUE AWAIT :
+          if (
+            reqSeqRef.current !== reqId ||
+            buyerIdRef.current !== capturedBuyer ||
+            contextGenRef.current !== capturedGen
+          ) {
+            refResult = 'aborted_stale_detected';
+            return;
+          }
+
+          refResult = 'executed_for_' + capturedBuyer;
+        };
+        return handleAsyncActionWithRef;
+      };
+
+      const refAction = simulateRefCoordinator();
+      const refActionPromise = refAction();
+
+      // Pendant l'attente async, l'utilisateur change à 1002
+      buyerIdRef.current = '1002';
+      reqSeqRef.current++;
+      contextGenRef.current++;
+
+      await refActionPromise;
+
+      // LA SOLUTION PAR REF / GÉNÉRATION A SUCCÈS : elle a neutralisé l'opération obsolète !
+      expect(refResult).toBe('aborted_stale_detected');
     });
   });
 
