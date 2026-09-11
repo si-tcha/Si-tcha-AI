@@ -23,7 +23,8 @@ export type RefreshUserResult =
   | { type: 'success'; user: UserProfile }
   | { type: 'unauthenticated' }
   | { type: 'network_error'; error: Error }
-  | { type: 'server_error'; status: number; message: string };
+  | { type: 'server_error'; status: number; message: string }
+  | { type: 'obsolete' };
 
 export interface AuthContextType {
   user: UserProfile | null;
@@ -34,6 +35,7 @@ export interface AuthContextType {
   authenticated: boolean;
   isOffline: boolean;
   sessionStatus: SessionStatus;
+  sessionSeq: number;
   serverError: { status: number; message: string } | null;
   storageError: string | null;
   restoreSession: () => Promise<void>;
@@ -45,7 +47,7 @@ export interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function useAuthProviderState(): AuthContextType {
   // Source de vérité unique pour la session
   const [session, setSession] = useState<AuthSessionState>({
     status: 'loading',
@@ -54,72 +56,122 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
-  const activationSeq = useRef(0);
+  const sessionOpSeq = useRef(0);
 
-  const activateUserSession = useCallback(async (user: UserProfile | null) => {
-    const currentSeq = ++activationSeq.current;
-
-    if (user && user.role === 'buyer') {
-      const buyerId = (user.buyerId || user.id || '').trim();
-      if (isValidBuyerId(buyerId)) {
-        dbService.setActiveBuyerId(buyerId);
-        await cartStore.setBuyerId(buyerId);
-        // Empêcher toute ancienne activation A de synchroniser ou réactiver A si B est passé
-        if (activationSeq.current !== currentSeq) {
-          return;
-        }
-        // Synchronisation des commandes / alertes privées UNIQUEMENT APRÈS cette activation
-        dbService.syncBuyerData(buyerId).catch(() => {});
-        return;
+  // Opération atomique centralisée de transition de session
+  const commitSession = useCallback(
+    async (
+      opId: number,
+      nextSession: AuthSessionState,
+      userToActivate: UserProfile | null,
+      options?: { saveToken?: string | null; runSync?: boolean }
+    ): Promise<boolean> => {
+      // Si une opération plus récente a débuté, rejeter immédiatement
+      if (sessionOpSeq.current !== opId) {
+        return false;
       }
-    }
-    // Rôle non-acheteur, non-authentifié, ou déconnexion
-    cartStore.reset();
-    dbService.setActiveBuyerId(null);
-  }, []);
+
+      if (userToActivate && userToActivate.role === 'buyer') {
+        const buyerId = (userToActivate.buyerId || userToActivate.id || '').trim();
+        if (isValidBuyerId(buyerId)) {
+          dbService.setActiveBuyerId(buyerId);
+          await cartStore.setBuyerId(buyerId);
+
+          // Revérifier après l'attente asynchrone de cartStore
+          if (sessionOpSeq.current !== opId) {
+            return false;
+          }
+
+          if (options?.saveToken) {
+            await saveSession(options.saveToken, userToActivate);
+          }
+
+          if (sessionOpSeq.current !== opId) {
+            return false;
+          }
+
+          setSession(nextSession);
+
+          if (options?.runSync) {
+            dbService.syncBuyerData(buyerId).catch(() => {});
+          }
+          return true;
+        }
+      }
+
+      // Rôle non-acheteur, non-connecté ou déconnexion
+      cartStore.reset();
+      dbService.setActiveBuyerId(null);
+
+      if (sessionOpSeq.current !== opId) {
+        return false;
+      }
+
+      setSession(nextSession);
+      return true;
+    },
+    []
+  );
 
   const signOut = useCallback(async () => {
+    const opId = ++sessionOpSeq.current;
     try {
       await apiClient.logout();
     } catch {
       // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
       await clearSession();
-      await activateUserSession(null);
-      setSession({
-        status: 'unauthenticated',
-        user: null,
-        token: null,
-        error: null,
-      });
+      if (sessionOpSeq.current === opId) {
+        cartStore.reset();
+        dbService.setActiveBuyerId(null);
+        setSession({
+          status: 'unauthenticated',
+          user: null,
+          token: null,
+          error: null,
+        });
+      }
     }
-  }, [activateUserSession]);
+  }, []);
 
   const refreshUser = useCallback(async (): Promise<RefreshUserResult> => {
+    const opId = ++sessionOpSeq.current;
     try {
       const res = await apiClient.getMe();
+      if (sessionOpSeq.current !== opId) {
+        return { type: 'obsolete' };
+      }
       if (res.user) {
-        await activateUserSession(res.user);
-        setSession((prev) => ({
-          ...prev,
-          user: res.user,
-          status: 'authenticated',
-          error: null,
-        }));
         const currentToken = await readToken();
-        if (currentToken) {
-          await saveSession(currentToken, res.user);
+        if (sessionOpSeq.current !== opId) {
+          return { type: 'obsolete' };
+        }
+        const committed = await commitSession(
+          opId,
+          {
+            status: 'authenticated',
+            user: res.user,
+            token: currentToken,
+            error: null,
+          },
+          res.user,
+          { saveToken: currentToken, runSync: true }
+        );
+        if (!committed) {
+          return { type: 'obsolete' };
         }
         return { type: 'success', user: res.user };
       }
       return { type: 'server_error', status: 500, message: 'Réponse utilisateur invalide' };
     } catch (err: any) {
+      if (sessionOpSeq.current !== opId) {
+        return { type: 'obsolete' };
+      }
       if (err instanceof ApiError && err.status === 401) {
         await signOut();
         return { type: 'unauthenticated' };
       }
       if (isNetworkError(err)) {
-        // En cas de panne temporaire lors du refresh en arrière-plan, conserver l'accès de l'utilisateur
         return {
           type: 'network_error',
           error: err instanceof Error ? err : new Error(String(err?.message || 'Erreur réseau')),
@@ -130,39 +182,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return { type: 'server_error', status: 500, message: err?.message || 'Erreur serveur' };
     }
-  }, [signOut, activateUserSession]);
+  }, [commitSession, signOut]);
 
   const restoreSession = useCallback(async () => {
+    const opId = ++sessionOpSeq.current;
     setSession((prev) => ({ ...prev, status: 'loading' }));
     try {
       const result = await performSessionRestore();
+      if (sessionOpSeq.current !== opId) return;
+
       const nextSession = resolveRestoreSessionState(result);
       if (nextSession.status === 'authenticated' && nextSession.user) {
-        await activateUserSession(nextSession.user);
+        await commitSession(opId, nextSession, nextSession.user, { runSync: true });
       } else {
-        await activateUserSession(null);
+        await commitSession(opId, nextSession, null);
       }
-      setSession(nextSession);
     } catch (err: any) {
-      await activateUserSession(null);
-      setSession({
-        status: 'storage_error',
-        user: null,
-        token: null,
-        error: { message: err?.message || 'Erreur critique lors de la lecture du stockage' },
-      });
+      if (sessionOpSeq.current !== opId) return;
+      await commitSession(
+        opId,
+        {
+          status: 'storage_error',
+          user: null,
+          token: null,
+          error: { message: err?.message || 'Erreur critique lors de la lecture du stockage' },
+        },
+        null
+      );
     }
-  }, [activateUserSession]);
+  }, [commitSession]);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => {
-      activateUserSession(null);
-      setSession({
-        status: 'unauthenticated',
-        user: null,
-        token: null,
-        error: null,
-      });
+    setUnauthorizedHandler(async () => {
+      const opId = ++sessionOpSeq.current;
+      await clearSession();
+      if (sessionOpSeq.current === opId) {
+        cartStore.reset();
+        dbService.setActiveBuyerId(null);
+        setSession({
+          status: 'unauthenticated',
+          user: null,
+          token: null,
+          error: null,
+        });
+      }
     });
 
     restoreSession();
@@ -170,40 +233,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [restoreSession, activateUserSession]);
+  }, [restoreSession]);
 
   const signIn = useCallback(
     async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {
+      const opId = ++sessionOpSeq.current;
       const res = await apiClient.login(phone, pin, role);
+      if (sessionOpSeq.current !== opId) {
+        return { message: 'Opération de session obsolète', obsolete: true };
+      }
       if (res.token && res.user) {
-        await activateUserSession(res.user);
-        setSession({
-          status: 'authenticated',
-          user: res.user,
-          token: res.token,
-          error: null,
-        });
+        const committed = await commitSession(
+          opId,
+          {
+            status: 'authenticated',
+            user: res.user,
+            token: res.token,
+            error: null,
+          },
+          res.user,
+          { saveToken: res.token, runSync: true }
+        );
+        if (!committed) {
+          return { message: 'Opération de session obsolète', obsolete: true };
+        }
       }
       return res;
     },
-    [activateUserSession]
+    [commitSession]
   );
 
   const completeOtp = useCallback(
     async (phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> => {
+      const opId = ++sessionOpSeq.current;
       const res = await apiClient.verifyOtp(phone, code, role);
+      if (sessionOpSeq.current !== opId) {
+        return { message: 'Opération de session obsolète', obsolete: true };
+      }
       if (res.token && res.user) {
-        await activateUserSession(res.user);
-        setSession({
-          status: 'authenticated',
-          user: res.user,
-          token: res.token,
-          error: null,
-        });
+        const committed = await commitSession(
+          opId,
+          {
+            status: 'authenticated',
+            user: res.user,
+            token: res.token,
+            error: null,
+          },
+          res.user,
+          { saveToken: res.token, runSync: true }
+        );
+        if (!committed) {
+          return { message: 'Opération de session obsolète', obsolete: true };
+        }
       }
       return res;
     },
-    [activateUserSession]
+    [commitSession]
   );
 
   // Propriétés dérivées de manière stricte et prévisible
@@ -220,29 +305,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const storageError =
     session.status === 'storage_error' ? session.error?.message || 'Stockage sécurisé indisponible' : null;
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user: session.user,
-        buyerId,
-        token: session.token,
-        loading,
-        isLoading,
-        authenticated,
-        isOffline,
-        sessionStatus: session.status,
-        serverError,
-        storageError,
-        restoreSession,
-        refreshUser,
-        signIn,
-        completeOtp,
-        signOut,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  return {
+    user: session.user,
+    buyerId,
+    token: session.token,
+    loading,
+    isLoading,
+    authenticated,
+    isOffline,
+    sessionStatus: session.status,
+    sessionSeq: sessionOpSeq.current,
+    serverError,
+    storageError,
+    restoreSession,
+    refreshUser,
+    signIn,
+    completeOtp,
+    signOut,
+  };
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const value = useAuthProviderState();
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextType {

@@ -47,6 +47,7 @@ export interface SessionResponse {
   message?: string;
   requireOtp?: boolean;
   phone?: string;
+  obsolete?: boolean;
 }
 
 export interface PaginationMeta {
