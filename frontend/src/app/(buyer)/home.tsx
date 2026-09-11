@@ -1,5 +1,5 @@
 import { Dimensions, FlatList, Image, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
@@ -42,9 +42,11 @@ export default function BuyerHomeScreen() {
     handleAddToCartSafe,
   } = useBuyerHomeCoordinator(buyerId, authLoading, authenticated, cartCount, addProductToCart);
 
-  // Fermer les modales immédiatement sur chargement auth ou changement d'acheteur
+  // Fermer les modales immédiatement sur chargement auth ou tout changement d'acheteur (y compris A vers B)
+  const prevBuyerIdRef = useRef(buyerId);
   useEffect(() => {
-    if (authLoading || !buyerId) {
+    if (authLoading || !buyerId || prevBuyerIdRef.current !== buyerId) {
+      prevBuyerIdRef.current = buyerId;
       setShowFilterModal(false);
       setSelectedProduct(null);
     }

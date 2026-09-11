@@ -1,71 +1,148 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { dbService, OrderRecord, ProductOffer, AlertPreferences, CartItemRecord } from '@/services/database';
 import { cartStore } from '@/services/cart-store';
 import { isNetworkError } from '@/services/api';
 
-/**
- * 1. Coordinateur pour l'écran des commandes acheteur (orders.tsx)
- * Garantit qu'aucun résultat différé n'écrase l'état d'un acheteur différent ou après déconnexion.
- */
-export function useBuyerOrdersCoordinator(
-  buyerId: string | null,
-  authLoading: boolean,
-  authenticated: boolean
-) {
-  const buyerIdRef = useRef(buyerId);
-  buyerIdRef.current = buyerId;
+// ─── 1. COORDINATEUR DES COMMANDES ACHETEUR (orders.tsx) ──────────────────────
 
-  const authLoadingRef = useRef(authLoading);
-  authLoadingRef.current = authLoading;
+export interface BuyerOrdersState {
+  orders: OrderRecord[];
+  loadedBuyerId: string | null;
+  selectedOrder: OrderRecord | null;
+  ratingOrder: OrderRecord | null;
+  isLoading: boolean;
+  isOffline: boolean;
+  serverError: string | null;
+}
 
-  const authenticatedRef = useRef(authenticated);
-  authenticatedRef.current = authenticated;
+export class BuyerOrdersCoordinator {
+  private buyerId: string | null;
+  private authLoading: boolean;
+  private authenticated: boolean;
 
-  const reqSeqRef = useRef(0);
+  // Séquences indépendantes par nature d'opération
+  private loadOrdersSeq = 0;
+  private ratingSeq = 0;
+  private sessionGen = 0;
 
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [loadedBuyerId, setLoadedBuyerId] = useState<string | null>(null);
-  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
-  const [ratingOrder, setRatingOrder] = useState<OrderRecord | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isOffline, setIsOffline] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  private rawOrders: OrderRecord[] = [];
+  private loadedBuyerId: string | null = null;
+  private selectedOrder: OrderRecord | null = null;
+  private ratingOrder: OrderRecord | null = null;
+  private isLoading = false;
+  private isOffline = false;
+  private serverError: string | null = null;
 
-  // Réinitialisation immédiate si la session change ou repasse en chargement
-  useEffect(() => {
-    if (!buyerId || authLoading || !authenticated || (loadedBuyerId && loadedBuyerId !== buyerId)) {
-      reqSeqRef.current++;
-      setOrders([]);
-      setLoadedBuyerId(null);
-      setSelectedOrder(null);
-      setRatingOrder(null);
-      setServerError(null);
-      setIsLoading(false);
+  private listeners = new Set<() => void>();
+
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
+    if (buyerId && !authLoading && authenticated) {
+      this.isLoading = true;
+      this.loadOrders();
     }
-  }, [buyerId, authLoading, authenticated, loadedBuyerId]);
+  }
 
-  const loadOrders = useCallback(
-    async (options?: { onExpired?: () => void; onError?: (msg: string) => void }) => {
-    if (authLoadingRef.current || !buyerIdRef.current || !authenticatedRef.current) {
-      setOrders([]);
-      setLoadedBuyerId(null);
-      setIsLoading(false);
+  public subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  private notify() {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  // Masquage synchrone immédiat : si l'acheteur actif diffère de celui qui a chargé les données, masquer sans attendre useEffect
+  public getState = (): BuyerOrdersState => {
+    const isContextValid = Boolean(
+      this.buyerId &&
+      !this.authLoading &&
+      this.authenticated &&
+      this.loadedBuyerId === this.buyerId
+    );
+
+    return {
+      orders: isContextValid ? this.rawOrders : [],
+      loadedBuyerId: this.loadedBuyerId,
+      selectedOrder: isContextValid ? this.selectedOrder : null,
+      ratingOrder: isContextValid ? this.ratingOrder : null,
+      isLoading: this.isLoading,
+      isOffline: this.isOffline,
+      serverError: this.serverError,
+    };
+  };
+
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+    const activeBuyerChanged = this.buyerId !== buyerId;
+    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+
+    if (!activeBuyerChanged && !authChanged) {
       return;
     }
 
-    const reqId = ++reqSeqRef.current;
-    const capturedBuyerId = buyerIdRef.current;
-    const capturedGen = dbService.getContextGeneration();
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
 
-    setIsLoading(true);
-    setServerError(null);
+    // Détecter tout changement de buyerId (y compris A valide -> B valide)
+    this.sessionGen++;
+    this.rawOrders = [];
+    this.loadedBuyerId = null;
+    this.selectedOrder = null;
+    this.ratingOrder = null;
+    this.serverError = null;
+
+    if (buyerId && !authLoading && authenticated) {
+      this.isLoading = true;
+      this.notify();
+      this.loadOrders();
+    } else {
+      this.isLoading = false;
+      this.notify();
+    }
+  }
+
+  public setSelectedOrder = (order: OrderRecord | null) => {
+    this.selectedOrder = order;
+    this.notify();
+  };
+
+  public setRatingOrder = (order: OrderRecord | null) => {
+    this.ratingOrder = order;
+    this.notify();
+  };
+
+  public loadOrders = async (options?: { onExpired?: () => void; onError?: (msg: string) => void }) => {
+    if (this.authLoading || !this.buyerId || !this.authenticated) {
+      this.rawOrders = [];
+      this.loadedBuyerId = null;
+      this.isLoading = false;
+      this.notify();
+      return;
+    }
+
+    const reqId = ++this.loadOrdersSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
+
+    this.isLoading = true;
+    this.serverError = null;
+    this.notify();
 
     const isStale = () =>
-      reqSeqRef.current !== reqId ||
-      buyerIdRef.current !== capturedBuyerId ||
-      authLoadingRef.current ||
-      !authenticatedRef.current ||
-      dbService.getContextGeneration() !== capturedGen;
+      this.loadOrdersSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
 
     try {
       await dbService.initDatabase();
@@ -74,9 +151,9 @@ export function useBuyerOrdersCoordinator(
       const loaded = await dbService.getOrders(true);
       if (isStale()) return;
 
-      setOrders(loaded);
-      setLoadedBuyerId(capturedBuyerId);
-      setIsOffline(!dbService.isLastOrdersSyncSuccessful());
+      this.rawOrders = loaded;
+      this.loadedBuyerId = capturedBuyerId;
+      this.isOffline = !dbService.isLastOrdersSyncSuccessful();
     } catch (err: any) {
       if (isStale()) return;
 
@@ -89,138 +166,219 @@ export function useBuyerOrdersCoordinator(
         try {
           const cached = await dbService.getOrders(false);
           if (isStale()) return;
-          setOrders(cached);
-          setLoadedBuyerId(capturedBuyerId);
-          setIsOffline(true);
+          this.rawOrders = cached;
+          this.loadedBuyerId = capturedBuyerId;
+          this.isOffline = true;
         } catch {
           if (isStale()) return;
-          setServerError('Impossible de charger les commandes hors ligne.');
+          this.serverError = 'Impossible de charger les commandes hors ligne.';
         }
       } else {
         const msg = err?.message || 'Erreur lors du chargement des commandes.';
-        setServerError(msg);
+        this.serverError = msg;
         options?.onError?.(msg);
       }
     } finally {
       if (!isStale()) {
-        setIsLoading(false);
+        this.isLoading = false;
+        this.notify();
       }
     }
-  }, []);
+  };
 
-  const submitRating = useCallback(
-    async (
-      order: OrderRecord,
-      stars: number,
-      comment: string,
-      callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }
-    ) => {
-      if (!order || stars === 0 || authLoadingRef.current || !buyerIdRef.current || !authenticatedRef.current) {
-        return false;
-      }
+  public submitRating = async (
+    order: OrderRecord,
+    stars: number,
+    comment: string,
+    callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }
+  ): Promise<boolean> => {
+    if (!order || stars === 0 || this.authLoading || !this.buyerId || !this.authenticated) {
+      return false;
+    }
 
-      const reqId = ++reqSeqRef.current;
-      const capturedBuyerId = buyerIdRef.current;
-      const capturedGen = dbService.getContextGeneration();
+    const reqId = ++this.ratingSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
 
-      const isStale = () =>
-        reqSeqRef.current !== reqId ||
-        buyerIdRef.current !== capturedBuyerId ||
-        authLoadingRef.current ||
-        !authenticatedRef.current ||
-        dbService.getContextGeneration() !== capturedGen;
+    const isStale = () =>
+      this.ratingSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
 
-      try {
-        await dbService.addTrustRating(
-          order.gicName,
-          'gic',
-          stars,
-          comment.trim(),
-          'Acheteur'
-        );
-        if (isStale()) return false;
+    try {
+      await dbService.addTrustRating(
+        order.gicName,
+        'gic',
+        stars,
+        comment.trim(),
+        'Acheteur'
+      );
+      if (isStale()) return false;
 
-        callbacks?.onSuccess?.();
-        return true;
-      } catch (err) {
-        if (isStale()) return false;
-        callbacks?.onError?.(err);
-        return false;
-      }
-    },
-    []
-  );
-
-  return {
-    orders,
-    loadedBuyerId,
-    selectedOrder,
-    setSelectedOrder,
-    ratingOrder,
-    setRatingOrder,
-    isLoading,
-    isOffline,
-    serverError,
-    loadOrders,
-    submitRating,
-    reqSeqRef,
+      callbacks?.onSuccess?.();
+      return true;
+    } catch (err) {
+      if (isStale()) return false;
+      callbacks?.onError?.(err);
+      return false;
+    }
   };
 }
 
-/**
- * 2. Coordinateur pour l'écran des alertes récoltes (alerts.tsx)
- * Empêche les sauvegardes et lectures fantômes en arrière-plan.
- */
-export function useBuyerAlertsCoordinator(
+export function useBuyerOrdersCoordinator(
   buyerId: string | null,
   authLoading: boolean,
   authenticated: boolean
 ) {
-  const buyerIdRef = useRef(buyerId);
-  buyerIdRef.current = buyerId;
+  const coordinatorRef = useRef<BuyerOrdersCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new BuyerOrdersCoordinator(buyerId, authLoading, authenticated);
+  }
+  const coordinator = coordinatorRef.current;
 
-  const authLoadingRef = useRef(authLoading);
-  authLoadingRef.current = authLoading;
+  const state = useSyncExternalStore(coordinator.subscribe, coordinator.getState);
 
-  const authenticatedRef = useRef(authenticated);
-  authenticatedRef.current = authenticated;
-
-  const reqSeqRef = useRef(0);
-
-  const [prefs, setPrefs] = useState<AlertPreferences>({ productNames: [], bassins: [] });
-  const [matchCount, setMatchCount] = useState(0);
-  const [loadedBuyerId, setLoadedBuyerId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Réinitialisation immédiate
   useEffect(() => {
-    if (!buyerId || authLoading || !authenticated || (loadedBuyerId && loadedBuyerId !== buyerId)) {
-      reqSeqRef.current++;
-      setPrefs({ productNames: [], bassins: [] });
-      setMatchCount(0);
-      setLoadedBuyerId(null);
-      setIsLoading(false);
-    }
-  }, [buyerId, authLoading, authenticated, loadedBuyerId]);
+    coordinator.updateSession(buyerId, authLoading, authenticated);
+  }, [coordinator, buyerId, authLoading, authenticated]);
 
-  const loadAlerts = useCallback(async () => {
-    if (authLoadingRef.current || !buyerIdRef.current || !authenticatedRef.current) {
-      setIsLoading(false);
+  return {
+    ...state,
+    loadOrders: coordinator.loadOrders,
+    submitRating: coordinator.submitRating,
+    setSelectedOrder: coordinator.setSelectedOrder,
+    setRatingOrder: coordinator.setRatingOrder,
+  };
+}
+
+// ─── 2. COORDINATEUR DES ALERTES RÉCOLTES (alerts.tsx) ────────────────────────
+
+export interface BuyerAlertsState {
+  prefs: AlertPreferences;
+  matchCount: number;
+  isLoading: boolean;
+  isDataValid: boolean;
+}
+
+export class BuyerAlertsCoordinator {
+  private buyerId: string | null;
+  private authLoading: boolean;
+  private authenticated: boolean;
+
+  // Séquences séparées : la sauvegarde ne bloque ni n'annule le chargement
+  private loadAlertsSeq = 0;
+  private saveAlertsSeq = 0;
+  private sessionGen = 0;
+
+  private rawPrefs: AlertPreferences = { productNames: [], bassins: [] };
+  private rawMatchCount = 0;
+  private loadedBuyerId: string | null = null;
+  private isLoading = false;
+
+  private listeners = new Set<() => void>();
+
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
+    if (buyerId && !authLoading && authenticated) {
+      this.isLoading = true;
+      this.loadAlerts();
+    }
+  }
+
+  public subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  private notify() {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  // Masquage synchrone immédiat lors d'un switch utilisateur
+  public getState = (): BuyerAlertsState => {
+    const isDataValid = Boolean(
+      this.buyerId &&
+      !this.authLoading &&
+      this.authenticated &&
+      this.loadedBuyerId === this.buyerId
+    );
+
+    return {
+      prefs: isDataValid ? this.rawPrefs : { productNames: [], bassins: [] },
+      matchCount: isDataValid ? this.rawMatchCount : 0,
+      isLoading: this.isLoading,
+      isDataValid,
+    };
+  };
+
+  public setPrefs = (newPrefs: AlertPreferences | ((prev: AlertPreferences) => AlertPreferences)) => {
+    if (typeof newPrefs === 'function') {
+      this.rawPrefs = newPrefs(this.rawPrefs);
+    } else {
+      this.rawPrefs = newPrefs;
+    }
+    this.notify();
+  };
+
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+    const activeBuyerChanged = this.buyerId !== buyerId;
+    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+
+    if (!activeBuyerChanged && !authChanged) {
       return;
     }
 
-    const reqId = ++reqSeqRef.current;
-    const capturedBuyerId = buyerIdRef.current;
-    const capturedGen = dbService.getContextGeneration();
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
 
-    setIsLoading(true);
+    this.sessionGen++;
+    this.rawPrefs = { productNames: [], bassins: [] };
+    this.rawMatchCount = 0;
+    this.loadedBuyerId = null;
+
+    if (buyerId && !authLoading && authenticated) {
+      this.isLoading = true;
+      this.notify();
+      this.loadAlerts();
+    } else {
+      this.isLoading = false;
+      this.notify();
+    }
+  }
+
+  public loadAlerts = async () => {
+    if (this.authLoading || !this.buyerId || !this.authenticated) {
+      this.isLoading = false;
+      this.notify();
+      return;
+    }
+
+    const reqId = ++this.loadAlertsSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
+
+    this.isLoading = true;
+    this.notify();
 
     const isStale = () =>
-      reqSeqRef.current !== reqId ||
-      buyerIdRef.current !== capturedBuyerId ||
-      authLoadingRef.current ||
-      !authenticatedRef.current ||
-      dbService.getContextGeneration() !== capturedGen;
+      this.loadAlertsSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
 
     try {
       await dbService.initDatabase();
@@ -232,76 +390,255 @@ export function useBuyerAlertsCoordinator(
       const count = await dbService.getMatchingAlertCount();
       if (isStale()) return;
 
-      setPrefs(stored);
-      setMatchCount(count);
-      setLoadedBuyerId(capturedBuyerId);
+      this.rawPrefs = stored;
+      this.rawMatchCount = count;
+      this.loadedBuyerId = capturedBuyerId;
     } catch (err) {
       console.warn('Erreur chargement alertes:', err);
     } finally {
       if (!isStale()) {
-        setIsLoading(false);
+        this.isLoading = false;
+        this.notify();
       }
     }
-  }, []);
+  };
 
-  const saveAlerts = useCallback(
-    async (
-      newPrefs: AlertPreferences,
-      callbacks?: { onSuccess?: (count: number) => void; onError?: (err: any) => void }
-    ) => {
-      if (authLoadingRef.current || !buyerIdRef.current || !authenticatedRef.current) {
-        return false;
-      }
+  public saveAlerts = async (
+    newPrefs: AlertPreferences,
+    callbacks?: { onSuccess?: (count: number) => void; onError?: (err: any) => void }
+  ): Promise<boolean> => {
+    if (this.authLoading || !this.buyerId || !this.authenticated) {
+      return false;
+    }
 
-      const reqId = ++reqSeqRef.current;
-      const capturedBuyerId = buyerIdRef.current;
-      const capturedGen = dbService.getContextGeneration();
+    const reqId = ++this.saveAlertsSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
 
-      const isStale = () =>
-        reqSeqRef.current !== reqId ||
-        buyerIdRef.current !== capturedBuyerId ||
-        authLoadingRef.current ||
-        !authenticatedRef.current ||
-        dbService.getContextGeneration() !== capturedGen;
+    const isStale = () =>
+      this.saveAlertsSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
 
-      try {
-        await dbService.saveAlertPreferences(newPrefs);
-        if (isStale()) return false;
+    try {
+      await dbService.saveAlertPreferences(newPrefs);
+      if (isStale()) return false;
 
-        const updatedCount = await dbService.getMatchingAlertCount();
-        if (isStale()) return false;
+      const updatedCount = await dbService.getMatchingAlertCount();
+      if (isStale()) return false;
 
-        setMatchCount(updatedCount);
-        callbacks?.onSuccess?.(updatedCount);
-        return true;
-      } catch (err: any) {
-        if (isStale()) return false;
-        callbacks?.onError?.(err);
-        return false;
-      }
-    },
-    []
-  );
+      this.rawPrefs = newPrefs;
+      this.rawMatchCount = updatedCount;
+      this.loadedBuyerId = capturedBuyerId;
+      this.notify();
 
-  const isDataValid =
-    !authLoading && Boolean(buyerId) && loadedBuyerId === buyerId && authenticated;
-
-  return {
-    prefs,
-    setPrefs,
-    matchCount,
-    isLoading,
-    isDataValid,
-    loadAlerts,
-    saveAlerts,
-    reqSeqRef,
+      callbacks?.onSuccess?.(updatedCount);
+      return true;
+    } catch (err: any) {
+      if (isStale()) return false;
+      callbacks?.onError?.(err);
+      return false;
+    }
   };
 }
 
-/**
- * 3. Coordinateur pour l'écran de validation panier / commande (checkout.tsx)
- * Masque immédiatement le panier si cartStore n'est pas aligné ou pendant le chargement.
- */
+export function useBuyerAlertsCoordinator(
+  buyerId: string | null,
+  authLoading: boolean,
+  authenticated: boolean
+) {
+  const coordinatorRef = useRef<BuyerAlertsCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new BuyerAlertsCoordinator(buyerId, authLoading, authenticated);
+  }
+  const coordinator = coordinatorRef.current;
+
+  const state = useSyncExternalStore(coordinator.subscribe, coordinator.getState);
+
+  useEffect(() => {
+    coordinator.updateSession(buyerId, authLoading, authenticated);
+  }, [coordinator, buyerId, authLoading, authenticated]);
+
+  return {
+    ...state,
+    setPrefs: coordinator.setPrefs,
+    loadAlerts: coordinator.loadAlerts,
+    saveAlerts: coordinator.saveAlerts,
+  };
+}
+
+// ─── 3. COORDINATEUR DE VALIDATION DU PANIER (checkout.tsx) ───────────────────
+
+export interface BuyerCheckoutState {
+  isCartAligned: boolean;
+  effectiveCart: CartItemRecord[];
+  effectiveTotalAmount: number;
+  busy: boolean;
+  products: ProductOffer[];
+}
+
+export class BuyerCheckoutCoordinator {
+  private buyerId: string | null;
+  private authLoading: boolean;
+  private authenticated: boolean;
+
+  private loadProductsSeq = 0;
+  private confirmOrderSeq = 0;
+  private sessionGen = 0;
+
+  private busy = false;
+  private products: ProductOffer[] = [];
+
+  private listeners = new Set<() => void>();
+
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
+    if (buyerId && !authLoading && authenticated) {
+      this.loadProducts();
+    }
+  }
+
+  public subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  private notify() {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  public getState = (cart: CartItemRecord[] = [], totalAmount = 0): BuyerCheckoutState => {
+    const isCartAligned = Boolean(
+      !this.authLoading &&
+      this.buyerId &&
+      this.authenticated &&
+      cartStore.getBuyerId() === this.buyerId
+    );
+
+    return {
+      isCartAligned,
+      effectiveCart: isCartAligned ? cart : [],
+      effectiveTotalAmount: isCartAligned ? totalAmount : 0,
+      busy: this.busy,
+      products: this.products,
+    };
+  };
+
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+    const activeBuyerChanged = this.buyerId !== buyerId;
+    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+
+    if (!activeBuyerChanged && !authChanged) {
+      return;
+    }
+
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
+
+    this.sessionGen++;
+    // Remettre immédiatement busy à false lors du changement de contexte
+    this.busy = false;
+
+    if (buyerId && !authLoading && authenticated) {
+      this.notify();
+      this.loadProducts();
+    } else {
+      this.notify();
+    }
+  }
+
+  public loadProducts = async () => {
+    if (this.authLoading || !this.buyerId || !this.authenticated) return;
+
+    const reqId = ++this.loadProductsSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
+
+    const isStale = () =>
+      this.loadProductsSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
+
+    try {
+      const items = await dbService.getProducts();
+      if (isStale()) return;
+      this.products = items;
+      this.notify();
+    } catch {
+      // Ignorer les erreurs d'affichage catalogue
+    }
+  };
+
+  public confirmOrder = async (
+    orderType: any,
+    refreshCart: () => Promise<void>,
+    callbacks: { onSuccess: () => void; onError: (err: any) => void },
+    cart: CartItemRecord[] = []
+  ): Promise<boolean> => {
+    const isAligned = Boolean(
+      !this.authLoading &&
+      this.buyerId &&
+      this.authenticated &&
+      cartStore.getBuyerId() === this.buyerId
+    );
+
+    if (!isAligned || this.busy || !cart.length || this.authLoading || !this.buyerId || !this.authenticated) {
+      return false;
+    }
+
+    const reqId = ++this.confirmOrderSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
+
+    this.busy = true;
+    this.notify();
+
+    const isStale = () =>
+      this.confirmOrderSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
+
+    try {
+      await dbService.createOrderFromCart(orderType);
+      if (isStale()) return false;
+
+      await refreshCart();
+      if (isStale()) return false;
+
+      callbacks.onSuccess();
+      return true;
+    } catch (err: any) {
+      if (isStale()) return false;
+      callbacks.onError(err);
+      return false;
+    } finally {
+      if (this.confirmOrderSeq === reqId && this.sessionGen === capturedSessionGen) {
+        this.busy = false;
+        this.notify();
+      }
+    }
+  };
+}
+
 export function useBuyerCheckoutCoordinator(
   buyerId: string | null,
   authLoading: boolean,
@@ -310,182 +647,152 @@ export function useBuyerCheckoutCoordinator(
   totalAmount: number,
   refreshCart: () => Promise<void>
 ) {
-  const buyerIdRef = useRef(buyerId);
-  buyerIdRef.current = buyerId;
+  const coordinatorRef = useRef<BuyerCheckoutCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new BuyerCheckoutCoordinator(buyerId, authLoading, authenticated);
+  }
+  const coordinator = coordinatorRef.current;
 
-  const authLoadingRef = useRef(authLoading);
-  authLoadingRef.current = authLoading;
+  const getSnapshot = useCallback(
+    () => coordinator.getState(cart, totalAmount),
+    [coordinator, cart, totalAmount]
+  );
+  const state = useSyncExternalStore(coordinator.subscribe, getSnapshot);
 
-  const authenticatedRef = useRef(authenticated);
-  authenticatedRef.current = authenticated;
-
-  const reqSeqRef = useRef(0);
-
-  const [busy, setBusy] = useState(false);
-  const [products, setProducts] = useState<ProductOffer[]>([]);
-
-  // Vérification stricte d'alignement du panier
-  const isCartAligned =
-    !authLoading &&
-    Boolean(buyerId) &&
-    authenticated &&
-    cartStore.getBuyerId() === buyerId;
-
-  const effectiveCart: CartItemRecord[] = isCartAligned ? cart : [];
-  const effectiveTotalAmount: number = isCartAligned ? totalAmount : 0;
-
-  // Réinitialisation immédiate si changement d'acheteur
   useEffect(() => {
-    if (!buyerId || authLoading || !authenticated) {
-      reqSeqRef.current++;
-      setBusy(false);
-    }
-  }, [buyerId, authLoading, authenticated]);
-
-  const loadProducts = useCallback(async () => {
-    if (authLoadingRef.current || !buyerIdRef.current || !authenticatedRef.current) return;
-
-    const reqId = ++reqSeqRef.current;
-    const capturedBuyerId = buyerIdRef.current;
-    const capturedGen = dbService.getContextGeneration();
-
-    const isStale = () =>
-      reqSeqRef.current !== reqId ||
-      buyerIdRef.current !== capturedBuyerId ||
-      authLoadingRef.current ||
-      !authenticatedRef.current ||
-      dbService.getContextGeneration() !== capturedGen;
-
-    try {
-      const items = await dbService.getProducts();
-      if (isStale()) return;
-      setProducts(items);
-    } catch {
-      // Ignorer les erreurs d'affichage catalogue
-    }
-  }, []);
+    coordinator.updateSession(buyerId, authLoading, authenticated);
+  }, [coordinator, buyerId, authLoading, authenticated]);
 
   const confirmOrder = useCallback(
-    async (
+    (
       orderType: any,
-      callbacks: {
-        onSuccess: () => void;
-        onError: (err: any) => void;
-      }
-    ): Promise<boolean> => {
-      if (
-        !isCartAligned ||
-        busy ||
-        !effectiveCart.length ||
-        authLoadingRef.current ||
-        !buyerIdRef.current ||
-        !authenticatedRef.current
-      ) {
-        return false;
-      }
-
-      const reqId = ++reqSeqRef.current;
-      const capturedBuyerId = buyerIdRef.current;
-      const capturedGen = dbService.getContextGeneration();
-
-      setBusy(true);
-
-      const isStale = () =>
-        reqSeqRef.current !== reqId ||
-        buyerIdRef.current !== capturedBuyerId ||
-        authLoadingRef.current ||
-        !authenticatedRef.current ||
-        dbService.getContextGeneration() !== capturedGen;
-
-      try {
-        await dbService.createOrderFromCart(orderType);
-        if (isStale()) return false;
-
-        await refreshCart();
-        if (isStale()) return false;
-
-        callbacks.onSuccess();
-        return true;
-      } catch (err: any) {
-        if (isStale()) return false;
-        callbacks.onError(err);
-        return false;
-      } finally {
-        if (reqSeqRef.current === reqId) {
-          setBusy(false);
-        }
-      }
-    },
-    [isCartAligned, busy, effectiveCart.length, refreshCart]
+      callbacks: { onSuccess: () => void; onError: (err: any) => void }
+    ) => coordinator.confirmOrder(orderType, refreshCart, callbacks, cart),
+    [coordinator, refreshCart, cart]
   );
 
   return {
-    isCartAligned,
-    effectiveCart,
-    effectiveTotalAmount,
-    busy,
-    products,
-    loadProducts,
+    ...state,
+    loadProducts: coordinator.loadProducts,
     confirmOrder,
-    reqSeqRef,
   };
 }
 
-/**
- * 4. Coordinateur pour l'écran d'accueil acheteur (home.tsx)
- * Masque tout compteur d'articles si cartStore n'est pas aligné ou pendant authLoading.
- */
-export function useBuyerHomeCoordinator(
-  buyerId: string | null,
-  authLoading: boolean,
-  authenticated: boolean,
-  cartCount: number,
-  addProductToCart: (product: any, maxStock?: number) => Promise<any>
-) {
-  const buyerIdRef = useRef(buyerId);
-  buyerIdRef.current = buyerId;
+// ─── 4. COORDINATEUR DE L'ACCUEIL ACHETEUR (home.tsx) ─────────────────────────
 
-  const authLoadingRef = useRef(authLoading);
-  authLoadingRef.current = authLoading;
+export interface BuyerHomeState {
+  isCartAligned: boolean;
+  effectiveCartCount: number;
+  alertCount: number;
+  products: ProductOffer[];
+  isLoading: boolean;
+}
 
-  const authenticatedRef = useRef(authenticated);
-  authenticatedRef.current = authenticated;
+export class BuyerHomeCoordinator {
+  private buyerId: string | null;
+  private authLoading: boolean;
+  private authenticated: boolean;
 
-  const reqSeqRef = useRef(0);
+  // Séquences indépendantes : l'ajout au panier ne bloque pas la synchro silencieuse
+  private syncSeq = 0;
+  private cartActionSeq = 0;
+  private sessionGen = 0;
 
-  const [alertCount, setAlertCount] = useState(0);
-  const [products, setProducts] = useState<ProductOffer[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  private rawAlertCount = 0;
+  private loadedAlertBuyerId: string | null = null;
+  private products: ProductOffer[] = [];
+  private isLoading = false;
 
-  // Vérification stricte d'alignement panier
-  const isCartAligned =
-    !authLoading &&
-    Boolean(buyerId) &&
-    authenticated &&
-    cartStore.getBuyerId() === buyerId;
+  private listeners = new Set<() => void>();
 
-  const effectiveCartCount = isCartAligned ? cartCount : 0;
-
-  // Réinitialisation immédiate si changement d'acheteur
-  useEffect(() => {
-    if (!buyerId || authLoading || !authenticated) {
-      reqSeqRef.current++;
-      setAlertCount(0);
-      setIsLoading(false);
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
+    if (!authLoading) {
+      this.isLoading = true;
+      this.silentSync();
     }
-  }, [buyerId, authLoading, authenticated]);
+  }
 
-  const silentSync = useCallback(async () => {
-    const reqId = ++reqSeqRef.current;
-    const capturedBuyerId = buyerIdRef.current;
-    const capturedGen = dbService.getContextGeneration();
+  public subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  private notify() {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  public getState = (cartCount = 0): BuyerHomeState => {
+    const isCartAligned = Boolean(
+      !this.authLoading &&
+      this.buyerId &&
+      this.authenticated &&
+      cartStore.getBuyerId() === this.buyerId
+    );
+
+    // Associer alertCount à l'acheteur qui l'a chargé, ne jamais afficher le compteur de A à B
+    const isAlertAligned = Boolean(
+      !this.authLoading &&
+      this.buyerId &&
+      this.authenticated &&
+      this.loadedAlertBuyerId === this.buyerId
+    );
+
+    return {
+      isCartAligned,
+      effectiveCartCount: isCartAligned ? cartCount : 0,
+      alertCount: isAlertAligned ? this.rawAlertCount : 0,
+      products: this.products,
+      isLoading: this.isLoading,
+    };
+  };
+
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+    const activeBuyerChanged = this.buyerId !== buyerId;
+    const authChanged = this.authLoading !== authLoading || this.authenticated !== authenticated;
+
+    if (!activeBuyerChanged && !authChanged) {
+      return;
+    }
+
+    this.buyerId = buyerId;
+    this.authLoading = authLoading;
+    this.authenticated = authenticated;
+
+    this.sessionGen++;
+    // Compteur d'alertes A déjà affiché, bascule directe vers B : zéro immédiatement !
+    this.rawAlertCount = 0;
+    this.loadedAlertBuyerId = null;
+
+    if (!authLoading) {
+      this.isLoading = true;
+      this.notify();
+      this.silentSync();
+    } else {
+      this.isLoading = false;
+      this.notify();
+    }
+  }
+
+  public silentSync = async () => {
+    const reqId = ++this.syncSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
 
     const isStale = () =>
-      reqSeqRef.current !== reqId ||
-      buyerIdRef.current !== capturedBuyerId ||
-      authLoadingRef.current ||
-      !authenticatedRef.current ||
-      dbService.getContextGeneration() !== capturedGen;
+      this.syncSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
 
     try {
       await dbService.initDatabase();
@@ -494,77 +801,106 @@ export function useBuyerHomeCoordinator(
       await dbService.syncPublicData().catch(() => {});
       if (isStale()) return;
 
-      if (capturedBuyerId && !authLoadingRef.current && authenticatedRef.current) {
+      if (capturedBuyerId && !this.authLoading && this.authenticated) {
         await dbService.syncBuyerData(capturedBuyerId).catch(() => {});
         if (isStale()) return;
       }
 
       const [offers, matches] = await Promise.all([
         dbService.getProducts(),
-        capturedBuyerId && !authLoadingRef.current && authenticatedRef.current
+        capturedBuyerId && !this.authLoading && this.authenticated
           ? dbService.getMatchingAlertCount().catch(() => 0)
           : Promise.resolve(0),
       ]);
       if (isStale()) return;
 
-      setAlertCount(matches);
-      setProducts(offers);
+      this.rawAlertCount = matches;
+      this.loadedAlertBuyerId = capturedBuyerId;
+      this.products = offers;
+      this.notify();
     } catch (err) {
       console.warn('Erreur synchro silencieuse acheteur:', err);
     } finally {
       if (!isStale()) {
-        setIsLoading(false);
+        this.isLoading = false;
+        this.notify();
       }
     }
-  }, []);
+  };
+
+  public handleAddToCartSafe = async (
+    product: ProductOffer,
+    addProductToCart: (product: any, maxStock?: number) => Promise<any>,
+    callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }
+  ): Promise<boolean> => {
+    // Séquence indépendante pour l'ajout au panier
+    const reqId = ++this.cartActionSeq;
+    const capturedSessionGen = this.sessionGen;
+    const capturedBuyerId = this.buyerId;
+    const capturedDbGen = dbService.getContextGeneration();
+
+    const isStale = () =>
+      this.cartActionSeq !== reqId ||
+      this.sessionGen !== capturedSessionGen ||
+      this.buyerId !== capturedBuyerId ||
+      this.authLoading ||
+      !this.authenticated ||
+      dbService.getContextGeneration() !== capturedDbGen;
+
+    try {
+      await addProductToCart(
+        {
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          unit: product.unit,
+        },
+        product.volumeDisponible
+      );
+      if (isStale()) return false;
+
+      callbacks?.onSuccess?.();
+      return true;
+    } catch (err: any) {
+      if (isStale()) return false;
+      callbacks?.onError?.(err);
+      return false;
+    }
+  };
+}
+
+export function useBuyerHomeCoordinator(
+  buyerId: string | null,
+  authLoading: boolean,
+  authenticated: boolean,
+  cartCount: number,
+  addProductToCart: (product: any, maxStock?: number) => Promise<any>
+) {
+  const coordinatorRef = useRef<BuyerHomeCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new BuyerHomeCoordinator(buyerId, authLoading, authenticated);
+  }
+  const coordinator = coordinatorRef.current;
+
+  const getSnapshot = useCallback(
+    () => coordinator.getState(cartCount),
+    [coordinator, cartCount]
+  );
+  const state = useSyncExternalStore(coordinator.subscribe, getSnapshot);
+
+  useEffect(() => {
+    coordinator.updateSession(buyerId, authLoading, authenticated);
+  }, [coordinator, buyerId, authLoading, authenticated]);
 
   const handleAddToCartSafe = useCallback(
-    async (
-      product: ProductOffer,
-      callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }
-    ): Promise<boolean> => {
-      const reqId = ++reqSeqRef.current;
-      const capturedBuyerId = buyerIdRef.current;
-      const capturedGen = dbService.getContextGeneration();
-
-      const isStale = () =>
-        reqSeqRef.current !== reqId ||
-        buyerIdRef.current !== capturedBuyerId ||
-        authLoadingRef.current ||
-        !authenticatedRef.current ||
-        dbService.getContextGeneration() !== capturedGen;
-
-      try {
-        await addProductToCart(
-          {
-            productId: product.id,
-            name: product.name,
-            price: product.price,
-            unit: product.unit,
-          },
-          product.volumeDisponible
-        );
-        if (isStale()) return false;
-
-        callbacks?.onSuccess?.();
-        return true;
-      } catch (err: any) {
-        if (isStale()) return false;
-        callbacks?.onError?.(err);
-        return false;
-      }
-    },
-    [addProductToCart]
+    (product: ProductOffer, callbacks?: { onSuccess?: () => void; onError?: (err: any) => void }) =>
+      coordinator.handleAddToCartSafe(product, addProductToCart, callbacks),
+    [coordinator, addProductToCart]
   );
 
   return {
-    isCartAligned,
-    effectiveCartCount,
-    alertCount,
-    products,
-    isLoading,
-    silentSync,
+    ...state,
+    silentSync: coordinator.silentSync,
     handleAddToCartSafe,
-    reqSeqRef,
   };
 }

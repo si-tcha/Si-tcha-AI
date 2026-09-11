@@ -11,7 +11,7 @@ import {
   View,
   Image,
 } from 'react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -106,6 +106,17 @@ export default function BuyerOrdersScreen() {
   const [ratingStars, setRatingStars] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
   const [ratedOrders, setRatedOrders] = useState<Set<string>>(new Set());
+
+  // Réinitialisation des formulaires et actions de notation lors d'un switch utilisateur
+  const prevBuyerIdRef = useRef(currentBuyerId);
+  useEffect(() => {
+    if (prevBuyerIdRef.current !== currentBuyerId) {
+      prevBuyerIdRef.current = currentBuyerId;
+      setRatedOrders(new Set());
+      setRatingStars(0);
+      setRatingComment('');
+    }
+  }, [currentBuyerId]);
 
   const handleRefresh = useCallback(() => {
     loadOrders({
