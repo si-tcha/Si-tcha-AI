@@ -1,5 +1,10 @@
+/**
+ * @vitest-environment happy-dom
+ */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import React from 'react';
+import React, { act, useState, useEffect, useRef } from 'react';
+// @ts-ignore
+import { createRoot } from 'react-dom/client';
 // @ts-ignore
 import { renderToString } from 'react-dom/server';
 import { dbService as webDbService } from '../src/services/database.web';
@@ -9,6 +14,8 @@ import {
   ApiError,
   saveSession,
   clearSession,
+  clearSessionIfTokenMatches,
+  allocateSessionMutationTicket,
   readStoredSession,
   request,
   _resetSessionMutationSeqForTesting,
@@ -1554,7 +1561,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       // Test Orders
       vi.spyOn(webDbService, 'getOrders').mockResolvedValueOnce([]);
       const ordersCoord = new BuyerOrdersCoordinator('1001', false, true);
-      await sleep(20);
+      await ordersCoord.loadOrders();
       expect(ordersCoord.getState().loadedBuyerId).toBe('1001');
 
       vi.spyOn(webDbService, 'getOrders').mockResolvedValueOnce([
@@ -1576,7 +1583,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       });
       vi.spyOn(webDbService, 'getMatchingAlertCount').mockResolvedValueOnce(0);
       const alertsCoord = new BuyerAlertsCoordinator('1001', false, true);
-      await sleep(20);
+      await alertsCoord.loadAlerts();
 
       vi.spyOn(webDbService, 'getAlertPreferences').mockResolvedValueOnce({
         productNames: ['Tomates cerises'],
@@ -1843,6 +1850,442 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       await syncPromise;
 
       expect(nativeDbService.getActiveBuyerId()).toBe('2002');
+    });
+  });
+
+  describe('17. Montage réel de composants React 19 (createRoot, act, StrictMode, masquage instantané, session)', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let container: HTMLDivElement | null = null;
+    let root: any = null;
+
+    beforeEach(() => {
+      container = document.createElement('div');
+      document.body.appendChild(container);
+      root = createRoot(container);
+    });
+
+    afterEach(async () => {
+      if (root) {
+        await act(async () => {
+          root.unmount();
+        });
+        root = null;
+      }
+      if (container && container.parentNode) {
+        container.parentNode.removeChild(container);
+        container = null;
+      }
+    });
+
+    it('1. aucun avertissement useSyncExternalStore ni boucle de re-render lors du montage des 4 coordinateurs', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      let renderCount = 0;
+      function TestAllCoordinators({ buyerId }: { buyerId: string }) {
+        renderCount++;
+        const orders = useBuyerOrdersCoordinator(buyerId, false, true);
+        const alerts = useBuyerAlertsCoordinator(buyerId, false, true);
+        const checkout = useBuyerCheckoutCoordinator(buyerId, false, true, [], 0, async () => {});
+        const home = useBuyerHomeCoordinator(buyerId, false, true, 0, async () => {});
+
+        return React.createElement(
+          'div',
+          null,
+          React.createElement('span', { id: 'orders-count' }, orders.orders.length),
+          React.createElement('span', { id: 'alert-count' }, alerts.matchCount),
+          React.createElement('span', { id: 'cart-count' }, home.effectiveCartCount),
+          React.createElement('span', { id: 'checkout-busy' }, String(checkout.busy))
+        );
+      }
+
+      await act(async () => {
+        root.render(React.createElement(TestAllCoordinators, { buyerId: '1001' }));
+      });
+
+      // Laisser le cycle d'effets et de rendu se stabiliser
+      await act(async () => {
+        await sleep(40);
+      });
+
+      // Aucun avertissement de getSnapshot ou de boucle infinie
+      const warningOrErrors = [...errorSpy.mock.calls, ...warnSpy.mock.calls].map((args) => args.join(' '));
+      const hasSnapshotWarning = warningOrErrors.some(
+        (msg) => msg.includes('getSnapshot') || msg.includes('infinite loop') || msg.includes('cached')
+      );
+      expect(hasSnapshotWarning).toBe(false);
+
+      // Le nombre de rendus est strictement borné (pas de boucle de re-render infinie)
+      expect(renderCount).toBeLessThanOrEqual(6);
+
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it('2. en Strict Mode : un seul chargement logique déclenché (déduplication inFlight)', async () => {
+      const getOrdersSpy = vi.spyOn(webDbService, 'getOrders').mockImplementation(async () => {
+        await sleep(30);
+        return [
+          {
+            id: 'ord-strict-1',
+            type: 'commande_ferme',
+            status: 'confirmee',
+            productId: '101',
+            productName: 'Plantain',
+            quantity: 2,
+            unit: 'régime',
+            price: '3500',
+            gicName: 'GIC',
+            createdAt: new Date().toISOString(),
+          },
+        ];
+      });
+
+      function StrictOrdersComponent() {
+        const { orders, isLoading } = useBuyerOrdersCoordinator('1001', false, true);
+        return React.createElement(
+          'div',
+          { id: 'strict-orders' },
+          isLoading ? 'loading' : orders.length
+        );
+      }
+
+      await act(async () => {
+        root.render(
+          React.createElement(
+            React.StrictMode,
+            null,
+            React.createElement(StrictOrdersComponent, null)
+          )
+        );
+      });
+
+      await act(async () => {
+        await sleep(60);
+      });
+
+      // Même en Strict Mode où les effets se montent deux fois, un seul chargement réel a lieu
+      expect(getOrdersSpy).toHaveBeenCalledTimes(1);
+      expect(container?.querySelector('#strict-orders')?.textContent).toBe('1');
+
+      getOrdersSpy.mockRestore();
+    });
+
+    it('3. masquage au 1er rendu lors du passage A -> B (orders, alerts, counts à 0/vide, modales masquées, aucun clignotement)', async () => {
+      vi.spyOn(webDbService, 'getOrders').mockImplementation(async (force?: boolean) => {
+        const cur = webDbService.getActiveBuyerId();
+        if (cur === '1001') {
+          return [
+            { id: 'ord-A-1', type: 'commande_ferme', status: 'en_attente', productId: '101', productName: 'Plantain A', quantity: 1, unit: 'kg', price: '1000', gicName: 'GIC A', createdAt: new Date().toISOString() },
+            { id: 'ord-A-2', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'Manioc A', quantity: 2, unit: 'sac', price: '2000', gicName: 'GIC A', createdAt: new Date().toISOString() },
+          ];
+        }
+        if (cur === '1002') {
+          await sleep(40);
+          return [
+            { id: 'ord-B-1', type: 'commande_ferme', status: 'confirmee', productId: '103', productName: 'Tomates B', quantity: 5, unit: 'caisse', price: '5000', gicName: 'GIC B', createdAt: new Date().toISOString() },
+          ];
+        }
+        return [];
+      });
+
+      vi.spyOn(webDbService, 'getAlertPreferences').mockImplementation(async () => {
+        const cur = webDbService.getActiveBuyerId();
+        if (cur === '1001') return { productNames: ['P-A'], bassins: ['Ouest'] };
+        return { productNames: ['P-B'], bassins: ['Centre'] };
+      });
+      vi.spyOn(webDbService, 'getMatchingAlertCount').mockImplementation(async () => {
+        const cur = webDbService.getActiveBuyerId();
+        return cur === '1001' ? 4 : 1;
+      });
+
+      interface RenderSnapshot {
+        buyerId: string;
+        ordersCount: number;
+        ordersIds: string[];
+        alertCount: number;
+        cartCount: number;
+        isDataValid: boolean;
+        showModal: boolean;
+      }
+      const renderLog: RenderSnapshot[] = [];
+
+      function BuyerScreen({ buyerId, authLoading, authenticated }: { buyerId: string; authLoading: boolean; authenticated: boolean }) {
+        const ordersCoord = useBuyerOrdersCoordinator(buyerId, authLoading, authenticated);
+        const alertsCoord = useBuyerAlertsCoordinator(buyerId, authLoading, authenticated);
+        const homeCoord = useBuyerHomeCoordinator(
+          buyerId,
+          authLoading,
+          authenticated,
+          cartStore.getCount(),
+          async () => {}
+        );
+
+        // État modal/formulaire local avec garde synchrone immédiate sur buyerId
+        const [activeBuyer, setActiveBuyer] = useState(buyerId);
+        const [showFilterModal, setShowFilterModal] = useState(false);
+        let effectiveShowModal = showFilterModal;
+        if (activeBuyer !== buyerId) {
+          setActiveBuyer(buyerId);
+          setShowFilterModal(false);
+          effectiveShowModal = false;
+        }
+
+        renderLog.push({
+          buyerId,
+          ordersCount: ordersCoord.orders.length,
+          ordersIds: ordersCoord.orders.map((o) => o.id),
+          alertCount: alertsCoord.matchCount,
+          cartCount: homeCoord.effectiveCartCount,
+          isDataValid: ordersCoord.isDataValid,
+          showModal: effectiveShowModal,
+        });
+
+        return React.createElement(
+          'div',
+          null,
+          React.createElement('button', { id: 'open-modal', onClick: () => setShowFilterModal(true) }, 'Open Modal'),
+          React.createElement('div', { id: 'orders-list' }, ordersCoord.orders.map((o) => o.id).join(',')),
+          React.createElement('div', { id: 'modal-state' }, effectiveShowModal ? 'OPEN' : 'CLOSED')
+        );
+      }
+
+      // 1. Monter pour A
+      await act(async () => {
+        webDbService.setActiveBuyerId('1001');
+        await cartStore.setBuyerId('1001');
+        root.render(React.createElement(BuyerScreen, { buyerId: '1001', authLoading: false, authenticated: true }));
+      });
+
+      // Attendre la résolution des données de A
+      await act(async () => {
+        await sleep(50);
+      });
+
+      // Ouvrir la modale pour A
+      await act(async () => {
+        container?.querySelector('button#open-modal')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(container?.querySelector('#modal-state')?.textContent).toBe('OPEN');
+      expect(container?.querySelector('#orders-list')?.textContent).toBe('ord-A-1,ord-A-2');
+
+      // 2. Basculer vers B
+      const preSwitchRenderCount = renderLog.length;
+      await act(async () => {
+        webDbService.setActiveBuyerId('1002');
+        await cartStore.setBuyerId('1002');
+        root.render(React.createElement(BuyerScreen, { buyerId: '1002', authLoading: false, authenticated: true }));
+      });
+
+      // Examiner le tout PREMIER rendu émis pour l'acheteur B
+      const firstRenderOfB = renderLog[preSwitchRenderCount];
+      expect(firstRenderOfB).toBeDefined();
+      expect(firstRenderOfB.buyerId).toBe('1002');
+      // Orders de A strictement masquées
+      expect(firstRenderOfB.ordersCount).toBe(0);
+      expect(firstRenderOfB.ordersIds).toEqual([]);
+      // Alertes masquées
+      expect(firstRenderOfB.alertCount).toBe(0);
+      // Panier masqué
+      expect(firstRenderOfB.cartCount).toBe(0);
+      // Indicateur de validité
+      expect(firstRenderOfB.isDataValid).toBe(false);
+      // Modale fermée/réinitialisée
+      expect(firstRenderOfB.showModal).toBe(false);
+
+      // Vérifier qu'AUCUN rendu de B ne contient les commandes de A (zéro clignotement)
+      const bRenders = renderLog.filter((r) => r.buyerId === '1002');
+      for (const r of bRenders) {
+        expect(r.ordersIds.includes('ord-A-1')).toBe(false);
+        expect(r.ordersIds.includes('ord-A-2')).toBe(false);
+      }
+
+      // 3. Attendre que le chargement de B se termine
+      await act(async () => {
+        await sleep(60);
+      });
+
+      // B s'affiche désormais correctement
+      expect(container?.querySelector('#orders-list')?.textContent).toBe('ord-B-1');
+    });
+
+    it('4. authLoading passe à true : les données sont masquées immédiatement', async () => {
+      vi.spyOn(webDbService, 'getOrders').mockResolvedValue([
+        { id: 'ord-100', type: 'commande_ferme', status: 'confirmee', productId: '101', productName: 'Plantain', quantity: 1, unit: 'kg', price: '1000', gicName: 'GIC', createdAt: new Date().toISOString() },
+      ]);
+
+      function OrdersWithAuthLoading({ authLoading }: { authLoading: boolean }) {
+        const { orders, isDataValid } = useBuyerOrdersCoordinator('1001', authLoading, true);
+        return React.createElement(
+          'div',
+          null,
+          React.createElement('div', { id: 'data-valid' }, String(isDataValid)),
+          React.createElement('div', { id: 'orders-count' }, orders.length)
+        );
+      }
+
+      await act(async () => {
+        root.render(React.createElement(OrdersWithAuthLoading, { authLoading: false }));
+      });
+      await act(async () => {
+        await sleep(30);
+      });
+
+      expect(container?.querySelector('#data-valid')?.textContent).toBe('true');
+      expect(container?.querySelector('#orders-count')?.textContent).toBe('1');
+
+      // Bascule authLoading -> true
+      await act(async () => {
+        root.render(React.createElement(OrdersWithAuthLoading, { authLoading: true }));
+      });
+
+      // Masquage synchrone immédiat
+      expect(container?.querySelector('#data-valid')?.textContent).toBe('false');
+      expect(container?.querySelector('#orders-count')?.textContent).toBe('0');
+    });
+
+    it('5. l’écran reste monté pendant le changement de session : B se recharge automatiquement', async () => {
+      vi.spyOn(webDbService, 'getOrders').mockImplementation(async () => {
+        const cur = webDbService.getActiveBuyerId();
+        if (cur === '1001') {
+          return [{ id: 'ord-A-stay', type: 'commande_ferme', status: 'confirmee', productId: '101', productName: 'P-A', quantity: 1, unit: 'kg', price: '1000', gicName: 'GIC', createdAt: new Date().toISOString() }];
+        }
+        await sleep(30);
+        return [{ id: 'ord-B-stay', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'P-B', quantity: 2, unit: 'sac', price: '2000', gicName: 'GIC', createdAt: new Date().toISOString() }];
+      });
+
+      function OrdersStayScreen({ buyerId }: { buyerId: string }) {
+        const { orders, isLoading } = useBuyerOrdersCoordinator(buyerId, false, true);
+        return React.createElement(
+          'div',
+          { id: 'orders-content' },
+          isLoading ? 'chargement...' : orders.map((o) => o.id).join(',')
+        );
+      }
+
+      await act(async () => {
+        webDbService.setActiveBuyerId('1001');
+        root.render(React.createElement(OrdersStayScreen, { buyerId: '1001' }));
+      });
+      await act(async () => {
+        await sleep(40);
+      });
+      expect(container?.querySelector('#orders-content')?.textContent).toBe('ord-A-stay');
+
+      // Changement vers B sur l'écran restant monté
+      await act(async () => {
+        webDbService.setActiveBuyerId('1002');
+        root.render(React.createElement(OrdersStayScreen, { buyerId: '1002' }));
+      });
+
+      // Immédiatement en chargement (ou masqué)
+      expect(container?.querySelector('#orders-content')?.textContent).toBe('chargement...');
+
+      // Attendre la résolution de B
+      await act(async () => {
+        await sleep(50);
+      });
+
+      // Automatiquement mis à jour avec les commandes de B
+      expect(container?.querySelector('#orders-content')?.textContent).toBe('ord-B-stay');
+    });
+
+    it('6. démontage premier coordinateur / montage nouveau coordinateur : persistance et synchronisation sur B', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
+
+      vi.spyOn(apiClient, 'getMe').mockResolvedValue({ user: userB });
+
+      // Montage du 1er coordinateur et exécution de mutations
+      const ticket1 = allocateSessionMutationTicket();
+      await saveSession('tok-A', { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const }, ticket1);
+
+      const ticket2 = allocateSessionMutationTicket();
+      await saveSession('tok-B', userB, ticket2);
+
+      // Montage du second coordinateur après démontage
+      const coord2 = new AuthSessionCoordinator();
+      await coord2.restoreSession();
+
+      const state2 = coord2.getState();
+      expect(state2.status).toBe('authenticated');
+      expect(state2.token).toBe('tok-B');
+      expect(state2.user?.buyerId).toBe('1002');
+
+      const stored = await readStoredSession();
+      expect(stored?.token).toBe('tok-B');
+      expect(stored?.user.buyerId).toBe('1002');
+    });
+
+    it('7. token match sur 401 : un 401 de A arrivant après que B a été sauvegardé ne vide pas B', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
+
+      const ticketB = allocateSessionMutationTicket();
+      await saveSession('tok-B', userB, ticketB);
+
+      const authCoordinator = new AuthSessionCoordinator();
+      await authCoordinator.commitSession(
+        ticketB,
+        { status: 'authenticated', user: userB, token: 'tok-B', error: null },
+        userB,
+        { saveToken: 'tok-B' }
+      );
+      expect(authCoordinator.getState().token).toBe('tok-B');
+
+      // Un 401 arrive avec le token A (ancien token)
+      const evicted = await clearSessionIfTokenMatches('tok-A');
+      expect(evicted).toBe(false);
+
+      // Le coordinateur gère aussi ce cas
+      await authCoordinator.handleUnauthorized('tok-A');
+
+      // B reste parfaitement intact dans le coordinateur et dans le stockage
+      expect(authCoordinator.getState().status).toBe('authenticated');
+      expect(authCoordinator.getState().token).toBe('tok-B');
+
+      const stored = await readStoredSession();
+      expect(stored?.token).toBe('tok-B');
+      expect(stored?.user.buyerId).toBe('1002');
+    });
+
+    it('8. saveSession ignoré / échoué empêche le commit de session', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
+
+      const ticketValid = allocateSessionMutationTicket(); // ticket 1
+      const ticketFuture = allocateSessionMutationTicket(); // ticket 2
+
+      // Enregistrer une session avec ticket 2
+      await saveSession('tok-B', userB, ticketFuture);
+
+      const authCoordinator = new AuthSessionCoordinator();
+      await authCoordinator.commitSession(
+        ticketFuture,
+        { status: 'authenticated', user: userB, token: 'tok-B', error: null },
+        userB,
+        { saveToken: 'tok-B' }
+      );
+      expect(authCoordinator.getState().token).toBe('tok-B');
+
+      // Tenter un commit avec le ticket 1 obsolète
+      const result = await authCoordinator.commitSession(
+        ticketValid,
+        { status: 'authenticated', user: userA, token: 'tok-A', error: null },
+        userA,
+        { saveToken: 'tok-A' }
+      );
+
+      // Le commit est refusé
+      expect(result).toBe(false);
+
+      // Le coordinateur et le stockage contiennent toujours B
+      expect(authCoordinator.getState().token).toBe('tok-B');
+      expect(authCoordinator.getState().user?.name).toBe('Acheteur B');
+
+      const stored = await readStoredSession();
+      expect(stored?.token).toBe('tok-B');
     });
   });
 });
