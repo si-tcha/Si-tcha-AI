@@ -2021,15 +2021,10 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
           async () => {}
         );
 
-        // État modal/formulaire local avec garde synchrone immédiate sur buyerId
-        const [activeBuyer, setActiveBuyer] = useState(buyerId);
+        // État modal/formulaire local avec garde de rendu liée à la clé de contexte (aucun setState dans le corps du rendu)
         const [showFilterModal, setShowFilterModal] = useState(false);
-        let effectiveShowModal = showFilterModal;
-        if (activeBuyer !== buyerId) {
-          setActiveBuyer(buyerId);
-          setShowFilterModal(false);
-          effectiveShowModal = false;
-        }
+        const [modalBuyerId, setModalBuyerId] = useState<string | null>(null);
+        const effectiveShowModal = Boolean(showFilterModal && modalBuyerId === buyerId && !authLoading);
 
         renderLog.push({
           buyerId,
@@ -2044,7 +2039,17 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
         return React.createElement(
           'div',
           null,
-          React.createElement('button', { id: 'open-modal', onClick: () => setShowFilterModal(true) }, 'Open Modal'),
+          React.createElement(
+            'button',
+            {
+              id: 'open-modal',
+              onClick: () => {
+                setModalBuyerId(buyerId);
+                setShowFilterModal(true);
+              },
+            },
+            'Open Modal'
+          ),
           React.createElement('div', { id: 'orders-list' }, ordersCoord.orders.map((o) => o.id).join(',')),
           React.createElement('div', { id: 'modal-state' }, effectiveShowModal ? 'OPEN' : 'CLOSED')
         );
@@ -2286,6 +2291,281 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
 
       const stored = await readStoredSession();
       expect(stored?.token).toBe('tok-B');
+    });
+  });
+
+  describe('18. Protection absolue contre les 3 courses résiduelles (401 concurrent, échec persistance, et transition authLoading)', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('1. A connecté, requête A en cours, signIn(B) démarré -> 401 pour A est ignoré, B réussit et reste persisté', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
+
+      const authCoordinator = new AuthSessionCoordinator();
+      const initialTicket = allocateSessionMutationTicket(); // ticket 1
+      await authCoordinator.commitSession(
+        initialTicket,
+        { status: 'authenticated', user: userA, token: 'tok-A', error: null },
+        userA,
+        { saveToken: 'tok-A' }
+      );
+
+      expect(authCoordinator.getState().token).toBe('tok-A');
+      expect((await readStoredSession())?.token).toBe('tok-A');
+
+      // Une requête de A est lancée : elle capture le token 'tok-A' et le ticket courant (1)
+      const reqTicketOfA = authCoordinator.getSessionOpSeq(); // 1
+      expect(reqTicketOfA).toBe(1);
+
+      // Avant que la réponse 401 de A n'arrive, l'utilisateur B lance une connexion signIn(B)
+      // signIn(B) alloue immédiatement un nouveau ticket strictement croissant
+      const ticketB = allocateSessionMutationTicket(); // ticket 2
+      expect(ticketB).toBeGreaterThan(reqTicketOfA);
+
+      // Alors que B est en cours d'authentification réseau, la requête A reçoit un 401
+      // L'éviction conditionnelle vérifie atomiquement si un ticket plus récent a débuté
+      const evictionResult = await clearSessionIfTokenMatches('tok-A', reqTicketOfA);
+      expect(evictionResult).toBe(false);
+
+      // Le handler unauthorized est appelé avec le ticket de A
+      const unauthorizedHandled = await authCoordinator.handleUnauthorized('tok-A', reqTicketOfA);
+      expect(unauthorizedHandled).toBe(false);
+
+      // Le stockage et la mémoire n'ont PAS été vidés prématurément par le 401 de A
+      expect(authCoordinator.getState().token).toBe('tok-A');
+
+      // Maintenant, la connexion de B réussit et effectue son commit avec ticketB
+      const commitBResult = await authCoordinator.commitSession(
+        ticketB,
+        { status: 'authenticated', user: userB, token: 'tok-B', error: null },
+        userB,
+        { saveToken: 'tok-B' }
+      );
+
+      expect(commitBResult).toBe(true);
+      expect(authCoordinator.getState().token).toBe('tok-B');
+      expect(authCoordinator.getState().user?.buyerId).toBe('1002');
+
+      const storedFinal = await readStoredSession();
+      expect(storedFinal?.token).toBe('tok-B');
+      expect(storedFinal?.user.buyerId).toBe('1002');
+    });
+
+    it('2. 401 sur route d’authentification publique ne déconnecte JAMAIS une session existante', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      await saveSession('tok-A', userA);
+      expect((await readStoredSession())?.token).toBe('tok-A');
+
+      const publicRoutes = ['/auth/login', '/auth/verify-otp', '/auth/resend-otp', '/auth/register'];
+
+      for (const route of publicRoutes) {
+        // Mock fetch pour retourner 401 sur cette route publique
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ message: 'Identifiants invalides' }),
+        } as any);
+
+        try {
+          await expect(request(route, 'POST', { phone: '+237699999999' })).rejects.toThrow(ApiError);
+        } finally {
+          fetchSpy.mockRestore();
+        }
+
+        // La session existante ne doit PAS avoir été invalidée
+        const sessionAfter = await readStoredSession();
+        expect(sessionAfter?.token).toBe('tok-A');
+      }
+    });
+
+    it('3. Échec de suppression critique du stockage (localStorage throw) -> propagation, pas de faux succès, et aucune divergence mémoire', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      await saveSession('tok-A', userA);
+      expect((await readStoredSession())?.token).toBe('tok-A');
+
+      // Simuler un crash critique du stockage sur SESSION_KEY
+      const origRemove = localStorage.removeItem.bind(localStorage);
+      const removeSpy = vi.spyOn(localStorage, 'removeItem').mockImplementation((key: string) => {
+        if (key === 'sitcha_session_v1') {
+          throw new Error('Stockage disque saturé (QuotaExceededError)');
+        }
+        return origRemove(key);
+      });
+
+      try {
+        // clearSession doit échouer (retourner false) sans prétendre avoir réussi
+        const clearSuccess = await clearSession();
+        expect(clearSuccess).toBe(false);
+
+        // La session en mémoire n'a PAS divergé du stockage (elle n'a pas été effacée à tort)
+        const sessionAfterFail = await readStoredSession();
+        expect(sessionAfterFail?.token).toBe('tok-A');
+
+        // clearSessionIfTokenMatches doit également échouer proprement
+        const matchClearSuccess = await clearSessionIfTokenMatches('tok-A');
+        expect(matchClearSuccess).toBe(false);
+        expect((await readStoredSession())?.token).toBe('tok-A');
+
+        // Dans AuthSessionCoordinator, le commit de déconnexion doit échouer si le stockage refuse l'effacement
+        const authCoordinator = new AuthSessionCoordinator();
+        const t = allocateSessionMutationTicket();
+        const commitSignOutResult = await authCoordinator.commitSession(
+          t,
+          { status: 'unauthenticated', user: null, token: null, error: null },
+          null,
+          { saveToken: null }
+        );
+        expect(commitSignOutResult).toBe(false);
+      } finally {
+        removeSpy.mockRestore();
+      }
+    });
+
+    it('4. Requête lente avec transition authLoading false -> true -> false pour le même buyerId -> ancienne réponse ignorée et nouveau chargement obligatoire', async () => {
+      let resolveQuery1!: (value: any) => void;
+      const query1Promise = new Promise((resolve) => {
+        resolveQuery1 = resolve;
+      });
+
+      let resolveQuery2!: (value: any) => void;
+      const query2Promise = new Promise((resolve) => {
+        resolveQuery2 = resolve;
+      });
+
+      let callCount = 0;
+      const getOrdersSpy = vi.spyOn(webDbService, 'getOrders').mockImplementation(async (force?: boolean) => {
+        callCount++;
+        if (callCount === 1) {
+          return query1Promise as any;
+        }
+        return query2Promise as any;
+      });
+
+      webDbService.setActiveBuyerId('1001');
+
+      // 1. Initialiser le coordinateur avec buyerId 1001 et authLoading = false
+      const coord = new BuyerOrdersCoordinator('1001', false, true);
+      coord.updateSession('1001', false, true);
+      // Laisser l'initialisation DB asynchrone démarrer et lancer la 1ère requête
+      await sleep(10);
+
+      // La première requête est en vol
+      expect(coord.getSnapshot().isLoading).toBe(true);
+
+      // 2. Transition auth : authLoading passe à true (ex: rafraîchissement d'authentification)
+      coord.updateSession('1001', true, true);
+      expect(coord.getSnapshot().isLoading).toBe(false);
+      expect(coord.getState().isDataValid).toBe(false);
+
+      // 3. La réponse de la 1ère requête arrive ALORS que authLoading était passé à true
+      resolveQuery1([
+        { id: 'old-ord-1', type: 'commande_ferme', status: 'en_attente', productId: '101', productName: 'Vieux Produit', quantity: 1, unit: 'kg', price: '1000', gicName: 'GIC 1', createdAt: new Date().toISOString() },
+      ]);
+      await sleep(20);
+
+      // L'ancienne réponse a été ignorée (sessionGen a changé lors de la transition)
+      expect(coord.getSnapshot().orders.length).toBe(0);
+      expect(coord.getSnapshot().loadedBuyerId).toBe(null);
+
+      // 4. authLoading repasse à false (rafraîchissement terminé pour le même buyerId '1001')
+      coord.updateSession('1001', false, true);
+
+      // Pendant le rechargement, l'état reste masqué (isDataValid = false, orders vide)
+      expect(coord.getSnapshot().isLoading).toBe(true);
+      expect(coord.getState().isDataValid).toBe(false);
+      expect(coord.getState().orders.length).toBe(0);
+
+      // 5. La 2ème requête résout avec les nouvelles données
+      resolveQuery2([
+        { id: 'new-ord-1', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'Nouveau Produit', quantity: 3, unit: 'sac', price: '3000', gicName: 'GIC 2', createdAt: new Date().toISOString() },
+      ]);
+      await sleep(20);
+
+      // Les nouvelles données sont maintenant validées et affichées
+      expect(coord.getSnapshot().isLoading).toBe(false);
+      expect(coord.getState().isDataValid).toBe(true);
+      expect(coord.getState().orders.length).toBe(1);
+      expect(coord.getState().orders[0].id).toBe('new-ord-1');
+
+      getOrdersSpy.mockRestore();
+    });
+
+    it('5. Test React monté : modale avec guard context-key ne déclenche aucun setState pendant le rendu', async () => {
+      const renderPhases: { buyerId: string; showModal: boolean }[] = [];
+
+      function TestModalScreen({ buyerId, authLoading }: { buyerId: string; authLoading: boolean }) {
+        // Modale avec garde de rendu liée au contexte (aucun setState dans le corps du rendu)
+        const [showModal, setShowModal] = useState(false);
+        const [modalBuyerId, setModalBuyerId] = useState<string | null>(null);
+
+        const effectiveShowModal = Boolean(showModal && modalBuyerId === buyerId && !authLoading);
+
+        renderPhases.push({ buyerId, showModal: effectiveShowModal });
+
+        return React.createElement(
+          'div',
+          null,
+          React.createElement(
+            'button',
+            {
+              id: 'btn-open',
+              onClick: () => {
+                setModalBuyerId(buyerId);
+                setShowModal(true);
+              },
+            },
+            'Open'
+          ),
+          React.createElement('div', { id: 'status' }, effectiveShowModal ? 'OPEN' : 'CLOSED')
+        );
+      }
+
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+
+      try {
+        // 1. Monter pour A
+        await act(async () => {
+          root.render(React.createElement(TestModalScreen, { buyerId: '1001', authLoading: false }));
+        });
+        expect(container.querySelector('#status')?.textContent).toBe('CLOSED');
+
+        // 2. Ouvrir la modale pour A
+        await act(async () => {
+          container.querySelector('button#btn-open')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        expect(container.querySelector('#status')?.textContent).toBe('OPEN');
+
+        // 3. Bascule directe de A vers B
+        const prevRenderCount = renderPhases.length;
+        await act(async () => {
+          root.render(React.createElement(TestModalScreen, { buyerId: '1002', authLoading: false }));
+        });
+
+        // Au TOUT PREMIER rendu de B, la modale est immédiatement masquée
+        const firstRenderB = renderPhases[prevRenderCount];
+        expect(firstRenderB.buyerId).toBe('1002');
+        expect(firstRenderB.showModal).toBe(false);
+        expect(container.querySelector('#status')?.textContent).toBe('CLOSED');
+      } finally {
+        await act(async () => {
+          root.unmount();
+        });
+        container.remove();
+      }
     });
   });
 });
