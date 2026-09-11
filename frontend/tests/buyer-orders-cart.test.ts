@@ -2243,7 +2243,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       expect(evicted).toBe(false);
 
       // Le coordinateur gère aussi ce cas
-      await authCoordinator.handleUnauthorized('tok-A');
+      await authCoordinator.handleUnauthorized('tok-A', 0);
 
       // B reste parfaitement intact dans le coordinateur et dans le stockage
       expect(authCoordinator.getState().status).toBe('authenticated');

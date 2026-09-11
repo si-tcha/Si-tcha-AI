@@ -184,7 +184,7 @@ export function _resetMemorySessionForTesting() {
   memorySession = null;
 }
 
-type UnauthorizedHandler = (evictedToken?: string, requestTicket?: number) => void;
+type UnauthorizedHandler = (evictedToken: string, requestTicket: number) => Promise<boolean>;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
@@ -577,8 +577,10 @@ export const clearToken = clearSession;
 export const clearRole = clearSession;
 
 export async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
-  const token = await readToken();
-  const requestTicket = getSessionMutationSeq();
+  // Capture atomique du token et de la génération de session AVANT le fetch
+  const session = memorySession ?? (await readStoredSession());
+  const token = session?.token ?? null;
+  const requestTicket = sessionMutationSeq;
   const baseUrl = getApiBaseUrl();
   let response: Response;
 
@@ -606,18 +608,22 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
       (Array.isArray(payload?.errors) ? payload.errors.map((e: any) => e.message || e).join(', ') : 'Erreur API SI-TCHA.');
     const requireOtp = Boolean(payload?.requireOtp);
 
-    // Ne jamais déclencher d’invalidation globale sur 401 pour les routes d’authentification publique :
+    // Ne jamais déclencher d'invalidation globale sur 401 pour les routes d'authentification publique :
     // /auth/login, /auth/verify-otp, /auth/resend-otp, /auth/register
     // Un échec de tentative de connexion ne doit jamais déconnecter une session existante.
     const isPublicAuthEndpoint = /^\/?auth\/(login|verify-otp|resend-otp|register)(\/|\?|$)/.test(path);
 
     // Sur 401 sur route protégée :
-    // Invalider la session UNIQUEMENT si le token utilisé par cette requête est toujours le token de la session courante
-    // ET qu'aucune mutation de session plus récente n'a commencé.
+    // Déléguer entièrement au handler AuthContext lorsqu'il est enregistré (un seul propriétaire, un seul ticket).
+    // Sinon, fallback direct vers clearSessionIfTokenMatches.
     if (response.status === 401 && token && !isPublicAuthEndpoint) {
-      const cleared = await clearSessionIfTokenMatches(token, requestTicket);
-      if (cleared && unauthorizedHandler) {
-        unauthorizedHandler(token, requestTicket);
+      if (unauthorizedHandler) {
+        // Le handler réalise l'éviction atomique ET la transition React en un seul ticket.
+        // Il est awaité pour garantir que la déconnexion est terminée avant de throw.
+        await unauthorizedHandler(token, requestTicket);
+      } else {
+        // Fallback : pas de handler enregistré, éviction directe sans double ticket
+        await clearSessionIfTokenMatches(token, requestTicket);
       }
     }
     // Sur 403 : ne PAS invalider le token ou déconnecter l'utilisateur

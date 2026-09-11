@@ -270,8 +270,10 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       await saveSession('expired-token', mockUser);
 
       let unauthorizedCallbackCalled = false;
-      setUnauthorizedHandler(() => {
+      setUnauthorizedHandler(async (token, ticket) => {
         unauthorizedCallbackCalled = true;
+        await clearSession();
+        return true;
       });
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
@@ -294,8 +296,9 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       await saveSession('valid-token-forbidden-action', mockUser);
 
       let unauthorizedCallbackCalled = false;
-      setUnauthorizedHandler(() => {
+      setUnauthorizedHandler(async () => {
         unauthorizedCallbackCalled = true;
+        return true;
       });
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({

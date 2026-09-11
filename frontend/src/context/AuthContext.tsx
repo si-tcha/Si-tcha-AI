@@ -232,18 +232,20 @@ export class AuthSessionCoordinator {
       await apiClient.logout();
     } catch {
       // Ignorer l'échec backend pour garantir le nettoyage local
-    } finally {
-      await this.commitSession(
-        ticket,
-        {
-          status: 'unauthenticated',
-          user: null,
-          token: null,
-          error: null,
-        },
-        null,
-        { saveToken: null }
-      );
+    }
+    const committed = await this.commitSession(
+      ticket,
+      {
+        status: 'unauthenticated',
+        user: null,
+        token: null,
+        error: null,
+      },
+      null,
+      { saveToken: null }
+    );
+    if (!committed) {
+      throw new Error('Échec critique de la déconnexion : le stockage persistant n\'a pas pu être effacé.');
     }
   };
 
@@ -340,16 +342,19 @@ export class AuthSessionCoordinator {
     }
   };
 
-  public handleUnauthorized = async (evictedToken?: string, requestTicket?: number): Promise<boolean> => {
-    // Si une mutation de session plus récente a déjà débuté, ne jamais superséder
+  public handleUnauthorized = async (evictedToken: string, requestTicket: number): Promise<boolean> => {
+    // Si une mutation de session plus récente a déjà débuté (signIn B en cours),
+    // ne jamais superséder : le 401 de A est obsolète.
     const currentSeq = getSessionMutationSeq();
-    if (requestTicket !== undefined && (requestTicket < this.activeTicket || requestTicket < currentSeq)) {
+    if (requestTicket < this.activeTicket || requestTicket < currentSeq) {
       return false;
     }
     // Si le 401 concerne un ancien token différent du token actuellement en session, ignorer
-    if (evictedToken && this.session.token && this.session.token !== evictedToken) {
+    if (this.session.token && this.session.token !== evictedToken) {
       return false;
     }
+    // Allouer un unique ticket pour cette éviction : il n'y a pas de double clearSession
+    // car request() délègue entièrement au handler quand il est enregistré.
     const ticket = allocateSessionMutationTicket();
     this.activeTicket = ticket;
     return await this.commitSession(
@@ -383,7 +388,7 @@ export function useAuthProviderState(): AuthContextType {
 
   useEffect(() => {
     setUnauthorizedHandler((token, ticket) => {
-      coordinator.handleUnauthorized(token, ticket);
+      return coordinator.handleUnauthorized(token, ticket);
     });
 
     coordinator.restoreSession();
