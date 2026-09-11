@@ -592,22 +592,15 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
       expect(sql).toMatch(/ALTER TABLE "ParcelEntry"\s+ADD COLUMN IF NOT EXISTS "actualHarvestDate"\s+VARCHAR\(50\);/i);
     });
 
-    it('simule la transition de schéma sur PostgreSQL réel si disponible', async () => {
+    const postgresIt = process.env.DATABASE_TEST_URL ? it : it.skip;
+    postgresIt('simule la transition de schéma sur PostgreSQL réel', async () => {
       const { Client } = require('pg');
       const client = new Client({
-        connectionString: process.env.DATABASE_TEST_URL || 'postgresql://postgres:postgres@localhost:5433/sitcha_test',
+        connectionString: process.env.DATABASE_TEST_URL,
       });
 
-      let isConnected = false;
+      await client.connect();
       try {
-        await client.connect();
-        isConnected = true;
-      } catch {
-        // Si le conteneur de test n est pas démarré, le test passe en se basant sur le test de fichier SQL
-      }
-
-      if (isConnected) {
-        try {
           // 1. Créer une table de test simulant l état après migration Bloc 3 (SANS actualHarvestDate)
           await client.query('DROP TABLE IF EXISTS "ParcelEntry_CompatTest";');
           await client.query(`
@@ -655,9 +648,8 @@ describe('Growth Parcels & Yield Drop Tests (Bloc 4)', () => {
 
           // Nettoyage
           await client.query('DROP TABLE IF EXISTS "ParcelEntry_CompatTest";');
-        } finally {
-          await client.end();
-        }
+      } finally {
+        await client.end();
       }
     });
   });
