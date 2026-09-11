@@ -56,14 +56,14 @@ model ProduitAgricole {
 }
 
 model DonneesMeteo {
-  id                 BigInt            @id @default(autoincrement())
-  temperature        Decimal           @db.Decimal(5, 2)
-  humidite           Decimal?          @db.Decimal(5, 2)
-  pluviometrie       Decimal           @db.Decimal(5, 2)
-  probabilitePluie   Decimal?          @db.Decimal(5, 2)
-  vitesseVent        Decimal?          @db.Decimal(5, 2)
-  description        String?
-  timestampMesure    DateTime          @db.Timestamptz
+  id               BigInt   @id @default(autoincrement())
+  temperature      Decimal  @db.Decimal(5, 2)
+  humidite         Decimal? @db.Decimal(5, 2)
+  pluviometrie     Decimal  @db.Decimal(5, 2)
+  probabilitePluie Decimal? @db.Decimal(5, 2)
+  vitesseVent      Decimal? @db.Decimal(5, 2)
+  description      String?
+  timestampMesure  DateTime @db.Timestamptz
 
   gicId              BigInt?
   gic                GIC?              @relation(fields: [gicId], references: [id])
@@ -78,19 +78,19 @@ model DonneesSol {
   humidite           Decimal  @db.Decimal(5, 2)
   timestampMesure    DateTime @db.Timestamptz
 
-  gicId              BigInt
-  gic                GIC      @relation(fields: [gicId], references: [id])
+  gicId BigInt
+  gic   GIC    @relation(fields: [gicId], references: [id])
 }
 
 model AlerteMeteo {
-  id                 BigInt   @id @default(autoincrement())
-  messageCourt       String
-  detailsTechniques  Json
-  type               String
-  timestampCreation  DateTime @default(now()) @db.Timestamptz
+  id                BigInt   @id @default(autoincrement())
+  messageCourt      String
+  detailsTechniques Json
+  type              String
+  timestampCreation DateTime @default(now()) @db.Timestamptz
 
-  gicId              BigInt
-  gic                GIC      @relation(fields: [gicId], references: [id])
+  gicId BigInt
+  gic   GIC    @relation(fields: [gicId], references: [id])
 }
 
 model DonneeMarche {
@@ -192,16 +192,21 @@ model RecolteOffre {
 }
 
 model TransactionAcheteur {
-  id             BigInt       @id @default(autoincrement())
-  type           String       @db.VarChar(50)
-  quantite       Decimal      @db.Decimal(15, 2)
-  prixConvenu    Decimal      @db.Decimal(15, 2)
-  statut         String       @db.VarChar(50)
-  recolteOffreId BigInt
-  acheteurId     BigInt
-  recolteOffre   RecolteOffre @relation(fields: [recolteOffreId], references: [id])
-  acheteur       Acheteur     @relation(fields: [acheteurId], references: [id])
-  evaluations    Evaluation[]
+  id              BigInt       @id @default(autoincrement())
+  type            String       @db.VarChar(50)
+  quantite        Decimal      @db.Decimal(15, 2)
+  prixConvenu     Decimal      @db.Decimal(15, 2)
+  statut          String       @db.VarChar(50)
+  recolteOffreId  BigInt
+  acheteurId      BigInt
+  clientRequestId String?      @db.VarChar(100)
+  createdAt       DateTime     @default(now()) @db.Timestamptz
+  recolteOffre    RecolteOffre @relation(fields: [recolteOffreId], references: [id])
+  acheteur        Acheteur     @relation(fields: [acheteurId], references: [id])
+  evaluations     Evaluation[]
+
+  @@unique([acheteurId, clientRequestId, recolteOffreId])
+  @@index([acheteurId, clientRequestId])
 }
 
 model BesoinGIC {

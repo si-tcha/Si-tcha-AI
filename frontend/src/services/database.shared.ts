@@ -27,6 +27,7 @@ export interface CartItemRecord {
   price: string;
   unit: string;
   quantity: number;
+  buyerId?: string;
   synced?: boolean;
 }
 
@@ -137,6 +138,9 @@ export interface OrderRecord {
   price: string;
   gicName: string;
   createdAt: string;
+  buyerId?: string;
+  gicId?: string;
+  synced?: boolean;
 }
 
 export interface AlertPreferences {
@@ -174,7 +178,75 @@ export const STORAGE_KEYS = {
   PARCELS: 'sitcha_parcels',
   PREFINANCING: 'sitcha_prefinancing',
   TRUST_RATINGS: 'sitcha_trust_ratings',
+  CART_CLIENT_REQUEST_ID: 'sitcha_cart_client_request_id',
 } as const;
+
+/**
+ * Regex stricte pour les identifiants acheteurs (BigInt backend sérialisés en chaînes).
+ * N'accepte qu'un entier décimal strictement positif sans zéros initiaux ni espaces.
+ */
+export const STRICT_BUYER_ID_REGEX = /^[1-9]\d*$/;
+
+export function isValidBuyerId(buyerId: unknown): buyerId is string {
+  return typeof buyerId === 'string' && STRICT_BUYER_ID_REGEX.test(buyerId);
+}
+
+export function validateBuyerId(buyerId: unknown): string {
+  if (typeof buyerId !== 'string' || !STRICT_BUYER_ID_REGEX.test(buyerId)) {
+    throw new Error(
+      `Identifiant acheteur invalide. Un entier strictement positif sous forme de chaîne est requis (reçu: ${String(
+        buyerId
+      )}).`
+    );
+  }
+  return buyerId;
+}
+
+export const BUYER_CART_KEY_PREFIX = 'sitcha_buyer_cart_';
+export const BUYER_ORDERS_KEY_PREFIX = 'sitcha_buyer_orders_';
+export const BUYER_CLIENT_REQ_KEY_PREFIX = 'sitcha_buyer_client_req_';
+export const BUYER_CLIENT_REQUEST_ID_KEY_PREFIX = BUYER_CLIENT_REQ_KEY_PREFIX;
+export const BUYER_ALERT_PREFS_KEY_PREFIX = 'sitcha_buyer_alert_prefs_';
+
+export const VALID_BUYER_KEY_PREFIXES = [
+  BUYER_CART_KEY_PREFIX,
+  BUYER_ORDERS_KEY_PREFIX,
+  BUYER_CLIENT_REQ_KEY_PREFIX,
+  BUYER_ALERT_PREFS_KEY_PREFIX,
+] as const;
+
+export function isValidBuyerStorageKey(key: unknown, prefix?: string): boolean {
+  if (typeof key !== 'string') return false;
+  if (prefix) {
+    if (!key.startsWith(prefix)) return false;
+    const suffix = key.slice(prefix.length);
+    return STRICT_BUYER_ID_REGEX.test(suffix);
+  }
+  const matchedPrefix = VALID_BUYER_KEY_PREFIXES.find((p) => key.startsWith(p));
+  if (!matchedPrefix) return false;
+  const suffix = key.slice(matchedPrefix.length);
+  return STRICT_BUYER_ID_REGEX.test(suffix);
+}
+
+export function getBuyerCartKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_CART_KEY_PREFIX}${validId}`;
+}
+
+export function getBuyerOrdersKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_ORDERS_KEY_PREFIX}${validId}`;
+}
+
+export function getBuyerClientRequestIdKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_CLIENT_REQ_KEY_PREFIX}${validId}`;
+}
+
+export function getBuyerAlertPrefsKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_ALERT_PREFS_KEY_PREFIX}${validId}`;
+}
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [];
 

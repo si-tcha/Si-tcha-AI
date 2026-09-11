@@ -60,9 +60,27 @@ export const createOrderSchema = z.object({
       message: 'Le type de commande est requis',
     }),
     items: z.array(z.object({
-      productId: z.string().min(1, "L'identifiant du produit est requis"),
-      quantity: z.number().positive('La quantité doit être positive'),
-    })).min(1, 'Au moins un article est requis'),
+      productId: z
+        .string()
+        .min(1, "L'identifiant du produit est requis")
+        .regex(/^\d+$/, "L'identifiant de l'offre doit être un entier numérique")
+        .refine((val) => {
+          try {
+            const b = BigInt(val);
+            return b > 0n && b <= 9223372036854775807n;
+          } catch {
+            return false;
+          }
+        }, "L'identifiant d'offre est hors plage BigInt"),
+      quantity: z
+        .number({ message: 'La quantité doit être un nombre' })
+        .positive('La quantité doit être positive')
+        .max(1000000, 'La quantité maximale par article est dépassée (1 000 000 max)'),
+    })).min(1, 'Au moins un article est requis').max(50, 'Le nombre d\'articles par commande est limité à 50'),
+    clientRequestId: z
+      .string({ message: "L'identifiant de requête client (clientRequestId) est requis" })
+      .uuid("L'identifiant de requête client (clientRequestId) doit être un UUID valide")
+      .max(100, "L'identifiant de requête client ne doit pas dépasser 100 caractères"),
   }),
 });
 
