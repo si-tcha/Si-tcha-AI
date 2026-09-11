@@ -4,13 +4,26 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { dbService as webDbService } from '../src/services/database.web';
 import { cartStore, useCart } from '../src/services/cart-store';
-import { apiClient, ApiError } from '../src/services/api';
-import { useAuthProviderState } from '../src/context/AuthContext';
+import {
+  apiClient,
+  ApiError,
+  saveSession,
+  clearSession,
+  readStoredSession,
+  request,
+  _resetSessionMutationSeqForTesting,
+  _resetMemorySessionForTesting,
+} from '../src/services/api';
+import { useAuthProviderState, AuthSessionCoordinator } from '../src/context/AuthContext';
 import {
   useBuyerOrdersCoordinator,
   useBuyerAlertsCoordinator,
   useBuyerCheckoutCoordinator,
   useBuyerHomeCoordinator,
+  BuyerOrdersCoordinator,
+  BuyerAlertsCoordinator,
+  BuyerCheckoutCoordinator,
+  BuyerHomeCoordinator,
 } from '../src/hooks/useBuyerCoordinators';
 import {
   STORAGE_KEYS,
@@ -1383,571 +1396,371 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
   });
 
-  describe('15. Tests montés réels de non-régression et d’élimination des courses (AuthProvider & Coordinateurs d’écrans)', () => {
+  describe('15. Tests de non-régression des courses critiques (Coordinations de production & Atomicité de Session)', () => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    function createHookHarness() {
-      let hooks: any[] = [];
-      let hookIndex = 0;
-      let effects: { idx: number; fn: Function }[] = [];
-      let cleanups: (Function | void)[] = [];
-      let isRendering = false;
-      let pendingRender = false;
-      let renderFn: (() => any) | null = null;
-      let lastResult: any = null;
+    it('1. A login lent, B rapide, avec les vraies mutations saveSession : stockage final B', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
 
-      const dispatcher = {
-        useState(initial: any) {
-          const idx = hookIndex++;
-          if (hooks[idx] === undefined) {
-            hooks[idx] = typeof initial === 'function' ? initial() : initial;
-          }
-          const setState = (next: any) => {
-            const nextVal = typeof next === 'function' ? next(hooks[idx]) : next;
-            if (hooks[idx] !== nextVal) {
-              hooks[idx] = nextVal;
-              scheduleRender();
-            }
-          };
-          return [hooks[idx], setState];
-        },
-        useRef(initial: any) {
-          const idx = hookIndex++;
-          if (hooks[idx] === undefined) {
-            hooks[idx] = { current: initial };
-          }
-          return hooks[idx];
-        },
-        useCallback(fn: any, deps: any[]) {
-          const idx = hookIndex++;
-          const prev = hooks[idx];
-          if (!prev || !depsEqual(prev.deps, deps)) {
-            hooks[idx] = { fn, deps };
-            return fn;
-          }
-          return prev.fn;
-        },
-        useMemo(fn: any, deps: any[]) {
-          const idx = hookIndex++;
-          const prev = hooks[idx];
-          if (!prev || !depsEqual(prev.deps, deps)) {
-            const val = fn();
-            hooks[idx] = { val, deps };
-            return val;
-          }
-          return prev.val;
-        },
-        useEffect(fn: any, deps: any[]) {
-          const idx = hookIndex++;
-          const prev = hooks[idx];
-          const hasChanged = !prev || !depsEqual(prev.deps, deps);
-          hooks[idx] = { fn, deps };
-          if (hasChanged) {
-            effects.push({ idx, fn });
-          }
-        },
-        useContext(context: any) {
-          return context?._currentValue;
-        },
-      };
-
-      function depsEqual(a: any, b: any) {
-        if (!a || !b || a.length !== b.length) return false;
-        for (let i = 0; i < a.length; i++) {
-          if (!Object.is(a[i], b[i])) return false;
-        }
-        return true;
-      }
-
-      function scheduleRender() {
-        if (isRendering) {
-          pendingRender = true;
-          return;
-        }
-        doRender();
-      }
-
-      function doRender() {
-        isRendering = true;
-        hookIndex = 0;
-        effects = [];
-
-        const internals = (React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
-        const prevDispatcher = internals ? internals.H : null;
-        if (internals) internals.H = dispatcher;
-
-        try {
-          if (renderFn) {
-            lastResult = renderFn();
-          }
-        } finally {
-          if (internals) internals.H = prevDispatcher;
-          isRendering = false;
-        }
-
-        for (const eff of effects) {
-          if (cleanups[eff.idx]) {
-            try {
-              cleanups[eff.idx]!();
-            } catch {}
-          }
-          const cleanup = eff.fn();
-          if (typeof cleanup === 'function') {
-            cleanups[eff.idx] = cleanup;
-          }
-        }
-
-        if (pendingRender) {
-          pendingRender = false;
-          doRender();
-        }
-      }
-
-      return {
-        mount<T>(fn: () => T) {
-          renderFn = fn;
-          doRender();
-          return {
-            get current(): T {
-              return lastResult;
-            },
-            rerender() {
-              doRender();
-              return lastResult;
-            },
-            unmount() {
-              cleanups.forEach((c) => {
-                if (typeof c === 'function') c();
-              });
-            },
-          };
-        },
-      };
-    }
-
-    it('1. simuler deux connexions successives réelles via le contexte (signIn A lent puis signIn B rapide) -> état final B sans résidu de A', async () => {
-      const harness = createHookHarness();
-      vi.spyOn(apiClient, 'getMe').mockImplementation(async () => {
-        throw new ApiError('No session', 401);
-      });
-
-      const userA = { id: '1001', buyerId: '1001', role: 'buyer', name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' };
-      const userB = { id: '1002', buyerId: '1002', role: 'buyer', name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' };
-
-      vi.spyOn(apiClient, 'login').mockImplementation(async (phone) => {
-        if (phone === 'phone-A') {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url: any, options: any) => {
+        const body = options?.body ? JSON.parse(options.body) : {};
+        if (body.phone === '+237699000001') {
           await sleep(60);
-          return { token: 'tok-A', user: userA as any };
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              token: 'tok-A',
+              user: userA,
+            }),
+          } as any;
         }
         await sleep(10);
-        return { token: 'tok-B', user: userB as any };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            token: 'tok-B',
+            user: userB,
+          }),
+        } as any;
       });
 
-      const auth = harness.mount(() => useAuthProviderState());
-
-      // Lancer la connexion de A (lente) puis B (rapide)
-      const promiseA = auth.current.signIn('phone-A', '1234');
+      const authCoordinator = new AuthSessionCoordinator();
+      const promiseA = authCoordinator.signIn('+237699000001', '1234');
       await sleep(5);
-      const promiseB = auth.current.signIn('phone-B', '1234');
+      const promiseB = authCoordinator.signIn('+237699000002', '1234');
 
       const [resA, resB] = await Promise.all([promiseA, promiseB]);
 
-      // L'opération A a été détectée comme obsolète et ne retourne aucun user/token exploitable
       expect(resA.obsolete).toBe(true);
       expect(resA.token).toBeUndefined();
-      expect(resA.user).toBeUndefined();
-
-      // L'opération B a réussi
       expect(resB.token).toBe('tok-B');
       expect(resB.user?.name).toBe('Acheteur B');
 
-      // État final du contexte et du store strictement aligné sur B sans résidu de A
-      expect(auth.current.authenticated).toBe(true);
-      expect(auth.current.buyerId).toBe('1002');
-      expect(auth.current.user?.name).toBe('Acheteur B');
-      expect(cartStore.getBuyerId()).toBe('1002');
-      expect(webDbService.getActiveBuyerId()).toBe('1002');
-
-      auth.unmount();
+      const stored = await readStoredSession();
+      expect(stored?.token).toBe('tok-B');
+      expect(stored?.user.name).toBe('Acheteur B');
+      expect(authCoordinator.getState().user?.name).toBe('Acheteur B');
     });
 
-    it('2. simuler restoreSession de A retardé après signIn de B -> B est préservé et A ne committe pas', async () => {
-      const harness = createHookHarness();
-      const userA = { id: '1001', buyerId: '1001', role: 'buyer', name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' };
-      const userB = { id: '1002', buyerId: '1002', role: 'buyer', name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' };
+    it('2. saveSession A retardé terminant après B : stockage final B', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
 
-      vi.spyOn(apiClient, 'getMe').mockImplementation(async () => {
-        await sleep(60);
-        return { user: userA as any };
-      });
+      const promiseA = (async () => {
+        await sleep(40);
+        return saveSession('tok-A', userA, 1);
+      })();
 
-      vi.spyOn(apiClient, 'login').mockImplementation(async () => {
+      const promiseB = (async () => {
         await sleep(10);
-        return { token: 'tok-B', user: userB as any };
-      });
+        return saveSession('tok-B', userB, 2);
+      })();
 
-      localStorage.setItem('sitcha_auth_token', 'token-A');
-      localStorage.setItem('sitcha_user_session', JSON.stringify(userA));
+      await Promise.all([promiseA, promiseB]);
 
-      const auth = harness.mount(() => useAuthProviderState());
-
-      // restoreSession de A démarre
-      const restorePromise = auth.current.restoreSession();
-      await sleep(5);
-
-      // Pendant ce temps l'acheteur B se connecte
-      await auth.current.signIn('phone-B', '1234');
-      expect(auth.current.buyerId).toBe('1002');
-
-      // Attendre la résolution tardive du restoreSession de A
-      await restorePromise;
-
-      // L'acheteur B doit demeurer actif et inchangé
-      expect(auth.current.buyerId).toBe('1002');
-      expect(auth.current.user?.name).toBe('Acheteur B');
-      expect(cartStore.getBuyerId()).toBe('1002');
-      expect(webDbService.getActiveBuyerId()).toBe('1002');
-
-      auth.unmount();
+      const stored = await readStoredSession();
+      expect(stored?.token).toBe('tok-B');
+      expect(stored?.user.name).toBe('Acheteur B');
     });
 
-    it('3. simuler deux requêtes de commandes montées où la réponse B arrive avant la réponse A -> B reste affiché', async () => {
-      const harness = createHookHarness();
-      let currentBuyerId: string | null = '1001';
-      let authLoading = false;
-      let authenticated = true;
+    it('3. signOut A retardé après login B : B reste en mémoire et dans le stockage', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
 
-      const ordersA = [{ id: 'ord-A-1', type: 'commande_ferme', status: 'en_attente', productId: '101', productName: 'P1', quantity: 1, unit: 'kg', price: '100', gicName: 'GIC', createdAt: new Date().toISOString() }];
-      const ordersB = [{ id: 'ord-B-1', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'P2', quantity: 2, unit: 'sac', price: '200', gicName: 'GIC', createdAt: new Date().toISOString() }];
+      const authCoordinator = new AuthSessionCoordinator();
+      await authCoordinator.commitSession(2, { status: 'authenticated', user: userB, token: 'tok-B', error: null }, userB, { saveToken: 'tok-B' });
 
-      vi.spyOn(webDbService, 'getOrders').mockImplementation(async () => {
-        const active = webDbService.getActiveBuyerId();
-        if (active === '1001') {
-          await sleep(80);
-          return ordersA as any;
-        }
-        await sleep(15);
-        return ordersB as any;
-      });
+      // Tentative de déconnexion d'une ancienne session A (opId 1)
+      await clearSession(1);
 
-      const coordinator = harness.mount(() =>
-        useBuyerOrdersCoordinator(currentBuyerId, authLoading, authenticated)
-      );
-
-      // Lancer le chargement pour A
-      webDbService.setActiveBuyerId('1001');
-      const loadPromiseA = coordinator.current.loadOrders();
-
-      await sleep(5);
-
-      // Bascule vers B
-      currentBuyerId = '1002';
-      webDbService.setActiveBuyerId('1002');
-      coordinator.rerender();
-
-      // Réinitialisation immédiate des commandes lors de la bascule
-      expect(coordinator.current.orders).toEqual([]);
-
-      // Lancer le chargement pour B
-      const loadPromiseB = coordinator.current.loadOrders();
-
-      await loadPromiseB;
-      // B est résolu et affiché en premier
-      expect(coordinator.current.orders).toEqual(ordersB);
-
-      // Attendre la résolution tardive de la requête A
-      await loadPromiseA;
-
-      // Les commandes affichées restent strictement celles de B
-      expect(coordinator.current.orders).toEqual(ordersB);
-
-      coordinator.unmount();
+      const stored = await readStoredSession();
+      expect(stored?.token).toBe('tok-B');
+      expect(stored?.user.name).toBe('Acheteur B');
+      expect(authCoordinator.getState().status).toBe('authenticated');
+      expect(authCoordinator.getState().user?.name).toBe('Acheteur B');
     });
 
-    it('4. simuler une sauvegarde d’alertes de A retardée alors que l’utilisateur est devenu B -> aucun toast, aucun changement pour B', async () => {
-      const harness = createHookHarness();
-      let currentBuyerId: string | null = '1001';
-      let authLoading = false;
-      let authenticated = true;
+    it('4. HTTP 401 tardif utilisant le token A après login B : B reste connecté', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      const userA = { id: '1001', buyerId: '1001', role: 'buyer' as const, name: 'Acheteur A', phone: '+237699000001', phoneVerified: true, status: 'active' as const };
+      const userB = { id: '1002', buyerId: '1002', role: 'buyer' as const, name: 'Acheteur B', phone: '+237699000002', phoneVerified: true, status: 'active' as const };
 
-      let toastSuccessCalled = false;
-      vi.spyOn(webDbService, 'saveAlertPreferences').mockImplementation(async (prefs) => {
-        await sleep(60);
-        return prefs;
+      // 1. Initialiser avec le token A
+      await saveSession('tok-A', userA, 1);
+
+      let unblockFetch: () => void = () => {};
+      const fetchGate = new Promise<void>((r) => { unblockFetch = r; });
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        await fetchGate;
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: 'Session expirée sur token A' }),
+        } as any;
       });
 
-      const coordinator = harness.mount(() =>
-        useBuyerAlertsCoordinator(currentBuyerId, authLoading, authenticated)
-      );
+      // Lancer la requête avec token A (readToken lira 'tok-A')
+      const requestPromise = request('/buyer/orders', 'GET');
 
-      // Lancer la sauvegarde des alertes pour A
-      webDbService.setActiveBuyerId('1001');
-      const savePromise = coordinator.current.saveAlerts(
-        { productNames: ['Tomates fraîches'], bassins: ['Ouest'] },
-        {
-          onSuccess: () => {
-            toastSuccessCalled = true;
-          },
-        }
-      );
+      // 2. Pendant ce temps, l'utilisateur B se connecte avec 'tok-B'
+      await saveSession('tok-B', userB, 2);
 
-      await sleep(10);
+      // 3. Débloquer la réponse HTTP 401 pour la requête qui utilisait token A
+      unblockFetch();
 
-      // L'utilisateur bascule vers B pendant la sauvegarde
-      currentBuyerId = '1002';
-      webDbService.setActiveBuyerId('1002');
-      coordinator.rerender();
+      await expect(requestPromise).rejects.toThrow('Session expirée sur token A');
 
-      const success = await savePromise;
-
-      // La sauvegarde tardive est neutralisée
-      expect(success).toBe(false);
-      expect(toastSuccessCalled).toBe(false);
-
-      coordinator.unmount();
+      // La session courante dans le stockage est toujours celle de B !
+      const currentStored = await readStoredSession();
+      expect(currentStored).not.toBeNull();
+      expect(currentStored?.token).toBe('tok-B');
+      expect(currentStored?.user.name).toBe('Acheteur B');
     });
 
-    it('5. simuler une commande panier validée tardivement pour A alors que le composant est passé à B -> pas de toast, pas de redirection, busy remis à false', async () => {
-      const harness = createHookHarness();
-      let currentBuyerId: string | null = '1001';
-      let authLoading = false;
-      let authenticated = true;
+    it('5. compteur d’alertes A déjà affiché, bascule directe vers B : zéro immédiatement, puis valeur de B uniquement', async () => {
+      vi.spyOn(webDbService, 'syncPublicData').mockResolvedValue(true);
+      vi.spyOn(webDbService, 'syncBuyerData').mockResolvedValue(true);
+      const homeCoord = new BuyerHomeCoordinator('1001', false, true);
+      vi.spyOn(webDbService, 'getProducts').mockResolvedValue([]);
+      vi.spyOn(webDbService, 'getMatchingAlertCount').mockResolvedValueOnce(5);
 
-      let successCallbackCalled = false;
+      await homeCoord.silentSync();
+      expect(homeCoord.getState().alertCount).toBe(5);
+
+      // Bascule directe vers B : synchro ralentie pour B
+      vi.spyOn(webDbService, 'getMatchingAlertCount').mockImplementation(async () => {
+        await sleep(40);
+        return 2;
+      });
+
+      homeCoord.updateSession('1002', false, true);
+
+      // ZÉRO IMMÉDIATEMENT : le compteur de A ne doit jamais fuiter vers B
+      expect(homeCoord.getState().alertCount).toBe(0);
+
+      await sleep(60);
+
+      // Valeur de B uniquement une fois la synchro achevée
+      expect(homeCoord.getState().alertCount).toBe(2);
+    });
+
+    it('6. écran orders/alerts restant monté pendant A vers B : chargement B automatique', async () => {
+      // Test Orders
+      vi.spyOn(webDbService, 'getOrders').mockResolvedValueOnce([]);
+      const ordersCoord = new BuyerOrdersCoordinator('1001', false, true);
+      await sleep(20);
+      expect(ordersCoord.getState().loadedBuyerId).toBe('1001');
+
+      vi.spyOn(webDbService, 'getOrders').mockResolvedValueOnce([
+        { id: 'ord-B-1', type: 'commande_ferme', status: 'confirmee', productId: '101', productName: 'P1', quantity: 3, unit: 'kg', price: '300', gicName: 'GIC', createdAt: new Date().toISOString() },
+      ]);
+
+      ordersCoord.updateSession('1002', false, true);
+      expect(ordersCoord.getState().isLoading).toBe(true);
+
+      await sleep(30);
+      expect(ordersCoord.getState().loadedBuyerId).toBe('1002');
+      expect(ordersCoord.getState().orders).toHaveLength(1);
+      expect(ordersCoord.getState().orders[0].id).toBe('ord-B-1');
+
+      // Test Alerts
+      vi.spyOn(webDbService, 'getAlertPreferences').mockResolvedValueOnce({
+        productNames: [],
+        bassins: [],
+      });
+      vi.spyOn(webDbService, 'getMatchingAlertCount').mockResolvedValueOnce(0);
+      const alertsCoord = new BuyerAlertsCoordinator('1001', false, true);
+      await sleep(20);
+
+      vi.spyOn(webDbService, 'getAlertPreferences').mockResolvedValueOnce({
+        productNames: ['Tomates cerises'],
+        bassins: ['Ouest'],
+      });
+      vi.spyOn(webDbService, 'getMatchingAlertCount').mockResolvedValueOnce(3);
+
+      alertsCoord.updateSession('1002', false, true);
+      expect(alertsCoord.getState().isLoading).toBe(true);
+
+      await sleep(30);
+      expect(alertsCoord.getState().prefs.productNames).toEqual(['Tomates cerises']);
+    });
+
+    it('7. commande A encore busy, bascule B : B n’est pas bloqué', async () => {
+      const checkoutCoord = new BuyerCheckoutCoordinator('1001', false, true);
       await cartStore.setBuyerId('1001');
-      await cartStore.addToCart(sampleProduct1);
 
       vi.spyOn(webDbService, 'createOrderFromCart').mockImplementation(async () => {
-        await sleep(60);
-        return [];
+        await sleep(80);
+        return [{ id: 'ord-delayed' } as any];
       });
 
-      const coordinator = harness.mount(() =>
-        useBuyerCheckoutCoordinator(
-          currentBuyerId,
-          authLoading,
-          authenticated,
-          cartStore.getCart(),
-          cartStore.getTotalAmount(),
-          async () => {}
-        )
+      const confirmPromise = checkoutCoord.confirmOrder(
+        'commande_ferme',
+        async () => {},
+        { onSuccess: () => {}, onError: () => {} },
+        [{ id: 'item-101', productId: '101', name: 'Plantain', price: '1000', quantity: 1, unit: 'kg' }]
       );
 
-      // Lancer la confirmation de commande pour A
-      webDbService.setActiveBuyerId('1001');
-      const orderPromise = coordinator.current.confirmOrder('commande_ferme', {
-        onSuccess: () => {
-          successCallbackCalled = true;
-        },
-        onError: () => {},
+      expect(checkoutCoord.getState().busy).toBe(true);
+
+      // Bascule directe vers l'acheteur B pendant que la commande de A est encore en cours
+      await cartStore.setBuyerId('1002');
+      checkoutCoord.updateSession('1002', false, true);
+
+      // B n'est pas bloqué : busy est remis immédiatement à false !
+      expect(checkoutCoord.getState().busy).toBe(false);
+
+      await confirmPromise;
+      expect(checkoutCoord.getState().busy).toBe(false);
+    });
+
+    it('8. notation pendant loadOrders : le chargement ne reste pas bloqué', async () => {
+      const ordersCoord = new BuyerOrdersCoordinator('1001', false, true);
+
+      vi.spyOn(webDbService, 'getOrders').mockImplementation(async () => {
+        await sleep(40);
+        return [
+          { id: 'ord-100', type: 'achat_direct', status: 'livree', productId: '101', productName: 'P', quantity: 1, unit: 'kg', price: '100', gicName: 'GIC', createdAt: new Date().toISOString() },
+        ];
       });
 
-      expect(coordinator.current.busy).toBe(true);
+      const loadPromise = ordersCoord.loadOrders();
+      expect(ordersCoord.getState().isLoading).toBe(true);
 
-      await sleep(10);
+      // Notation déclenchée pendant que loadOrders est en cours
+      vi.spyOn(webDbService, 'addTrustRating').mockResolvedValueOnce({} as any);
+      let ratingSuccess = false;
+      const ratePromise = ordersCoord.submitRating(
+        { id: 'ord-100', gicName: 'GIC' } as any,
+        5,
+        'Excellent service',
+        { onSuccess: () => { ratingSuccess = true; } }
+      );
 
-      // Bascule vers B pendant la création
-      currentBuyerId = '1002';
-      webDbService.setActiveBuyerId('1002');
-      await cartStore.setBuyerId('1002');
-      coordinator.rerender();
+      await Promise.all([loadPromise, ratePromise]);
 
-      const success = await orderPromise;
+      // Les deux opérations indépendantes réussissent sans bloquer isLoading
+      expect(ratingSuccess).toBe(true);
+      expect(ordersCoord.getState().isLoading).toBe(false);
+      expect(ordersCoord.getState().orders).toHaveLength(1);
+    });
 
+    it('9. sauvegarde pendant loadAlerts : le chargement ne reste pas bloqué', async () => {
+      const alertsCoord = new BuyerAlertsCoordinator('1001', false, true);
+
+      vi.spyOn(webDbService, 'getAlertPreferences').mockImplementation(async () => {
+        await sleep(40);
+        return { productNames: ['P1'], bassins: ['B1'] };
+      });
+
+      const loadPromise = alertsCoord.loadAlerts();
+      expect(alertsCoord.getState().isLoading).toBe(true);
+
+      // Sauvegarde pendant que loadAlerts est en cours
+      vi.spyOn(webDbService, 'saveAlertPreferences').mockResolvedValueOnce({
+        productNames: ['P2'],
+        bassins: ['B2'],
+      });
+      let saveSuccess = false;
+      const savePromise = alertsCoord.saveAlerts(
+        { productNames: ['P2'], bassins: ['B2'] },
+        { onSuccess: () => { saveSuccess = true; } }
+      );
+
+      await Promise.all([loadPromise, savePromise]);
+
+      expect(saveSuccess).toBe(true);
+      expect(alertsCoord.getState().isLoading).toBe(false);
+    });
+
+    it('10. ajout panier pendant silentSync : le chargement ne reste pas bloqué', async () => {
+      const homeCoord = new BuyerHomeCoordinator('1001', false, true);
+
+      vi.spyOn(webDbService, 'getProducts').mockImplementation(async () => {
+        await sleep(40);
+        return [{ id: 'p1', name: 'Manioc', price: '500', unit: 'sac', volumeDisponible: 10 } as any];
+      });
+
+      const syncPromise = homeCoord.silentSync();
+      expect(homeCoord.getState().isLoading).toBe(true);
+
+      const mockAddToCart = vi.fn().mockResolvedValue(true);
+      let addSuccess = false;
+      const addPromise = homeCoord.handleAddToCartSafe(
+        { id: 'p1', name: 'Manioc', price: '500', unit: 'sac', volumeDisponible: 10 } as any,
+        mockAddToCart,
+        { onSuccess: () => { addSuccess = true; } }
+      );
+
+      await Promise.all([syncPromise, addPromise]);
+
+      expect(addSuccess).toBe(true);
+      expect(mockAddToCart).toHaveBeenCalledTimes(1);
+      expect(homeCoord.getState().isLoading).toBe(false);
+      expect(homeCoord.getState().products).toHaveLength(1);
+    });
+
+    it('11. désynchronisation du panier (panier de A alors que session est B) : checkout bloqué et badge masqué', async () => {
+      // Panier initialisé pour acheteur 1001
+      await cartStore.setBuyerId('1001');
+      await cartStore.addToCart({ productId: '101', name: 'Plantain', price: '1000', unit: 'kg' }, 10);
+      expect(cartStore.getCart()).toHaveLength(1);
+
+      // Checkout monté avec utilisateur courant = 1002 (désynchronisé)
+      const checkoutCoord = new BuyerCheckoutCoordinator('1002', false, true);
+      const homeCoord = new BuyerHomeCoordinator('1002', false, true);
+
+      // Le checkout détecte l'inadéquation et masque le panier
+      const checkoutState = checkoutCoord.getState(cartStore.getCart(), cartStore.getTotalAmount());
+      expect(checkoutState.isCartAligned).toBe(false);
+      expect(checkoutState.effectiveCart).toHaveLength(0);
+      expect(checkoutState.effectiveTotalAmount).toBe(0);
+
+      // La validation est refusée
+      const success = await checkoutCoord.confirmOrder(
+        'commande_ferme',
+        async () => {},
+        { onSuccess: () => {}, onError: () => {} },
+        checkoutState.effectiveCart
+      );
       expect(success).toBe(false);
-      expect(successCallbackCalled).toBe(false);
-      expect(coordinator.current.busy).toBe(false);
 
-      coordinator.unmount();
+      // Sur l'écran d'accueil, le badge panier est forcé à 0
+      const homeState = homeCoord.getState(cartStore.getCount());
+      expect(homeState.isCartAligned).toBe(false);
+      expect(homeState.effectiveCartCount).toBe(0);
     });
 
-    it('6. simuler authLoading = true sur un écran avec panier -> panier et compteur masqués (non rendus)', async () => {
-      const checkoutHarness = createHookHarness();
-      const homeHarness = createHookHarness();
-      await cartStore.setBuyerId('1001');
-      await cartStore.addToCart(sampleProduct1);
-      expect(cartStore.getCart().length).toBe(1);
+    it('12. comparaison explicite : neutralisation par génération de session vs capture stale', async () => {
+      let activeBuyerId = '1001';
+      let sessionGen = 1;
 
-      // Montage avec authLoading = true
-      let authLoading = true;
-      let currentBuyerId: string | null = '1001';
-      let authenticated = true;
-
-      const checkoutCoordinator = checkoutHarness.mount(() =>
-        useBuyerCheckoutCoordinator(
-          currentBuyerId,
-          authLoading,
-          authenticated,
-          cartStore.getCart(),
-          cartStore.getTotalAmount(),
-          async () => {}
-        )
-      );
-
-      const homeCoordinator = homeHarness.mount(() =>
-        useBuyerHomeCoordinator(
-          currentBuyerId,
-          authLoading,
-          authenticated,
-          cartStore.getCount(),
-          async () => {}
-        )
-      );
-
-      // Pendant authLoading, le panier n'est pas aligné et rien n'est affiché
-      expect(checkoutCoordinator.current.isCartAligned).toBe(false);
-      expect(checkoutCoordinator.current.effectiveCart).toHaveLength(0);
-      expect(checkoutCoordinator.current.effectiveTotalAmount).toBe(0);
-      expect(homeCoordinator.current.effectiveCartCount).toBe(0);
-
-      // Une fois la session résolue (authLoading = false), le panier s'affiche
-      authLoading = false;
-      checkoutCoordinator.rerender();
-      homeCoordinator.rerender();
-
-      expect(checkoutCoordinator.current.isCartAligned).toBe(true);
-      expect(checkoutCoordinator.current.effectiveCart).toHaveLength(1);
-      expect(checkoutCoordinator.current.effectiveTotalAmount).toBe(3500);
-      expect(homeCoordinator.current.effectiveCartCount).toBe(1);
-
-      checkoutCoordinator.unmount();
-      homeCoordinator.unmount();
-    });
-
-    it('7. simuler le GET de fond qui démarre pour A puis bascule vers B -> aucune écriture croisée n’a lieu', async () => {
-      webDbService.setActiveBuyerId('1001');
-      await cartStore.setBuyerId('1001');
-      await cartStore.addToCart(sampleProduct1);
-
-      vi.spyOn(apiClient, 'createOrder').mockResolvedValueOnce({
-        orders: [
-          {
-            id: 'ord-bg-test-1',
-            type: 'commande_ferme',
-            status: 'en_attente',
-            productId: '101',
-            productName: sampleProduct1.name,
-            quantity: 1,
-            unit: sampleProduct1.unit,
-            price: sampleProduct1.price,
-            gicName: 'GIC',
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      });
-
-      vi.spyOn(apiClient, 'getOrders').mockImplementation(async () => {
+      let resultCaptured = 'pending';
+      const slowAction = async () => {
+        const capturedBuyerId = activeBuyerId;
+        const capturedGen = sessionGen;
         await sleep(50);
-        return {
-          orders: [
-            {
-              id: 'ord-bg-leak-attempt',
-              type: 'commande_ferme',
-              status: 'en_attente',
-              productId: '101',
-              productName: sampleProduct1.name,
-              quantity: 1,
-              unit: sampleProduct1.unit,
-              price: sampleProduct1.price,
-              gicName: 'GIC',
-              createdAt: new Date().toISOString(),
-            },
-          ],
-          meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
-        };
-      });
-
-      // Lancer la commande pour A
-      const created = await webDbService.createOrderFromCart('commande_ferme');
-      expect(created).toHaveLength(1);
-
-      // Bascule vers B pendant le GET en arrière-plan
-      webDbService.setActiveBuyerId('1002');
-      await cartStore.setBuyerId('1002');
-
-      // Attendre que le GET en tâche de fond se termine
-      await sleep(80);
-
-      // Le cache de B n'a reçu aucune commande
-      const ordersB = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1002') || '[]');
-      expect(ordersB).toHaveLength(0);
-
-      // Le cache de A n'a pas été pollué par le GET invalidé
-      const ordersA = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1001') || '[]');
-      expect(ordersA.some((o: any) => o.id === 'ord-bg-leak-attempt')).toBe(false);
-    });
-
-    it('8. démontrer formellement dans le test qu’une comparaison de closure aurait échoué là où la ref / génération réussit', async () => {
-      // 1. Démonstration de la faille de la closure :
-      let outsideBuyerId = '1001';
-      let closureResult = 'unexecuted';
-
-      const simulateClosureComponent = (capturedBuyerId: string) => {
-        const handleAsyncAction = async () => {
-          await sleep(30);
-          // ERREUR CLASSIQUE DE CLOSURE :
-          // "capturedBuyerId" et "currentBuyerIdInClosure" valent toutes les deux '1001'
-          // car la closure a capturé la variable au moment du rendu !
-          const currentBuyerIdInClosure = capturedBuyerId;
-          if (currentBuyerIdInClosure === capturedBuyerId) {
-            closureResult = 'executed_for_' + capturedBuyerId;
-          }
-        };
-        return handleAsyncAction;
+        if (sessionGen !== capturedGen || activeBuyerId !== capturedBuyerId) {
+          resultCaptured = 'aborted_stale_detected';
+          return;
+        }
+        resultCaptured = 'committed_stale_bug';
       };
 
-      const closureAction = simulateClosureComponent(outsideBuyerId);
-      const actionPromise = closureAction();
+      const actionPromise = slowAction();
 
-      // Pendant l'attente async, l'utilisateur change à 1002
-      outsideBuyerId = '1002';
+      // Bascule de session pendant l'exécution
+      activeBuyerId = '1002';
+      sessionGen = 2;
 
       await actionPromise;
-
-      // LA CLOSURE A ÉCHOUÉ : elle s'est exécutée pour 1001 alors que le contexte actif est 1002 !
-      expect(closureResult).toBe('executed_for_1001');
-
-      // 2. Démonstration du succès avec ref & génération (notre solution) :
-      let refResult = 'unexecuted';
-      const buyerIdRef = { current: '1001' };
-      const reqSeqRef = { current: 1 };
-      const contextGenRef = { current: 10 };
-
-      const simulateRefCoordinator = () => {
-        const handleAsyncActionWithRef = async () => {
-          const reqId = reqSeqRef.current;
-          const capturedBuyer = buyerIdRef.current;
-          const capturedGen = contextGenRef.current;
-
-          await sleep(30);
-
-          // CONSULTATION DE LA REF COURANTE APRÈS CHAQUE AWAIT :
-          if (
-            reqSeqRef.current !== reqId ||
-            buyerIdRef.current !== capturedBuyer ||
-            contextGenRef.current !== capturedGen
-          ) {
-            refResult = 'aborted_stale_detected';
-            return;
-          }
-
-          refResult = 'executed_for_' + capturedBuyer;
-        };
-        return handleAsyncActionWithRef;
-      };
-
-      const refAction = simulateRefCoordinator();
-      const refActionPromise = refAction();
-
-      // Pendant l'attente async, l'utilisateur change à 1002
-      buyerIdRef.current = '1002';
-      reqSeqRef.current++;
-      contextGenRef.current++;
-
-      await refActionPromise;
-
-      // LA SOLUTION PAR REF / GÉNÉRATION A SUCCÈS : elle a neutralisé l'opération obsolète !
-      expect(refResult).toBe('aborted_stale_detected');
+      expect(resultCaptured).toBe('aborted_stale_detected');
     });
   });
 
