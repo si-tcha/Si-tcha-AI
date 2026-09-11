@@ -18,6 +18,7 @@ import {
   allocateSessionMutationTicket,
   readStoredSession,
   request,
+  setUnauthorizedHandler,
   _resetSessionMutationSeqForTesting,
   _resetMemorySessionForTesting,
 } from '../src/services/api';
@@ -72,6 +73,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
   });
 
   afterEach(() => {
+    setUnauthorizedHandler(null);
     webDbService.setActiveBuyerId(null);
     cartStore.reset();
     vi.restoreAllMocks();
@@ -2566,6 +2568,191 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
         });
         container.remove();
       }
+    });
+  });
+
+  describe('19. Intégration réelle du cycle HTTP 401 et de la déconnexion', () => {
+    const userA = {
+      id: '1001',
+      buyerId: '1001',
+      role: 'buyer' as const,
+      name: 'Acheteur A',
+      phone: '+237699000001',
+      phoneVerified: true,
+      status: 'active' as const,
+    };
+    const userB = {
+      id: '1002',
+      buyerId: '1002',
+      role: 'buyer' as const,
+      name: 'Acheteur B',
+      phone: '+237699000002',
+      phoneVerified: true,
+      status: 'active' as const,
+    };
+
+    async function authenticate(
+      coordinator: AuthSessionCoordinator,
+      token = 'tok-A',
+      user = userA
+    ) {
+      const ticket = allocateSessionMutationTicket();
+      const committed = await coordinator.commitSession(
+        ticket,
+        { status: 'authenticated', user, token, error: null },
+        user,
+        { saveToken: token }
+      );
+      expect(committed).toBe(true);
+    }
+
+    it('évince exactement une fois la session courante après un vrai 401 protégé', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const coordinator = new AuthSessionCoordinator();
+      await authenticate(coordinator);
+      const unauthorizedSpy = vi.fn((token: string, ticket: number) =>
+        coordinator.handleUnauthorized(token, ticket)
+      );
+      setUnauthorizedHandler(unauthorizedSpy);
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ message: 'Session expirée' }),
+      } as any);
+
+      await expect(request('/buyer/orders')).rejects.toMatchObject({ status: 401 });
+
+      expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
+      expect(unauthorizedSpy).toHaveBeenCalledWith('tok-A', 1);
+      expect(coordinator.getState()).toMatchObject({
+        status: 'unauthenticated',
+        user: null,
+        token: null,
+      });
+      expect(await readStoredSession()).toBeNull();
+    });
+
+    it('ne donne jamais au token A le ticket de B si B démarre pendant la lecture persistante', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const coordinator = new AuthSessionCoordinator();
+      await authenticate(coordinator);
+      // Force request(A) à relire la session persistante et donc à franchir un await.
+      _resetMemorySessionForTesting();
+
+      const unauthorizedSpy = vi.fn((token: string, ticket: number) =>
+        coordinator.handleUnauthorized(token, ticket)
+      );
+      setUnauthorizedHandler(unauthorizedSpy);
+
+      let resolveLoginB!: (response: any) => void;
+      const loginBResponse = new Promise<any>((resolve) => {
+        resolveLoginB = resolve;
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any, init?: any) => {
+        const target = String(url);
+        if (target.endsWith('/auth/login')) {
+          return loginBResponse;
+        }
+        if (target.endsWith('/buyer/orders')) {
+          expect(init?.headers?.Authorization).toBe('Bearer tok-A');
+          return {
+            ok: false,
+            status: 401,
+            json: async () => ({ message: 'Session A expirée' }),
+          } as any;
+        }
+        throw new Error(`URL inattendue: ${target}`);
+      });
+
+      const requestA = request('/buyer/orders');
+      const signInB = coordinator.signIn('+237699000002', '1234', 'buyer');
+
+      await expect(requestA).rejects.toMatchObject({ status: 401 });
+      expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
+      expect(unauthorizedSpy).toHaveBeenCalledWith('tok-A', 1);
+      expect(coordinator.getState().token).toBe('tok-A');
+
+      resolveLoginB({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'tok-B', user: userB }),
+      });
+      const loginResult = await signInB;
+
+      expect(loginResult.obsolete).not.toBe(true);
+      expect(coordinator.getState().token).toBe('tok-B');
+      expect((await readStoredSession())?.token).toBe('tok-B');
+      const requestedUrls = fetchSpy.mock.calls.map(([url]) => String(url));
+      expect(requestedUrls.filter((url) => url.endsWith('/buyer/orders'))).toHaveLength(1);
+      expect(requestedUrls.filter((url) => url.endsWith('/auth/login'))).toHaveLength(1);
+    });
+
+    it('un 401 de /auth/logout laisse signOut seul propriétaire et se termine sans faux échec', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const coordinator = new AuthSessionCoordinator();
+      await authenticate(coordinator);
+      const unauthorizedSpy = vi.fn((token: string, ticket: number) =>
+        coordinator.handleUnauthorized(token, ticket)
+      );
+      setUnauthorizedHandler(unauthorizedSpy);
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ message: 'Token déjà expiré' }),
+      } as any);
+
+      await expect(coordinator.signOut()).resolves.toBeUndefined();
+
+      expect(unauthorizedSpy).not.toHaveBeenCalled();
+      expect(coordinator.getState()).toMatchObject({
+        status: 'unauthenticated',
+        user: null,
+        token: null,
+      });
+      expect(await readStoredSession()).toBeNull();
+    });
+
+    it('propage l’échec persistant de signOut et conserve une session mémoire/stockage cohérente', async () => {
+      _resetSessionMutationSeqForTesting(0);
+      _resetMemorySessionForTesting();
+      localStorage.clear();
+
+      const coordinator = new AuthSessionCoordinator();
+      await authenticate(coordinator);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'OK' }),
+      } as any);
+
+      const originalRemoveItem = localStorage.removeItem.bind(localStorage);
+      vi.spyOn(localStorage, 'removeItem').mockImplementation((key: string) => {
+        if (key === 'sitcha_session_v1') {
+          throw new Error('StorageDeleteError');
+        }
+        originalRemoveItem(key);
+      });
+
+      await expect(coordinator.signOut()).rejects.toThrow(/Échec critique de la déconnexion/);
+
+      expect(coordinator.getState()).toMatchObject({
+        status: 'authenticated',
+        user: userA,
+        token: 'tok-A',
+      });
+      expect(await readStoredSession()).toMatchObject({ token: 'tok-A', user: userA });
+      expect(localStorage.getItem('sitcha_session_v1')).not.toBeNull();
     });
   });
 });
