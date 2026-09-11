@@ -55,7 +55,7 @@ export function resetSqliteMock() {
 
 // Mock expo-sqlite pour l'environnement de test Node/Vitest
 vi.mock('expo-sqlite', () => ({
-  openDatabaseSync: () => ({
+  openDatabaseSync: vi.fn(() => ({
     execSync: vi.fn(),
     runSync: (sql: string, params: any[] = []) => {
       if (sql.includes('INSERT') && sql.includes('kv_store')) {
@@ -168,5 +168,5 @@ vi.mock('expo-sqlite', () => ({
       }
       return [];
     },
-  }),
+  })),
 }));

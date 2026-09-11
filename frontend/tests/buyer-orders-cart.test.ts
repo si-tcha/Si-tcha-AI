@@ -36,6 +36,7 @@ import {
 import {
   STORAGE_KEYS,
   CartItemRecord,
+  OrderRecord,
   isValidBuyerId,
   validateBuyerId,
   isValidBuyerStorageKey,
@@ -2152,13 +2153,16 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('5. l’écran reste monté pendant le changement de session : B se recharge automatiquement', async () => {
+      let resolveBuyerB!: (orders: OrderRecord[]) => void;
+      const buyerBOrders = new Promise<OrderRecord[]>((resolve) => {
+        resolveBuyerB = resolve;
+      });
       vi.spyOn(webDbService, 'getOrders').mockImplementation(async () => {
         const cur = webDbService.getActiveBuyerId();
         if (cur === '1001') {
           return [{ id: 'ord-A-stay', type: 'commande_ferme', status: 'confirmee', productId: '101', productName: 'P-A', quantity: 1, unit: 'kg', price: '1000', gicName: 'GIC', createdAt: new Date().toISOString() }];
         }
-        await sleep(30);
-        return [{ id: 'ord-B-stay', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'P-B', quantity: 2, unit: 'sac', price: '2000', gicName: 'GIC', createdAt: new Date().toISOString() }];
+        return buyerBOrders;
       });
 
       function OrdersStayScreen({ buyerId }: { buyerId: string }) {
@@ -2188,9 +2192,12 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       // Immédiatement en chargement (ou masqué)
       expect(container?.querySelector('#orders-content')?.textContent).toBe('chargement...');
 
-      // Attendre la résolution de B
+      // Résoudre B explicitement : l'assertion de masquage ne dépend pas du CPU.
       await act(async () => {
-        await sleep(50);
+        resolveBuyerB([
+          { id: 'ord-B-stay', type: 'commande_ferme', status: 'confirmee', productId: '102', productName: 'P-B', quantity: 2, unit: 'sac', price: '2000', gicName: 'GIC', createdAt: new Date().toISOString() },
+        ]);
+        await buyerBOrders;
       });
 
       // Automatiquement mis à jour avec les commandes de B

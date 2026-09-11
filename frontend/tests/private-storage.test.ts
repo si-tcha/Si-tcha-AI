@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as SQLite from 'expo-sqlite';
 import {
   agronomistCacheKey,
   assertValidSellerContext,
@@ -45,8 +46,7 @@ describe('propagation réelle des écritures privées', () => {
   });
 
   afterEach(() => {
-    vi.doUnmock('expo-sqlite');
-    vi.doUnmock('react-native');
+    vi.doUnmock('../src/services/database.web');
   });
 
   it.each<[string, string, unknown[]]>([
@@ -55,14 +55,11 @@ describe('propagation réelle des écritures privées', () => {
   ])('propage SQLiteDiskIOWriteError depuis runSync via %s', async (method, key, value) => {
     const diskError = new Error('SQLiteDiskIOWriteError: disk I/O error');
     const runSync = vi.fn(() => { throw diskError; });
-    vi.doMock('expo-sqlite', () => ({
-      openDatabaseSync: vi.fn(() => ({
-        execSync: vi.fn(),
-        runSync,
-      })),
-    }));
-    vi.doMock('react-native', () => ({ Platform: { OS: 'android' }, Alert: { alert: vi.fn() } }));
-    const { dbService } = await import('../src/services/database');
+    vi.mocked(SQLite.openDatabaseSync).mockReturnValueOnce({
+      execSync: vi.fn(),
+      runSync,
+    } as any);
+    const { dbService } = await import('../src/services/database.ts');
 
     if (method === 'saveParcels') {
       await expect(dbService.saveParcels(value as never[], key)).rejects.toBe(diskError);
@@ -77,14 +74,16 @@ describe('propagation réelle des écritures privées', () => {
 
   it('fait remonter SQLiteDiskIOWriteError jusqu’à persistAgronomistConsultation', async () => {
     const diskError = new Error('SQLiteDiskIOWriteError: disk I/O error');
-    vi.doMock('expo-sqlite', () => ({
-      openDatabaseSync: vi.fn(() => ({
-        execSync: vi.fn(),
-        getFirstSync: vi.fn(() => null),
-        runSync: vi.fn(() => { throw diskError; }),
-      })),
-    }));
-    vi.doMock('react-native', () => ({ Platform: { OS: 'android' }, Alert: { alert: vi.fn() } }));
+    vi.mocked(SQLite.openDatabaseSync).mockReturnValueOnce({
+      execSync: vi.fn(),
+      getFirstSync: vi.fn(() => null),
+      runSync: vi.fn(() => { throw diskError; }),
+    } as any);
+    const { dbService: nativeDbService } = await import('../src/services/database.ts');
+    // Le resolver web-first de la suite fusionnée mappe l'import extensionless de
+    // growthService vers database.web.ts. Injecter ici l'adaptateur natif réel
+    // permet de tester la propagation de bout en bout sans recopier sa logique.
+    vi.doMock('../src/services/database.web', () => ({ dbService: nativeDbService }));
     const { growthService } = await import('../src/services/growthService');
 
     await expect(growthService.persistAgronomistConsultation(
@@ -116,12 +115,8 @@ describe('propagation réelle des écritures privées', () => {
   });
 
   it('rejette les clés forgées dans les deux adaptateurs', async () => {
-    vi.doMock('expo-sqlite', () => ({
-      openDatabaseSync: vi.fn(() => ({ execSync: vi.fn(), runSync: vi.fn() })),
-    }));
-    vi.doMock('react-native', () => ({ Platform: { OS: 'android' }, Alert: { alert: vi.fn() } }));
     const [{ dbService: nativeDb }, { dbService: webDb }] = await Promise.all([
-      import('../src/services/database'),
+      import('../src/services/database.ts'),
       import('../src/services/database.web'),
     ]);
     const forged = [

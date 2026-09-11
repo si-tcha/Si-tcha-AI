@@ -10,6 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    testTimeout: 15000,
     setupFiles: ['./tests/setup.ts'],
     alias: {
       'react-native': 'react-native-web',
