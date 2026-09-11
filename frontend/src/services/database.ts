@@ -1,6 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform, Alert } from 'react-native';
 import { apiClient } from './api';
+import { isValidAgronomistCacheKey, isValidParcelCacheKey } from '../utils/cacheKey';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -137,6 +138,12 @@ class DatabaseService {
     } catch (err) {
       console.warn('Erreur writeKv:', err);
     }
+  }
+
+  private writeKvOrThrow(key: string, value: unknown) {
+    const db = this.getDb();
+    db.execSync(`CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    db.runSync('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);', [key, JSON.stringify(value)]);
   }
 
   async syncRemoteData(): Promise<boolean> {
@@ -636,7 +643,7 @@ class DatabaseService {
    * @param cacheKey - Clé obligatoire isolée par (role, userId, gicId) via parcelCacheKey().
    */
   async getParcels(cacheKey: string): Promise<ParcelGrowthRecord[]> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+    if (!isValidParcelCacheKey(cacheKey)) {
       throw new Error('Clé de cache privée obligatoire et valide requise pour accéder aux parcelles.');
     }
     return this.readKv<ParcelGrowthRecord[]>(cacheKey, []);
@@ -649,10 +656,10 @@ class DatabaseService {
    * @param cacheKey - Clé obligatoire isolée via parcelCacheKey().
    */
   async saveParcels(parcels: ParcelGrowthRecord[], cacheKey: string): Promise<void> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+    if (!isValidParcelCacheKey(cacheKey)) {
       throw new Error('Clé de cache privée obligatoire et valide requise pour sauvegarder les parcelles.');
     }
-    this.writeKv(cacheKey, parcels);
+    this.writeKvOrThrow(cacheKey, parcels);
   }
 
   // addParcel et updateParcelHarvest sont intentionnellement supprimés.
@@ -664,7 +671,7 @@ class DatabaseService {
 
   /** Lit l'historique agronome depuis le cache kv_store (clé isolée par user). */
   async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
       throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
     }
     return this.readKv<T[]>(cacheKey, []);
@@ -672,10 +679,10 @@ class DatabaseService {
 
   /** Persiste l'historique agronome dans le cache kv_store (clé isolée par user). */
   async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
       throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
     }
-    this.writeKv(cacheKey, entries);
+    this.writeKvOrThrow(cacheKey, entries);
   }
 
 

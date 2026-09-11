@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import { isValidAgronomistCacheKey, isValidParcelCacheKey } from '../utils/cacheKey';
 import {
   AgriProgramRecord,
   AgronomistQuestion,
@@ -77,6 +78,13 @@ function readJson<T>(key: string, fallback: T): T {
 
 function writeJson(key: string, value: unknown) {
   if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function writePrivateJsonOrThrow(key: string, value: unknown) {
+  if (typeof localStorage === 'undefined') {
+    throw new Error('Stockage privé local indisponible.');
+  }
   localStorage.setItem(key, JSON.stringify(value));
 }
 
@@ -561,7 +569,7 @@ class DatabaseService {
    * @param cacheKey - Clé obligatoire isolée par (role, userId, gicId) via parcelCacheKey().
    */
   async getParcels(cacheKey: string): Promise<ParcelGrowthRecord[]> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+    if (!isValidParcelCacheKey(cacheKey)) {
       throw new Error('Clé de cache privée obligatoire et valide requise pour accéder aux parcelles.');
     }
     return readJson<ParcelGrowthRecord[]>(cacheKey, []);
@@ -573,10 +581,10 @@ class DatabaseService {
    * @param cacheKey - Clé obligatoire isolée via parcelCacheKey().
    */
   async saveParcels(parcels: ParcelGrowthRecord[], cacheKey: string): Promise<void> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_parcels_')) {
+    if (!isValidParcelCacheKey(cacheKey)) {
       throw new Error('Clé de cache privée obligatoire et valide requise pour sauvegarder les parcelles.');
     }
-    writeJson(cacheKey, parcels);
+    writePrivateJsonOrThrow(cacheKey, parcels);
   }
 
   // addParcel et updateParcelHarvest sont intentionnellement supprimés.
@@ -588,7 +596,7 @@ class DatabaseService {
 
   /** Lit l'historique agronome depuis localStorage (clé isolée par user). */
   async getAgronomistHistory<T>(cacheKey: string): Promise<T[]> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
       throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
     }
     return readJson<T[]>(cacheKey, []);
@@ -596,10 +604,10 @@ class DatabaseService {
 
   /** Persiste l'historique agronome dans localStorage (clé isolée par user). */
   async saveAgronomistHistory<T>(cacheKey: string, entries: T[]): Promise<void> {
-    if (!cacheKey || typeof cacheKey !== 'string' || !cacheKey.trim().startsWith('sitcha_agro_history_')) {
+    if (!isValidAgronomistCacheKey(cacheKey)) {
       throw new Error('Clé de cache agronome privée obligatoire et valide requise.');
     }
-    writeJson(cacheKey, entries);
+    writePrivateJsonOrThrow(cacheKey, entries);
   }
 
 

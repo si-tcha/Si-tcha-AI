@@ -15,6 +15,28 @@ export interface ValidSellerContext {
   gicId: string;
 }
 
+const POSITIVE_DECIMAL_ID = /^[1-9]\d*$/;
+const PARCEL_CACHE_KEY = /^sitcha_parcels_seller_[1-9]\d*_[1-9]\d*$/;
+const AGRONOMIST_CACHE_KEY = /^sitcha_agro_history_seller_[1-9]\d*_[1-9]\d*$/;
+
+function normalizePositiveDecimalId(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return POSITIVE_DECIMAL_ID.test(value) ? value : null;
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+    return String(value);
+  }
+  return null;
+}
+
+export function isValidParcelCacheKey(key: unknown): key is string {
+  return typeof key === 'string' && PARCEL_CACHE_KEY.test(key);
+}
+
+export function isValidAgronomistCacheKey(key: unknown): key is string {
+  return typeof key === 'string' && AGRONOMIST_CACHE_KEY.test(key);
+}
+
 /**
  * Vérifie si un contexte est un contexte vendeur valide et complet.
  */
@@ -23,21 +45,8 @@ export function isValidSellerContext(ctx: unknown): ctx is ValidSellerContext {
   const c = ctx as Record<string, unknown>;
   if (c.role !== 'seller') return false;
 
-  const uid = typeof c.userId === 'string'
-    ? c.userId.trim()
-    : (typeof c.userId === 'number' && Number.isFinite(c.userId) ? String(c.userId) : '');
-  if (!uid || uid === 'anonymous' || uid === 'undefined' || uid === 'null' || uid === '0') {
-    return false;
-  }
-
-  const gid = typeof c.gicId === 'string'
-    ? c.gicId.trim()
-    : (typeof c.gicId === 'number' && Number.isFinite(c.gicId) ? String(c.gicId) : '');
-  if (!gid || gid === '0' || gid === 'undefined' || gid === 'null') {
-    return false;
-  }
-
-  return true;
+  return normalizePositiveDecimalId(c.userId) !== null
+    && normalizePositiveDecimalId(c.gicId) !== null;
 }
 
 /**
@@ -51,16 +60,10 @@ export function assertValidSellerContext(ctx: unknown): asserts ctx is ValidSell
   if (c.role !== 'seller') {
     throw new Error(`Rôle vendeur requis (reçu: '${String(c.role)}').`);
   }
-  const uid = typeof c.userId === 'string'
-    ? c.userId.trim()
-    : (typeof c.userId === 'number' && Number.isFinite(c.userId) ? String(c.userId) : '');
-  if (!uid || uid === 'anonymous' || uid === 'undefined' || uid === 'null' || uid === '0') {
+  if (normalizePositiveDecimalId(c.userId) === null) {
     throw new Error(`Identifiant utilisateur (userId) invalide ou anonyme : '${String(c.userId)}'.`);
   }
-  const gid = typeof c.gicId === 'string'
-    ? c.gicId.trim()
-    : (typeof c.gicId === 'number' && Number.isFinite(c.gicId) ? String(c.gicId) : '');
-  if (!gid || gid === '0' || gid === 'undefined' || gid === 'null') {
+  if (normalizePositiveDecimalId(c.gicId) === null) {
     throw new Error(`Identifiant GIC (gicId) invalide ou nul : '${String(c.gicId)}'.`);
   }
 }
@@ -71,8 +74,8 @@ export function assertValidSellerContext(ctx: unknown): asserts ctx is ValidSell
  */
 export function parcelCacheKey(role: string, userId: string | number, gicId: string | number): string {
   assertValidSellerContext({ role, userId, gicId });
-  const cleanUserId = String(userId).trim();
-  const cleanGicId = String(gicId).trim();
+  const cleanUserId = String(userId);
+  const cleanGicId = String(gicId);
   return `sitcha_parcels_${role}_${cleanUserId}_${cleanGicId}`;
 }
 
@@ -82,7 +85,7 @@ export function parcelCacheKey(role: string, userId: string | number, gicId: str
  */
 export function agronomistCacheKey(role: string, userId: string | number, gicId: string | number): string {
   assertValidSellerContext({ role, userId, gicId });
-  const cleanUserId = String(userId).trim();
-  const cleanGicId = String(gicId).trim();
+  const cleanUserId = String(userId);
+  const cleanGicId = String(gicId);
   return `sitcha_agro_history_${role}_${cleanUserId}_${cleanGicId}`;
 }
