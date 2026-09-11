@@ -10,20 +10,16 @@
     },
     "preview": {
       "distribution": "internal",
+      "environment": "preview",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://api-staging.sitcha.org"
       }
     },
     "production": {
       "autoIncrement": true,
+      "environment": "production",
       "android": {
         "buildType": "app-bundle"
-      },
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.sitcha.org"
       }
     }
   },

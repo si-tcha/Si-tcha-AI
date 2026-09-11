@@ -249,14 +249,80 @@ describe('Production API Client, Networking & Configuration Tests', () => {
           envUrl: 'https://[::1]:4000/api',
           isDev: false,
         })
-      ).toThrowError(/adresse IPv6 locale ou réservée/);
+      ).toThrowError(/adresse IPv6 loopback ou non-spécifiée/);
+
+      // Refus IPv6 link-local fe80::/10
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[fe80::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 link-local/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[febf::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 link-local/);
+
+      // Refus IPv6 unique-local fc00::/7
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[fc00::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 locale unique/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[fdff::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 locale unique/);
+
+      // Refus IPv4-mapped IPv6 ::ffff:x.x.x.x (forme pointée et normalisée)
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::ffff:127.0.0.1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv4-mapped IPv6/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::ffff:192.168.1.1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv4-mapped IPv6/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::ffff:7f00:1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv4-mapped IPv6/);
 
       // Refus de username/password dans l'URL
       expect(() =>
         resolveApiBaseUrl({
           platform: 'android',
           isDevice: true,
-          envUrl: 'https://user:password@api.sitcha.org/api',
+          envUrl: 'https://user:password@api.example.com/api',
           isDev: false,
         })
       ).toThrowError(/ne doit pas contenir d'identifiants/);
@@ -275,10 +341,10 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       const validProdUrl = resolveApiBaseUrl({
         platform: 'android',
         isDevice: true,
-        envUrl: 'https://api.sitcha.org/api///',
+        envUrl: 'https://api.example.com/api///',
         isDev: false,
       });
-      expect(validProdUrl).toBe('https://api.sitcha.org/api');
+      expect(validProdUrl).toBe('https://api.example.com/api');
     });
 
     it('8. computeNativePhysicalDevice et getApiBaseUrl doivent normaliser le Web comme non physique natif', () => {
@@ -505,8 +571,8 @@ describe('Production API Client, Networking & Configuration Tests', () => {
 
       // URLs valides
       const validUrls = [
-        'https://api.sitcha.org',
-        'https://api-staging.sitcha.org/api/',
+        'https://api.example.com',
+        'https://api-staging.example.com/api/',
         'https://sub.domain.cm/api/v1',
       ];
 
@@ -518,7 +584,7 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       const invalidUrls = [
         '',
         '   ',
-        'http://api.sitcha.org',
+        'http://api.example.com',
         'https://localhost:4000',
         'https://dev.localhost',
         'https://127.0.0.1:4000',
@@ -527,13 +593,43 @@ describe('Production API Client, Networking & Configuration Tests', () => {
         'https://172.20.0.2:4000',
         'https://169.254.1.1:4000',
         'https://0.0.0.0:4000',
-        'https://user:pass@api.sitcha.org',
+        'https://user:pass@api.example.com',
+        'https://[::1]:4000/api',
+        'https://[fe80::1]/api',
+        'https://[fe90::1]/api',
+        'https://[fea0::1]/api',
+        'https://[febf::1]/api',
+        'https://[fc00::1]/api',
+        'https://[fc12::1]/api',
+        'https://[fd00::1]/api',
+        'https://[fdab::1]/api',
+        'https://[::ffff:127.0.0.1]/api',
+        'https://[::ffff:10.0.2.2]/api',
+        'https://[::ffff:192.168.1.1]/api',
+        'https://[::ffff:7f00:1]/api',
+        'https://[::ffff:a00:202]/api',
+        'https://[::ffff:c0a8:101]/api',
       ];
 
       for (const url of invalidUrls) {
         expect(() => validateApiUrl(url)).toThrow();
         expect(() => validateProductionApiUrl(url)).toThrow();
       }
+    });
+  });
+
+  describe('EAS Build Profiles & Environment Separation', () => {
+    it('eas.json ne contient aucun endpoint inventé en dur et configure les environnements preview et production', async () => {
+      const easConfig = (await import('../eas.json')).default;
+      const content = JSON.stringify(easConfig);
+
+      expect(content).not.toContain('api.sitcha.org');
+      expect(content).not.toContain('api-staging.sitcha.org');
+
+      expect(easConfig.build.preview.environment).toBe('preview');
+      expect(easConfig.build.production.environment).toBe('production');
+      expect('env' in easConfig.build.preview).toBe(false);
+      expect('env' in easConfig.build.production).toBe(false);
     });
   });
 });

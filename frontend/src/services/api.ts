@@ -139,29 +139,53 @@ export function validateProductionApiUrl(rawUrl: string): string {
     throw new Error("Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers localhost en production/preview.");
   }
 
-  // Refus IPv6 loopback (::1), unspecified (::) et link-local / unique-local
+  // 1. Refus IPv6 loopback (::1), unspecified (::)
   if (
     host === '::1' ||
     host === '0:0:0:0:0:0:0:1' ||
     host === '::' ||
-    host === '0:0:0:0:0:0:0:0' ||
-    host.startsWith('fe80:') ||
-    host.startsWith('fc00:') ||
-    host.startsWith('fd00:')
+    host === '0:0:0:0:0:0:0:0'
   ) {
     throw new Error(
-      "Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers une adresse IPv6 locale ou réservée en production/preview."
+      "Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers une adresse IPv6 loopback ou non-spécifiée en production/preview."
     );
   }
 
-  // Vérification IPv4 (y compris IPv4-mapped IPv6 ::ffff:...)
-  const ipv4String = host.startsWith('::ffff:') ? host.slice(7) : host;
-  const ipv4Parts = ipv4String.split('.').map(Number);
+  // 2. Refus fe80::/10 (link-local, 0xfe80 - 0xfebf) et fc00::/7 (unique-local, 0xfc00 - 0xfdff)
+  const firstHextetStr = host.split(':')[0];
+  const firstHextetVal = parseInt(firstHextetStr, 16);
+  if (!Number.isNaN(firstHextetVal)) {
+    // fe80::/10 couvre fe80 à febf (1111 1110 10xx xxxx)
+    if (firstHextetVal >= 0xfe80 && firstHextetVal <= 0xfebf) {
+      throw new Error(
+        "Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers une adresse IPv6 link-local fe80::/10 en production/preview."
+      );
+    }
+    // fc00::/7 couvre fc00 à fdff (1111 110x xxxx xxxx)
+    if (firstHextetVal >= 0xfc00 && firstHextetVal <= 0xfdff) {
+      throw new Error(
+        "Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers une adresse IPv6 locale unique fc00::/7 en production/preview."
+      );
+    }
+  }
 
-  if (
-    ipv4Parts.length === 4 &&
-    ipv4Parts.every((n) => !Number.isNaN(n) && n >= 0 && n <= 255)
-  ) {
+  // 3. Refus des adresses IPv4-mapped IPv6 (::ffff:0:0/96)
+  if (host.startsWith('::ffff:')) {
+    throw new Error(
+      'Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers une adresse IPv4-mapped IPv6 (::ffff:...) en production/preview.'
+    );
+  }
+
+  // 4. Extraction et validation des adresses IPv4
+  let ipv4Parts: number[] | null = null;
+  if (!host.includes(':')) {
+    const parts = host.split('.').map(Number);
+    if (parts.length === 4 && parts.every((n) => !Number.isNaN(n) && n >= 0 && n <= 255)) {
+      ipv4Parts = parts;
+    }
+  }
+
+  if (ipv4Parts) {
     const [a, b] = ipv4Parts;
     // 0.0.0.0/8
     if (a === 0) {
@@ -171,9 +195,9 @@ export function validateProductionApiUrl(rawUrl: string): string {
     if (a === 127) {
       throw new Error("Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers la boucle locale 127.0.0.0/8.");
     }
-    // 10.0.0.0/8
+    // 10.0.0.0/8 (couvre 10.0.2.2 émulateur Android)
     if (a === 10) {
-      throw new Error("Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers le réseau privé 10.0.0.0/8.");
+      throw new Error("Configuration invalide: EXPO_PUBLIC_API_URL ne peut pas pointer vers le réseau privé 10.0.0.0/8 (y compris 10.0.2.2).");
     }
     // 172.16.0.0/12
     if (a === 172 && b >= 16 && b <= 31) {

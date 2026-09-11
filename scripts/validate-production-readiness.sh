@@ -33,6 +33,15 @@ trap cleanup EXIT INT TERM
 # Sauvegarde de l'état Git avant exécution pour vérification de non-régression / non-destruction
 GIT_STATUS_BEFORE=$(git status --porcelain)
 
+# Vérification préliminaire des variables d'environnement obligatoires
+if [ -z "${EXPO_PUBLIC_API_URL:-}" ]; then
+  echo "❌ ERREUR: La variable EXPO_PUBLIC_API_URL est obligatoire pour valider la préparation production."
+  echo "Veuillez la définir avant d'exécuter ce script, par exemple:"
+  echo "  EXPO_PUBLIC_API_URL=\"https://<API_HOST>/api\" ./scripts/validate-production-readiness.sh"
+  exit 1
+fi
+node "$ROOT_DIR/scripts/validate-api-url.mjs" "$EXPO_PUBLIC_API_URL" >/dev/null
+
 # 1. Vérification Backend
 echo "=================================================="
 echo "🔧 [1/5] Validation Backend & Tests"
@@ -146,8 +155,15 @@ npm run doctor
 echo "➤ Exécution des tests automatisés Frontend..."
 npm test
 
-echo "➤ Validation de l'URL API via scripts/validate-api-url.mjs..."
-node "$ROOT_DIR/scripts/validate-api-url.mjs" "https://api.sitcha.org" >/dev/null
+echo "➤ Validation stricte de la variable EXPO_PUBLIC_API_URL fournie..."
+if [ -z "${EXPO_PUBLIC_API_URL:-}" ]; then
+  echo "❌ ERREUR: La variable EXPO_PUBLIC_API_URL est obligatoire pour valider la préparation production."
+  echo "Veuillez la définir avant d'exécuter ce script, par exemple:"
+  echo "  EXPO_PUBLIC_API_URL=\"https://<API_HOST>/api\" ./scripts/validate-production-readiness.sh"
+  exit 1
+fi
+node "$ROOT_DIR/scripts/validate-api-url.mjs" "$EXPO_PUBLIC_API_URL" >/dev/null
+echo "✓ EXPO_PUBLIC_API_URL validée avec succès."
 
 echo "➤ Test d'exportation Web (vers dossier temporaire)..."
 mkdir -p "$TMP_DIR/web-dist"
