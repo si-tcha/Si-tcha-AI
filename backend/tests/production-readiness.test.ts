@@ -1302,5 +1302,65 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       const cliValid = spawnSync('node', [validatorPath, 'https://api.example.com/api'], { encoding: 'utf8' });
       expect(cliValid.status).toBe(0);
     });
+
+    it('Le script validate-api-url.mjs impose la base exacte /api, rejette query et fragment et normalise les slashs', () => {
+      // Pathname absent
+      expect(() => validateApiUrl('https://api.example.com')).toThrowError(/doit avoir exactement le chemin '\/api'/);
+      expect(() => validateApiUrl('https://api.example.com/')).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Mauvais pathname
+      expect(() => validateApiUrl('https://api.example.com/foo')).toThrowError(/doit avoir exactement le chemin '\/api'/);
+      expect(() => validateApiUrl('https://api.example.com/api/auth')).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Sous-chemin /api/v1
+      expect(() => validateApiUrl('https://api.example.com/api/v1')).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Query string
+      expect(() => validateApiUrl('https://api.example.com/api?token=x')).toThrowError(/ne doit pas contenir de query string/);
+
+      // Fragment
+      expect(() => validateApiUrl('https://api.example.com/api#fragment')).toThrowError(/ne doit pas contenir de query string \('\?'\) ou de fragment \('#'\)/);
+
+      // Normalisation du slash final
+      expect(validateApiUrl('https://api.example.com/api')).toBe('https://api.example.com/api');
+      expect(validateApiUrl('https://api.example.com/api/')).toBe('https://api.example.com/api');
+      expect(validateApiUrl('https://api.example.com/api///')).toBe('https://api.example.com/api');
+    });
+
+    it('Vérifie la conformité de docs/EXPLOITATION.md (eas env:set, pas de eas secret, pas de domaine inventé)', () => {
+      const docPath = path.resolve(__dirname, '../../docs/EXPLOITATION.md');
+      const doc = fs.readFileSync(docPath, 'utf8');
+
+      // Commandes eas env:set pour preview et production avec visibilité plaintext
+      expect(doc).toContain('eas env:set --name EXPO_PUBLIC_API_URL');
+      expect(doc).toContain('--environment preview');
+      expect(doc).toContain('--environment production');
+      expect(doc).toContain('--visibility plaintext');
+
+      // Commandes de vérification
+      expect(doc).toContain('eas env:list --environment preview');
+      expect(doc).toContain('eas env:list --environment production');
+
+      // Absence totale de commandes obsolètes eas secret:create
+      expect(doc).not.toContain('eas secret:create');
+
+      // Mention explicite que EXPO_PUBLIC_API_URL n'est pas un secret
+      expect(doc).toMatch(/ne constitue donc pas un secret/i);
+
+      // Absence de domaines inventés
+      expect(doc).not.toContain('api.sitcha.org');
+      expect(doc).not.toContain('api-staging.sitcha.org');
+      expect(doc).not.toContain('si-tcha.org');
+    });
+
+    it('Vérifie que frontend/.env.example n’utilise aucun domaine inventé et conserve localhost', () => {
+      const envExamplePath = path.resolve(__dirname, '../../frontend/.env.example');
+      const content = fs.readFileSync(envExamplePath, 'utf8');
+
+      expect(content).toContain('EXPO_PUBLIC_API_URL=https://<API_HOST>/api');
+      expect(content).toContain('EXPO_PUBLIC_API_URL=http://localhost:4000/api');
+      expect(content).not.toContain('si-tcha.org');
+      expect(content).not.toContain('sitcha.org');
+    });
   });
 });

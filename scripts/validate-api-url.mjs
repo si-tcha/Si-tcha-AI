@@ -1,5 +1,17 @@
 #!/usr/bin/env node
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, '..');
+
+export function readProjectFile(relPath) {
+  return fs.readFileSync(path.resolve(rootDir, relPath), 'utf8');
+}
+
 /**
  * Script de validation stricte de l'URL API (EXPO_PUBLIC_API_URL).
  * Utilisé dans la CI (.github/workflows/build-apk.yml) et les scripts de validation.
@@ -30,6 +42,21 @@ export function validateApiUrl(rawUrl) {
   if (parsed.username || parsed.password) {
     throw new Error(
       "Configuration invalide: EXPO_PUBLIC_API_URL ne doit pas contenir d'identifiants (username/password)."
+    );
+  }
+
+  // Refus de query string ('?') ou de fragment ('#')
+  if (parsed.search || parsed.hash || trimmed.includes('?') || trimmed.includes('#')) {
+    throw new Error(
+      "Configuration invalide: EXPO_PUBLIC_API_URL ne doit pas contenir de query string ('?') ou de fragment ('#')."
+    );
+  }
+
+  // Le pathname doit être exactement '/api' après normalisation des slashs finaux
+  const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+  if (normalizedPath !== '/api') {
+    throw new Error(
+      `Configuration invalide: EXPO_PUBLIC_API_URL doit avoir exactement le chemin '/api' (reçu: '${parsed.pathname}').`
     );
   }
 
@@ -114,7 +141,7 @@ export function validateApiUrl(rawUrl) {
     }
   }
 
-  return trimmed.replace(/\/+$/, '');
+  return `https://${parsed.host}/api`;
 }
 
 // Exécution CLI directe

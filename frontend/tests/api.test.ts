@@ -131,7 +131,7 @@ describe('Production API Client, Networking & Configuration Tests', () => {
         resolveApiBaseUrl({
           platform: 'web',
           isDevice: true,
-          envUrl: 'http://api.sitcha.org/api',
+          envUrl: 'http://api.example.com/api',
           isDev: false,
         })
       ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
@@ -337,14 +337,101 @@ describe('Production API Client, Networking & Configuration Tests', () => {
         })
       ).toThrowError(/n'est pas une URL valide/);
 
-      // Acceptation d'une URL HTTPS publique valide avec normalisation du slash final
-      const validProdUrl = resolveApiBaseUrl({
-        platform: 'android',
-        isDevice: true,
-        envUrl: 'https://api.example.com/api///',
-        isDev: false,
-      });
-      expect(validProdUrl).toBe('https://api.example.com/api');
+      // Refus de pathname absent ou vide
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Refus de mauvais pathname
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/foo',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api/auth',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Refus de sous-chemin (/api/v1)
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api/v1',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Refus de query string
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api?token=x',
+          isDev: false,
+        })
+      ).toThrowError(/ne doit pas contenir de query string/);
+
+      // Refus de fragment
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api#fragment',
+          isDev: false,
+        })
+      ).toThrowError(/ne doit pas contenir de query string \('\?'\) ou de fragment \('#'\)/);
+
+      // Acceptation d'une URL HTTPS publique valide avec normalisation des slashs finaux
+      expect(
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api',
+          isDev: false,
+        })
+      ).toBe('https://api.example.com/api');
+
+      expect(
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api/',
+          isDev: false,
+        })
+      ).toBe('https://api.example.com/api');
+
+      expect(
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api///',
+          isDev: false,
+        })
+      ).toBe('https://api.example.com/api');
     });
 
     it('8. computeNativePhysicalDevice et getApiBaseUrl doivent normaliser le Web comme non physique natif', () => {
@@ -569,31 +656,44 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       const { validateApiUrl } = await import('../../scripts/validate-api-url.mjs');
       const { validateProductionApiUrl } = await import('../src/services/api');
 
-      // URLs valides
+      // URLs valides (avec pathname /api exact, slashs finaux normalisés)
       const validUrls = [
-        'https://api.example.com',
-        'https://api-staging.example.com/api/',
-        'https://sub.domain.cm/api/v1',
+        'https://api.example.com/api',
+        'https://api.example.com/api/',
+        'https://api.example.com/api///',
+        'https://api-staging.example.com/api',
+        'https://sub.domain.cm/api',
+        'https://sub.domain.cm/api/',
       ];
 
       for (const url of validUrls) {
+        const expected = 'https://' + new URL(url).host + '/api';
+        expect(validateApiUrl(url)).toBe(expected);
+        expect(validateProductionApiUrl(url)).toBe(expected);
         expect(validateApiUrl(url)).toBe(validateProductionApiUrl(url));
       }
 
-      // URLs invalides : toutes doivent lever une erreur dans les 2 validateurs
+      // URLs invalides : toutes doivent lever une erreur strictement identique dans les 2 validateurs
       const invalidUrls = [
         '',
         '   ',
-        'http://api.example.com',
-        'https://localhost:4000',
-        'https://dev.localhost',
-        'https://127.0.0.1:4000',
-        'https://10.0.2.2:4000',
-        'https://192.168.1.50:4000',
-        'https://172.20.0.2:4000',
-        'https://169.254.1.1:4000',
-        'https://0.0.0.0:4000',
-        'https://user:pass@api.example.com',
+        'http://api.example.com/api',
+        'https://api.example.com',
+        'https://api.example.com/',
+        'https://api.example.com/foo',
+        'https://api.example.com/api/v1',
+        'https://api.example.com/api?token=x',
+        'https://api.example.com/api#fragment',
+        'https://api.example.com/api/auth',
+        'https://localhost:4000/api',
+        'https://dev.localhost/api',
+        'https://127.0.0.1:4000/api',
+        'https://10.0.2.2:4000/api',
+        'https://192.168.1.50:4000/api',
+        'https://172.20.0.2:4000/api',
+        'https://169.254.1.1:4000/api',
+        'https://0.0.0.0:4000/api',
+        'https://user:pass@api.example.com/api',
         'https://[::1]:4000/api',
         'https://[fe80::1]/api',
         'https://[fe90::1]/api',
@@ -612,8 +712,24 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       ];
 
       for (const url of invalidUrls) {
-        expect(() => validateApiUrl(url)).toThrow();
-        expect(() => validateProductionApiUrl(url)).toThrow();
+        let cliError: string | null = null;
+        let appError: string | null = null;
+
+        try {
+          validateApiUrl(url);
+        } catch (e: any) {
+          cliError = e.message;
+        }
+
+        try {
+          validateProductionApiUrl(url);
+        } catch (e: any) {
+          appError = e.message;
+        }
+
+        expect(cliError).not.toBeNull();
+        expect(appError).not.toBeNull();
+        expect(cliError).toBe(appError);
       }
     });
   });
@@ -625,11 +741,48 @@ describe('Production API Client, Networking & Configuration Tests', () => {
 
       expect(content).not.toContain('api.sitcha.org');
       expect(content).not.toContain('api-staging.sitcha.org');
+      expect(content).not.toContain('si-tcha.org');
 
       expect(easConfig.build.preview.environment).toBe('preview');
       expect(easConfig.build.production.environment).toBe('production');
       expect('env' in easConfig.build.preview).toBe(false);
       expect('env' in easConfig.build.production).toBe(false);
+    });
+
+    it('.env.example utilise le placeholder https://<API_HOST>/api sans domaine inventé', async () => {
+      const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
+      const content = readProjectFile('frontend/.env.example');
+
+      expect(content).toContain('EXPO_PUBLIC_API_URL=https://<API_HOST>/api');
+      expect(content).toContain('EXPO_PUBLIC_API_URL=http://localhost:4000/api');
+      expect(content).not.toContain('si-tcha.org');
+      expect(content).not.toContain('sitcha.org');
+    });
+
+    it('docs/EXPLOITATION.md documente eas env:set pour preview et production et bannit eas secret:create', async () => {
+      const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
+      const doc = readProjectFile('docs/EXPLOITATION.md');
+
+      // Commandes eas env:set pour preview et production avec visibilité plaintext
+      expect(doc).toContain('eas env:set --name EXPO_PUBLIC_API_URL');
+      expect(doc).toContain('--environment preview');
+      expect(doc).toContain('--environment production');
+      expect(doc).toContain('--visibility plaintext');
+
+      // Commandes de vérification
+      expect(doc).toContain('eas env:list --environment preview');
+      expect(doc).toContain('eas env:list --environment production');
+
+      // Absence totale de commandes obsolètes eas secret:create
+      expect(doc).not.toContain('eas secret:create');
+
+      // Mention explicite que EXPO_PUBLIC_API_URL n'est pas un secret
+      expect(doc).toMatch(/ne constitue donc pas un secret/i);
+
+      // Absence de domaines de production inventés
+      expect(doc).not.toContain('api.sitcha.org');
+      expect(doc).not.toContain('api-staging.sitcha.org');
+      expect(doc).not.toContain('si-tcha.org');
     });
   });
 });

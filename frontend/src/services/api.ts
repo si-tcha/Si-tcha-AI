@@ -110,6 +110,10 @@ export function computeNativePhysicalDevice(platform: string, isDevice: boolean)
 }
 
 export function validateProductionApiUrl(rawUrl: string): string {
+  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
+    throw new Error('Configuration manquante: EXPO_PUBLIC_API_URL est absente ou vide.');
+  }
+
   const trimmed = rawUrl.trim();
   let parsed: URL;
   try {
@@ -129,6 +133,21 @@ export function validateProductionApiUrl(rawUrl: string): string {
   if (parsed.username || parsed.password) {
     throw new Error(
       "Configuration invalide: EXPO_PUBLIC_API_URL ne doit pas contenir d'identifiants (username/password)."
+    );
+  }
+
+  // Refus de query string ('?') ou de fragment ('#')
+  if (parsed.search || parsed.hash || trimmed.includes('?') || trimmed.includes('#')) {
+    throw new Error(
+      "Configuration invalide: EXPO_PUBLIC_API_URL ne doit pas contenir de query string ('?') ou de fragment ('#')."
+    );
+  }
+
+  // Le pathname doit être exactement '/api' après normalisation des slashs finaux
+  const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+  if (normalizedPath !== '/api') {
+    throw new Error(
+      `Configuration invalide: EXPO_PUBLIC_API_URL doit avoir exactement le chemin '/api' (reçu: '${parsed.pathname}').`
     );
   }
 
@@ -213,7 +232,7 @@ export function validateProductionApiUrl(rawUrl: string): string {
     }
   }
 
-  return trimmed.replace(/\/+$/, '');
+  return `https://${parsed.host}/api`;
 }
 
 export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
