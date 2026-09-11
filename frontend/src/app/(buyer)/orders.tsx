@@ -87,7 +87,7 @@ function formatOrderDate(dateStr?: string): string {
 export default function BuyerOrdersScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated, sessionSeq } = useAuth();
 
   const {
     orders,
@@ -101,7 +101,7 @@ export default function BuyerOrdersScreen() {
     serverError,
     loadOrders,
     submitRating,
-  } = useBuyerOrdersCoordinator(currentBuyerId, authLoading, authenticated);
+  } = useBuyerOrdersCoordinator(currentBuyerId, authLoading, authenticated, sessionSeq);
 
   const [ratingStars, setRatingStars] = useState(0);
   const [ratingComment, setRatingComment] = useState('');

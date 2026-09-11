@@ -20,7 +20,7 @@ const BASSIN_OPTIONS = ['Ouest', 'Centre', 'Nord', 'Littoral'];
 export default function BuyerAlertsScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated, sessionSeq } = useAuth();
 
   const {
     prefs,
@@ -30,7 +30,7 @@ export default function BuyerAlertsScreen() {
     isDataValid,
     loadAlerts,
     saveAlerts,
-  } = useBuyerAlertsCoordinator(currentBuyerId, authLoading, authenticated);
+  } = useBuyerAlertsCoordinator(currentBuyerId, authLoading, authenticated, sessionSeq);
 
   useEffect(() => {
     loadAlerts();

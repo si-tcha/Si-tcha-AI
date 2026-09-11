@@ -34,7 +34,7 @@ const ORDER_TYPES: { type: OrderType; label: string; hint: string }[] = [
 export default function BuyerCheckoutScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated, sessionSeq } = useAuth();
   const {
     cart,
     totalAmount,
@@ -60,7 +60,8 @@ export default function BuyerCheckoutScreen() {
     authenticated,
     cart,
     totalAmount,
-    refreshCart
+    refreshCart,
+    sessionSeq
   );
 
   useFocusEffect(

@@ -24,6 +24,7 @@ export class BuyerOrdersCoordinator {
   private buyerId: string | null = null;
   private authLoading = false;
   private authenticated = false;
+  private sessionSeq = 0;
 
   // Séquences indépendantes par nature d'opération
   private loadOrdersSeq = 0;
@@ -47,10 +48,11 @@ export class BuyerOrdersCoordinator {
   private inFlightGen = -1;
   private isInitialized = false;
 
-  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false, sessionSeq = 0) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    this.sessionSeq = sessionSeq;
     this.snapshot = Object.freeze({
       orders: EMPTY_ORDERS,
       loadedBuyerId: null,
@@ -94,12 +96,29 @@ export class BuyerOrdersCoordinator {
   };
 
   public getState = (): BuyerOrdersState => {
-    return this.snapshot;
+    const isDataValid = Boolean(
+      this.buyerId &&
+      !this.authLoading &&
+      this.authenticated &&
+      this.loadedBuyerId === this.buyerId
+    );
+    return {
+      ...this.snapshot,
+      orders: isDataValid ? this.snapshot.orders : EMPTY_ORDERS,
+      loadedBuyerId: isDataValid ? this.snapshot.loadedBuyerId : null,
+      selectedOrder: isDataValid ? this.snapshot.selectedOrder : null,
+      ratingOrder: isDataValid ? this.snapshot.ratingOrder : null,
+      isDataValid,
+    };
   };
 
-  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean, sessionSeq?: number) {
     const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
-    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const authChanged =
+      !this.isInitialized ||
+      this.authLoading !== authLoading ||
+      this.authenticated !== authenticated ||
+      (sessionSeq !== undefined && this.sessionSeq !== sessionSeq);
     this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
@@ -109,9 +128,14 @@ export class BuyerOrdersCoordinator {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    if (sessionSeq !== undefined) {
+      this.sessionSeq = sessionSeq;
+    }
 
-    if (activeBuyerChanged) {
-      this.sessionGen++;
+    // Incrémenter sessionGen lors de TOUT changement pertinent de contexte
+    this.sessionGen++;
+
+    if (activeBuyerChanged || authLoading || !authenticated || !buyerId) {
       this.rawOrders = [];
       this.loadedBuyerId = null;
       this.selectedOrder = null;
@@ -274,11 +298,12 @@ export class BuyerOrdersCoordinator {
 export function useBuyerOrdersCoordinator(
   buyerId: string | null,
   authLoading: boolean,
-  authenticated: boolean
+  authenticated: boolean,
+  sessionSeq?: number
 ) {
   const coordinatorRef = useRef<BuyerOrdersCoordinator | null>(null);
   if (!coordinatorRef.current) {
-    coordinatorRef.current = new BuyerOrdersCoordinator(buyerId, authLoading, authenticated);
+    coordinatorRef.current = new BuyerOrdersCoordinator(buyerId, authLoading, authenticated, sessionSeq);
   }
   const coordinator = coordinatorRef.current;
 
@@ -289,8 +314,8 @@ export function useBuyerOrdersCoordinator(
   );
 
   useEffect(() => {
-    coordinator.updateSession(buyerId, authLoading, authenticated);
-  }, [coordinator, buyerId, authLoading, authenticated]);
+    coordinator.updateSession(buyerId, authLoading, authenticated, sessionSeq);
+  }, [coordinator, buyerId, authLoading, authenticated, sessionSeq]);
 
   // DERIVATION SYNCHRONE IMMEDIATE AVEC LES PROPS COURANTES (GARANTIE PREMIER RENDU A -> B)
   const isDataValid = Boolean(
@@ -331,6 +356,7 @@ export class BuyerAlertsCoordinator {
   private buyerId: string | null = null;
   private authLoading = false;
   private authenticated = false;
+  private sessionSeq = 0;
 
   // Séquences séparées : la sauvegarde ne bloque ni n'annule le chargement
   private loadAlertsSeq = 0;
@@ -350,10 +376,11 @@ export class BuyerAlertsCoordinator {
   private inFlightGen = -1;
   private isInitialized = false;
 
-  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false, sessionSeq = 0) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    this.sessionSeq = sessionSeq;
     this.snapshot = Object.freeze({
       prefs: DEFAULT_PREFERENCES,
       matchCount: 0,
@@ -414,9 +441,13 @@ export class BuyerAlertsCoordinator {
     this.notify();
   };
 
-  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean, sessionSeq?: number) {
     const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
-    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const authChanged =
+      !this.isInitialized ||
+      this.authLoading !== authLoading ||
+      this.authenticated !== authenticated ||
+      (sessionSeq !== undefined && this.sessionSeq !== sessionSeq);
     this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
@@ -426,9 +457,14 @@ export class BuyerAlertsCoordinator {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    if (sessionSeq !== undefined) {
+      this.sessionSeq = sessionSeq;
+    }
 
-    if (activeBuyerChanged) {
-      this.sessionGen++;
+    // Incrémenter la génération lors de TOUT changement pertinent
+    this.sessionGen++;
+
+    if (activeBuyerChanged || authLoading || !authenticated || !buyerId) {
       this.rawPrefs = DEFAULT_PREFERENCES;
       this.rawMatchCount = 0;
       this.loadedBuyerId = null;
@@ -556,11 +592,12 @@ export class BuyerAlertsCoordinator {
 export function useBuyerAlertsCoordinator(
   buyerId: string | null,
   authLoading: boolean,
-  authenticated: boolean
+  authenticated: boolean,
+  sessionSeq?: number
 ) {
   const coordinatorRef = useRef<BuyerAlertsCoordinator | null>(null);
   if (!coordinatorRef.current) {
-    coordinatorRef.current = new BuyerAlertsCoordinator(buyerId, authLoading, authenticated);
+    coordinatorRef.current = new BuyerAlertsCoordinator(buyerId, authLoading, authenticated, sessionSeq);
   }
   const coordinator = coordinatorRef.current;
 
@@ -571,8 +608,8 @@ export function useBuyerAlertsCoordinator(
   );
 
   useEffect(() => {
-    coordinator.updateSession(buyerId, authLoading, authenticated);
-  }, [coordinator, buyerId, authLoading, authenticated]);
+    coordinator.updateSession(buyerId, authLoading, authenticated, sessionSeq);
+  }, [coordinator, buyerId, authLoading, authenticated, sessionSeq]);
 
   const isDataValid = Boolean(
     !authLoading &&
@@ -617,6 +654,7 @@ export class BuyerCheckoutCoordinator {
   private buyerId: string | null = null;
   private authLoading = false;
   private authenticated = false;
+  private sessionSeq = 0;
 
   private loadProductsSeq = 0;
   private confirmOrderSeq = 0;
@@ -635,10 +673,11 @@ export class BuyerCheckoutCoordinator {
   private inFlightGen = -1;
   private isInitialized = false;
 
-  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false, sessionSeq = 0) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    this.sessionSeq = sessionSeq;
     this.snapshot = Object.freeze({
       busy: false,
       products: EMPTY_PRODUCTS,
@@ -700,9 +739,13 @@ export class BuyerCheckoutCoordinator {
     };
   };
 
-  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean, sessionSeq?: number) {
     const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
-    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const authChanged =
+      !this.isInitialized ||
+      this.authLoading !== authLoading ||
+      this.authenticated !== authenticated ||
+      (sessionSeq !== undefined && this.sessionSeq !== sessionSeq);
     this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
@@ -712,9 +755,14 @@ export class BuyerCheckoutCoordinator {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    if (sessionSeq !== undefined) {
+      this.sessionSeq = sessionSeq;
+    }
 
-    if (activeBuyerChanged) {
-      this.sessionGen++;
+    // Incrémenter la génération lors de TOUT changement pertinent
+    this.sessionGen++;
+
+    if (activeBuyerChanged || authLoading || !authenticated || !buyerId) {
       // Remettre immédiatement busy à false lors du changement de contexte
       this.busy = false;
       this.loadedBuyerId = null;
@@ -850,11 +898,12 @@ export function useBuyerCheckoutCoordinator(
   authenticated: boolean,
   cart: CartItemRecord[],
   totalAmount: number,
-  refreshCart: () => Promise<void>
+  refreshCart: () => Promise<void>,
+  sessionSeq?: number
 ) {
   const coordinatorRef = useRef<BuyerCheckoutCoordinator | null>(null);
   if (!coordinatorRef.current) {
-    coordinatorRef.current = new BuyerCheckoutCoordinator(buyerId, authLoading, authenticated);
+    coordinatorRef.current = new BuyerCheckoutCoordinator(buyerId, authLoading, authenticated, sessionSeq);
   }
   const coordinator = coordinatorRef.current;
 
@@ -865,8 +914,8 @@ export function useBuyerCheckoutCoordinator(
   );
 
   useEffect(() => {
-    coordinator.updateSession(buyerId, authLoading, authenticated);
-  }, [coordinator, buyerId, authLoading, authenticated]);
+    coordinator.updateSession(buyerId, authLoading, authenticated, sessionSeq);
+  }, [coordinator, buyerId, authLoading, authenticated, sessionSeq]);
 
   // Synchronous guard for cart alignment
   const isCartAligned = Boolean(
@@ -925,6 +974,7 @@ export class BuyerHomeCoordinator {
   private buyerId: string | null = null;
   private authLoading = false;
   private authenticated = false;
+  private sessionSeq = 0;
 
   // Séquences indépendantes : l'ajout au panier ne bloque pas la synchro silencieuse
   private syncSeq = 0;
@@ -944,10 +994,11 @@ export class BuyerHomeCoordinator {
   private inFlightGen = -1;
   private isInitialized = false;
 
-  constructor(buyerId: string | null = null, authLoading = false, authenticated = false) {
+  constructor(buyerId: string | null = null, authLoading = false, authenticated = false, sessionSeq = 0) {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    this.sessionSeq = sessionSeq;
     this.snapshot = Object.freeze({
       products: EMPTY_PRODUCTS,
       isLoading: !authLoading,
@@ -1008,9 +1059,13 @@ export class BuyerHomeCoordinator {
     };
   };
 
-  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean) {
+  public updateSession(buyerId: string | null, authLoading: boolean, authenticated: boolean, sessionSeq?: number) {
     const activeBuyerChanged = !this.isInitialized || this.buyerId !== buyerId;
-    const authChanged = !this.isInitialized || this.authLoading !== authLoading || this.authenticated !== authenticated;
+    const authChanged =
+      !this.isInitialized ||
+      this.authLoading !== authLoading ||
+      this.authenticated !== authenticated ||
+      (sessionSeq !== undefined && this.sessionSeq !== sessionSeq);
     this.isInitialized = true;
 
     if (!activeBuyerChanged && !authChanged) {
@@ -1020,9 +1075,14 @@ export class BuyerHomeCoordinator {
     this.buyerId = buyerId;
     this.authLoading = authLoading;
     this.authenticated = authenticated;
+    if (sessionSeq !== undefined) {
+      this.sessionSeq = sessionSeq;
+    }
 
-    if (activeBuyerChanged) {
-      this.sessionGen++;
+    // Incrémenter la génération lors de TOUT changement pertinent
+    this.sessionGen++;
+
+    if (activeBuyerChanged || authLoading || !authenticated || !buyerId) {
       // Compteur d'alertes A déjà affiché, bascule directe vers B : zéro immédiatement !
       this.rawAlertCount = 0;
       this.loadedAlertBuyerId = null;
@@ -1154,11 +1214,12 @@ export function useBuyerHomeCoordinator(
   authLoading: boolean,
   authenticated: boolean,
   cartCount: number,
-  addProductToCart: (product: any, maxStock?: number) => Promise<any>
+  addProductToCart: (product: any, maxStock?: number) => Promise<any>,
+  sessionSeq?: number
 ) {
   const coordinatorRef = useRef<BuyerHomeCoordinator | null>(null);
   if (!coordinatorRef.current) {
-    coordinatorRef.current = new BuyerHomeCoordinator(buyerId, authLoading, authenticated);
+    coordinatorRef.current = new BuyerHomeCoordinator(buyerId, authLoading, authenticated, sessionSeq);
   }
   const coordinator = coordinatorRef.current;
 
@@ -1169,8 +1230,8 @@ export function useBuyerHomeCoordinator(
   );
 
   useEffect(() => {
-    coordinator.updateSession(buyerId, authLoading, authenticated);
-  }, [coordinator, buyerId, authLoading, authenticated]);
+    coordinator.updateSession(buyerId, authLoading, authenticated, sessionSeq);
+  }, [coordinator, buyerId, authLoading, authenticated, sessionSeq]);
 
   const isCartAligned = Boolean(
     !authLoading &&
