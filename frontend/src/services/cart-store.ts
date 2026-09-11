@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { dbService, CartItemRecord } from './database';
 
 type Listener = () => void;
@@ -9,6 +9,12 @@ class CartStore {
   private initialized = false;
 
   async init() {
+    if (!dbService.getActiveBuyerId()) {
+      this.cart = [];
+      this.initialized = true;
+      this.notify();
+      return;
+    }
     try {
       await dbService.initDatabase();
       this.cart = await dbService.getCart();
@@ -93,8 +99,18 @@ class CartStore {
   }
 
   async refresh() {
-    await dbService.initDatabase();
-    this.cart = await dbService.getCart();
+    if (!dbService.getActiveBuyerId()) {
+      this.cart = [];
+      this.initialized = true;
+      this.notify();
+      return;
+    }
+    try {
+      await dbService.initDatabase();
+      this.cart = await dbService.getCart();
+    } catch {
+      this.cart = [];
+    }
     this.initialized = true;
     this.notify();
   }
@@ -103,7 +119,10 @@ class CartStore {
     dbService.setActiveBuyerId(buyerId);
     this.cart = [];
     this.initialized = false;
-    await this.refresh();
+    this.notify();
+    if (buyerId) {
+      await this.refresh();
+    }
   }
 
   reset() {
@@ -130,19 +149,40 @@ export function useCart() {
     return unsubscribe;
   }, []);
 
+  const addToCart = React.useCallback(
+    (p: { productId: string; name: string; price: string; unit: string }, maxStock?: number) =>
+      cartStore.addToCart(p, maxStock),
+    []
+  );
+
+  const incrementCartItem = React.useCallback(
+    (productId: string, maxStock?: number) => cartStore.incrementCartItem(productId, maxStock),
+    []
+  );
+
+  const decrementCartItem = React.useCallback(
+    (productId: string) => cartStore.decrementCartItem(productId),
+    []
+  );
+
+  const removeFromCart = React.useCallback(
+    (productId: string) => cartStore.removeFromCart(productId),
+    []
+  );
+
+  const clearCart = React.useCallback(() => cartStore.clearCart(), []);
+
+  const refreshCart = React.useCallback(() => cartStore.refresh(), []);
+
   return {
     cart,
     cartCount,
     totalAmount,
-    addToCart: (
-      p: { productId: string; name: string; price: string; unit: string },
-      maxStock?: number
-    ) => cartStore.addToCart(p, maxStock),
-    incrementCartItem: (productId: string, maxStock?: number) =>
-      cartStore.incrementCartItem(productId, maxStock),
-    decrementCartItem: (productId: string) => cartStore.decrementCartItem(productId),
-    removeFromCart: (productId: string) => cartStore.removeFromCart(productId),
-    clearCart: () => cartStore.clearCart(),
-    refreshCart: () => cartStore.refresh(),
+    addToCart,
+    incrementCartItem,
+    decrementCartItem,
+    removeFromCart,
+    clearCart,
+    refreshCart,
   };
 }

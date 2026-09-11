@@ -182,15 +182,31 @@ export const STORAGE_KEYS = {
 } as const;
 
 export function getBuyerCartKey(buyerId?: string | null): string {
-  return buyerId ? `sitcha_buyer_cart_${buyerId}` : 'sitcha_cart_db';
+  if (!buyerId || typeof buyerId !== 'string' || !buyerId.trim()) {
+    throw new Error('Un buyerId actif valide est obligatoire pour accéder au panier privé.');
+  }
+  return `sitcha_buyer_cart_${buyerId.trim()}`;
 }
 
 export function getBuyerOrdersKey(buyerId?: string | null): string {
-  return buyerId ? `sitcha_buyer_orders_${buyerId}` : 'sitcha_orders';
+  if (!buyerId || typeof buyerId !== 'string' || !buyerId.trim()) {
+    throw new Error('Un buyerId actif valide est obligatoire pour accéder aux commandes privées.');
+  }
+  return `sitcha_buyer_orders_${buyerId.trim()}`;
 }
 
 export function getBuyerClientRequestIdKey(buyerId?: string | null): string {
-  return buyerId ? `sitcha_cart_client_request_id_${buyerId}` : 'sitcha_cart_client_request_id';
+  if (!buyerId || typeof buyerId !== 'string' || !buyerId.trim()) {
+    throw new Error('Un buyerId actif valide est obligatoire pour accéder à la clé d\'idempotence.');
+  }
+  return `sitcha_cart_client_request_id_${buyerId.trim()}`;
+}
+
+export function getBuyerAlertPrefsKey(buyerId?: string | null): string {
+  if (!buyerId || typeof buyerId !== 'string' || !buyerId.trim()) {
+    throw new Error('Un buyerId actif valide est obligatoire pour accéder aux préférences d\'alertes.');
+  }
+  return `sitcha_alert_prefs_${buyerId.trim()}`;
 }
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [];

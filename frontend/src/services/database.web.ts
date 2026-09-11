@@ -45,6 +45,7 @@ import {
   getBuyerCartKey,
   getBuyerOrdersKey,
   getBuyerClientRequestIdKey,
+  getBuyerAlertPrefsKey,
   nowIso,
 } from './database.shared';
 
@@ -123,33 +124,101 @@ class DatabaseService {
     return this.activeBuyerId;
   }
 
+  requireActiveBuyerId(): string {
+    if (
+      !this.activeBuyerId ||
+      typeof this.activeBuyerId !== 'string' ||
+      !this.activeBuyerId.trim() ||
+      this.activeBuyerId === 'anonymous'
+    ) {
+      throw new Error('Opération non autorisée : un acheteur actif connecté est requis.');
+    }
+    return this.activeBuyerId.trim();
+  }
+
   getCartKey(): string {
-    return getBuyerCartKey(this.activeBuyerId);
+    return getBuyerCartKey(this.requireActiveBuyerId());
   }
 
   getOrdersKey(): string {
-    return getBuyerOrdersKey(this.activeBuyerId);
+    return getBuyerOrdersKey(this.requireActiveBuyerId());
   }
 
   getClientRequestIdKey(): string {
-    return getBuyerClientRequestIdKey(this.activeBuyerId);
+    return getBuyerClientRequestIdKey(this.requireActiveBuyerId());
   }
 
-  async syncRemoteData(): Promise<boolean> {
+  getAlertPrefsKey(): string {
+    return getBuyerAlertPrefsKey(this.requireActiveBuyerId());
+  }
+
+  private async fetchAllPublicProducts(): Promise<ProductOffer[]> {
+    let page = 1;
+    const limit = 50;
+    const maxPages = 20;
+    const allProducts: ProductOffer[] = [];
+    const seenIds = new Set<string>();
+
+    while (page <= maxPages) {
+      const res = await apiClient.getProducts(page, limit);
+      if (!Array.isArray(res?.products) || res.products.length === 0) {
+        break;
+      }
+      for (const p of res.products as ProductOffer[]) {
+        if (!seenIds.has(p.id)) {
+          seenIds.add(p.id);
+          allProducts.push(p);
+        }
+      }
+      if (!res.meta || page >= res.meta.totalPages) {
+        break;
+      }
+      page++;
+    }
+    return allProducts;
+  }
+
+  private async fetchAllBuyerOrders(): Promise<OrderRecord[]> {
+    this.requireActiveBuyerId();
+    let page = 1;
+    const limit = 50;
+    const maxPages = 20;
+    const allOrders: OrderRecord[] = [];
+    const seenIds = new Set<string>();
+
+    while (page <= maxPages) {
+      const res = await apiClient.getOrders(page, limit);
+      if (!Array.isArray(res?.orders) || res.orders.length === 0) {
+        break;
+      }
+      for (const o of res.orders as OrderRecord[]) {
+        if (!seenIds.has(o.id)) {
+          seenIds.add(o.id);
+          allOrders.push(o);
+        }
+      }
+      if (!res.meta || page >= res.meta.totalPages) {
+        break;
+      }
+      page++;
+    }
+    return allOrders;
+  }
+
+  async syncPublicData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes, ordersRes] = await Promise.all([
-        apiClient.getProducts().catch(() => null),
+      const [products, gicsRes, terrainRes] = await Promise.all([
+        this.fetchAllPublicProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
-        apiClient.getOrders().catch(() => null),
       ]);
 
       let updated = false;
-      if (productsRes?.products?.length) {
-        writeJson(STORAGE_KEYS.PRODUCTS, productsRes.products);
+      if (Array.isArray(products) && products.length > 0) {
+        writeJson(STORAGE_KEYS.PRODUCTS, products);
         updated = true;
       }
-      if (gicsRes?.gics?.length) {
+      if (Array.isArray(gicsRes?.gics)) {
         writeJson(STORAGE_KEYS.GICS_PUBLIC, gicsRes.gics);
         updated = true;
       }
@@ -160,8 +229,35 @@ class DatabaseService {
         if (terrainRes.programs?.length) writeJson(STORAGE_KEYS.PROGRAMS, terrainRes.programs);
         updated = true;
       }
-      if (Array.isArray(ordersRes?.orders)) {
-        writeJson(this.getOrdersKey(), ordersRes.orders);
+      return updated;
+    } catch {
+      return false;
+    }
+  }
+
+  async syncBuyerData(buyerId?: string): Promise<boolean> {
+    const targetBuyerId = buyerId || this.activeBuyerId;
+    if (!targetBuyerId || targetBuyerId === 'anonymous') {
+      return false;
+    }
+    if (this.activeBuyerId !== targetBuyerId) {
+      this.activeBuyerId = targetBuyerId;
+    }
+
+    try {
+      const [orders, prefsRes] = await Promise.all([
+        this.fetchAllBuyerOrders().catch(() => null),
+        apiClient.getAlertPreferences().catch(() => null),
+      ]);
+
+      let updated = false;
+      if (Array.isArray(orders)) {
+        writeJson(this.getOrdersKey(), orders);
+        this.lastOrdersSyncSuccessful = true;
+        updated = true;
+      }
+      if (prefsRes?.preferences) {
+        writeJson(this.getAlertPrefsKey(), prefsRes.preferences);
         updated = true;
       }
       return updated;
@@ -170,11 +266,35 @@ class DatabaseService {
     }
   }
 
+  async syncRemoteData(): Promise<boolean> {
+    const publicUpdated = await this.syncPublicData();
+    let buyerUpdated = false;
+    if (this.activeBuyerId && this.activeBuyerId !== 'anonymous') {
+      buyerUpdated = await this.syncBuyerData(this.activeBuyerId);
+    }
+    return publicUpdated || buyerUpdated;
+  }
+
   async initDatabase(): Promise<void> {
     if (typeof localStorage === 'undefined') return;
+
+    // Purge des anciennes clés globales et anonymes
+    const legacyKeys = [
+      'sitcha_cart_db',
+      'sitcha_cart_db_anonymous',
+      'sitcha_orders',
+      'sitcha_orders_anonymous',
+      'sitcha_alert_prefs',
+      'sitcha_alert_prefs_anonymous',
+      'sitcha_cart_client_req_id',
+      'sitcha_cart_client_req_id_anonymous',
+    ];
+    for (const k of legacyKeys) {
+      localStorage.removeItem(k);
+    }
+
     ensure(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
     ensure(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
-    ensure(this.getCartKey(), DEFAULT_CART);
     ensure(STORAGE_KEYS.GIC_PROFILE, DEFAULT_GIC_PROFILE);
     ensure(STORAGE_KEYS.GIC_MEMBERS, DEFAULT_GIC_MEMBERS);
     ensure(STORAGE_KEYS.GIC_NEEDS, DEFAULT_GIC_NEEDS);
@@ -184,13 +304,11 @@ class DatabaseService {
     ensure(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
     ensure(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
     ensure(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
-    ensure(this.getOrdersKey(), []);
-    ensure(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
     ensure(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
     ensure(STORAGE_KEYS.LOCAL_ROLE, 'leader');
 
-    // Async sync from remote backend if network is online
-    this.syncRemoteData().catch(() => {});
+    // Seules les données publiques sont synchronisées à l'initialisation
+    this.syncPublicData().catch(() => {});
   }
 
   async getLocalRole(): Promise<'leader' | 'member'> {
@@ -258,24 +376,29 @@ class DatabaseService {
   }
 
   async getCart(): Promise<CartItemRecord[]> {
+    this.requireActiveBuyerId();
     return readJson(this.getCartKey(), DEFAULT_CART);
   }
 
   async getCartCount(): Promise<number> {
+    this.requireActiveBuyerId();
     const cart = await this.getCart();
     return cart.reduce((acc, item) => acc + item.quantity, 0);
   }
 
   async getCartTotal(): Promise<number> {
+    this.requireActiveBuyerId();
     const cart = await this.getCart();
     return cart.reduce((sum, item) => sum + (parseFloat(item.price || '0') * item.quantity), 0);
   }
 
   async getCartClientRequestId(): Promise<string | null> {
+    this.requireActiveBuyerId();
     return readJson<string | null>(this.getClientRequestIdKey(), null);
   }
 
   async getOrCreateCartClientRequestId(): Promise<string> {
+    this.requireActiveBuyerId();
     let key = await this.getCartClientRequestId();
     if (!key) {
       key = generateClientRequestId();
@@ -285,11 +408,13 @@ class DatabaseService {
   }
 
   async invalidateCartClientRequestId(): Promise<void> {
+    this.requireActiveBuyerId();
     if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(this.getClientRequestIdKey());
   }
 
   async clearCart(): Promise<void> {
+    this.requireActiveBuyerId();
     writeJson(this.getCartKey(), []);
     await this.invalidateCartClientRequestId();
   }
@@ -303,6 +428,7 @@ class DatabaseService {
     },
     maxStock?: number
   ): Promise<CartItemRecord> {
+    const buyerId = this.requireActiveBuyerId();
     const targetId = String(product.productId);
     if (maxStock !== undefined && maxStock < 1) {
       throw new Error(`Stock indisponible pour ${product.name}.`);
@@ -333,7 +459,7 @@ class DatabaseService {
       price: product.price,
       unit: product.unit,
       quantity: 1,
-      buyerId: this.activeBuyerId || undefined,
+      buyerId,
       synced: false,
     };
     writeJson(this.getCartKey(), [...cart, newItem]);
@@ -342,6 +468,7 @@ class DatabaseService {
   }
 
   async incrementCartItem(productId: string, maxStock?: number): Promise<CartItemRecord | null> {
+    this.requireActiveBuyerId();
     const targetId = String(productId);
     const cart = await this.getCart();
     const existing = cart.find((item) => String(item.productId) === targetId);
@@ -363,6 +490,7 @@ class DatabaseService {
   }
 
   async decrementCartItem(productId: string): Promise<CartItemRecord | null> {
+    this.requireActiveBuyerId();
     const targetId = String(productId);
     const cart = await this.getCart();
     const existing = cart.find((item) => String(item.productId) === targetId);
@@ -385,6 +513,7 @@ class DatabaseService {
   }
 
   async removeFromCart(productId: string): Promise<void> {
+    this.requireActiveBuyerId();
     const targetId = String(productId);
     const cart = await this.getCart();
     const updatedCart = cart.filter((item) => String(item.productId) !== targetId);
@@ -476,13 +605,12 @@ class DatabaseService {
   }
 
   async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
+    this.requireActiveBuyerId();
     if (syncWithServer) {
       try {
-        const res = await apiClient.getOrders();
-        if (Array.isArray(res?.orders)) {
-          writeJson(this.getOrdersKey(), res.orders);
-          this.lastOrdersSyncSuccessful = true;
-        }
+        const orders = await this.fetchAllBuyerOrders();
+        writeJson(this.getOrdersKey(), orders);
+        this.lastOrdersSyncSuccessful = true;
       } catch (err) {
         this.lastOrdersSyncSuccessful = false;
         if (!isNetworkError(err)) {
@@ -495,35 +623,89 @@ class DatabaseService {
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
+    this.requireActiveBuyerId();
     const cart = await this.getCart();
     if (!cart.length) return [];
 
     const clientRequestId = await this.getOrCreateCartClientRequestId();
-    const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
+    const items = cart.map((item) => ({ productId: item.productId, quantity: item.quantity }));
 
     // Appel direct au backend avec la clé d'idempotence
     // Aucune simulation locale : si échec (stock, réseau, 401, 500),
     // l'erreur est propagée, le panier reste INTACT, et la clé d'idempotence conservée pour le retry.
-    await apiClient.createOrder(type, items, clientRequestId);
+    const res = await apiClient.createOrder(type, items, clientRequestId);
 
-    // En cas de succès serveur avéré :
-    // 1. Vider le panier local et nettoyer la clé d'idempotence
+    // En cas de succès serveur (201 ou 200 rejeu idempotent) :
+    // 1. Vider immédiatement le panier local et nettoyer la clé d'idempotence
     await this.clearCart();
 
-    // 2. Récupérer les commandes synchronisées depuis le serveur
-    return await this.getOrders(true);
+    // 2. Extraire les commandes renvoyées directement par la réponse du POST
+    const serverOrders = (Array.isArray(res?.orders) ? res.orders : []) as OrderRecord[];
+
+    // 3. Mettre à jour immédiatement le cache local de l'acheteur avec les commandes créées
+    const currentOrders = readJson<OrderRecord[]>(this.getOrdersKey(), []);
+    const mergedMap = new Map<string, OrderRecord>();
+    for (const o of serverOrders) {
+      mergedMap.set(String(o.id), o);
+    }
+    for (const o of currentOrders) {
+      if (!mergedMap.has(String(o.id))) {
+        mergedMap.set(String(o.id), o);
+      }
+    }
+    const updatedOrders = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    writeJson(this.getOrdersKey(), updatedOrders);
+
+    // 4. Déclencher en tâche de fond la synchronisation complète de toutes les commandes
+    // sans bloquer le retour ni faire échouer si le GET plante
+    this.fetchAllBuyerOrders()
+      .then((allOrders) => {
+        writeJson(this.getOrdersKey(), allOrders);
+      })
+      .catch((bgErr) => {
+        console.warn('Synchro en tâche de fond des commandes après POST non bloquante:', bgErr);
+      });
+
+    return updatedOrders;
   }
 
   async getAlertPreferences(): Promise<AlertPreferences> {
-    return readJson(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
+    this.requireActiveBuyerId();
+    try {
+      const res = await apiClient.getAlertPreferences();
+      if (res?.preferences) {
+        writeJson(this.getAlertPrefsKey(), res.preferences);
+        return res.preferences;
+      }
+    } catch (err) {
+      if (!isNetworkError(err)) {
+        throw err;
+      }
+      console.warn('Mode hors-ligne : lecture des alertes depuis le cache local.');
+    }
+    return readJson(this.getAlertPrefsKey(), DEFAULT_ALERT_PREFS);
   }
 
   async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> {
-    writeJson(STORAGE_KEYS.ALERT_PREFS, prefs);
-    return prefs;
+    this.requireActiveBuyerId();
+    try {
+      const res = await apiClient.saveAlertPreferences(prefs);
+      const saved = res?.preferences || prefs;
+      writeJson(this.getAlertPrefsKey(), saved);
+      return saved;
+    } catch (err) {
+      if (isNetworkError(err)) {
+        writeJson(this.getAlertPrefsKey(), prefs);
+        return prefs;
+      }
+      throw err;
+    }
   }
 
   async getMatchingAlertCount(): Promise<number> {
+    this.requireActiveBuyerId();
     const prefs = await this.getAlertPreferences();
     if (!prefs.productNames.length && !prefs.bassins.length) return 0;
     const products = await this.getProducts();

@@ -45,6 +45,7 @@ import {
   TrustRating,
   WeatherRecord,
   getBuyerClientRequestIdKey,
+  getBuyerAlertPrefsKey,
   nowIso,
 } from './database.shared';
 
@@ -129,12 +130,24 @@ class DatabaseService {
     return this.activeBuyerId;
   }
 
-  private getBuyerId(): string {
-    return this.activeBuyerId || 'anonymous';
+  requireActiveBuyerId(): string {
+    if (
+      !this.activeBuyerId ||
+      typeof this.activeBuyerId !== 'string' ||
+      !this.activeBuyerId.trim() ||
+      this.activeBuyerId === 'anonymous'
+    ) {
+      throw new Error('Opération non autorisée : un acheteur actif connecté est requis.');
+    }
+    return this.activeBuyerId.trim();
   }
 
   private getClientRequestIdKey(): string {
-    return getBuyerClientRequestIdKey(this.activeBuyerId);
+    return getBuyerClientRequestIdKey(this.requireActiveBuyerId());
+  }
+
+  private getAlertPrefsKey(): string {
+    return getBuyerAlertPrefsKey(this.requireActiveBuyerId());
   }
 
   private getDb() {
@@ -173,16 +186,68 @@ class DatabaseService {
     }
   }
 
-  async syncRemoteData(): Promise<boolean> {
+  private async fetchAllPublicProducts(): Promise<ProductOffer[]> {
+    let page = 1;
+    const limit = 50;
+    const maxPages = 20;
+    const allProducts: ProductOffer[] = [];
+    const seenIds = new Set<string>();
+
+    while (page <= maxPages) {
+      const res = await apiClient.getProducts(page, limit);
+      if (!Array.isArray(res?.products) || res.products.length === 0) {
+        break;
+      }
+      for (const p of res.products as ProductOffer[]) {
+        if (!seenIds.has(p.id)) {
+          seenIds.add(p.id);
+          allProducts.push(p);
+        }
+      }
+      if (!res.meta || page >= res.meta.totalPages) {
+        break;
+      }
+      page++;
+    }
+    return allProducts;
+  }
+
+  private async fetchAllBuyerOrders(): Promise<OrderRecord[]> {
+    this.requireActiveBuyerId();
+    let page = 1;
+    const limit = 50;
+    const maxPages = 20;
+    const allOrders: OrderRecord[] = [];
+    const seenIds = new Set<string>();
+
+    while (page <= maxPages) {
+      const res = await apiClient.getOrders(page, limit);
+      if (!Array.isArray(res?.orders) || res.orders.length === 0) {
+        break;
+      }
+      for (const o of res.orders as OrderRecord[]) {
+        if (!seenIds.has(o.id)) {
+          seenIds.add(o.id);
+          allOrders.push(o);
+        }
+      }
+      if (!res.meta || page >= res.meta.totalPages) {
+        break;
+      }
+      page++;
+    }
+    return allOrders;
+  }
+
+  async syncPublicData(): Promise<boolean> {
     try {
-      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, ordersRes, b2bRes, parcelsRes, prefinRes, trustRes] = await Promise.all([
-        apiClient.getProducts().catch(() => null),
+      const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, b2bRes, parcelsRes, prefinRes, trustRes] = await Promise.all([
+        this.fetchAllPublicProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
         apiClient.getHarvests().catch(() => null),
         apiClient.getExpenses().catch(() => null),
         apiClient.getGicProfile().catch(() => null),
-        apiClient.getOrders().catch(() => null),
         apiClient.getB2BOffers().catch(() => null),
         apiClient.getParcels().catch(() => null),
         apiClient.getPrefinancingDeals().catch(() => null),
@@ -192,8 +257,8 @@ class DatabaseService {
       let updated = false;
       const db = this.getDb();
 
-      if (Array.isArray(productsRes?.products)) {
-        this.writeKv(STORAGE_KEYS.PRODUCTS, productsRes.products);
+      if (Array.isArray(productsRes) && productsRes.length > 0) {
+        this.writeKv(STORAGE_KEYS.PRODUCTS, productsRes);
         updated = true;
       }
       if (Array.isArray(gicsRes?.gics)) {
@@ -238,17 +303,6 @@ class DatabaseService {
               [n.id, n.category, n.description, n.updatedAt || nowIso(), n.authorRole || 'member']
             );
           }
-        }
-        updated = true;
-      }
-      if (ordersRes?.orders) {
-        const buyerId = this.getBuyerId();
-        db.runSync('DELETE FROM orders WHERE buyerId = ? AND (synced = 1 OR synced IS NULL)', [buyerId]);
-        for (const o of (ordersRes.orders as any[])) {
-          db.runSync(
-            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
-          );
         }
         updated = true;
       }
@@ -299,6 +353,54 @@ class DatabaseService {
     }
   }
 
+  async syncBuyerData(buyerId?: string): Promise<boolean> {
+    const targetBuyerId = buyerId || this.activeBuyerId;
+    if (!targetBuyerId || targetBuyerId === 'anonymous') {
+      return false;
+    }
+    if (this.activeBuyerId !== targetBuyerId) {
+      this.activeBuyerId = targetBuyerId;
+    }
+
+    try {
+      const [orders, prefsRes] = await Promise.all([
+        this.fetchAllBuyerOrders().catch(() => null),
+        apiClient.getAlertPreferences().catch(() => null),
+      ]);
+
+      let updated = false;
+      const db = this.getDb();
+
+      if (Array.isArray(orders)) {
+        db.runSync('DELETE FROM orders WHERE buyerId = ?', [targetBuyerId]);
+        for (const o of orders) {
+          db.runSync(
+            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [targetBuyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+          );
+        }
+        this.lastOrdersSyncSuccessful = true;
+        updated = true;
+      }
+      if (prefsRes?.preferences) {
+        this.writeKv(this.getAlertPrefsKey(), prefsRes.preferences);
+        updated = true;
+      }
+      return updated;
+    } catch {
+      return false;
+    }
+  }
+
+  async syncRemoteData(): Promise<boolean> {
+    const publicUpdated = await this.syncPublicData();
+    let buyerUpdated = false;
+    if (this.activeBuyerId && this.activeBuyerId !== 'anonymous') {
+      buyerUpdated = await this.syncBuyerData(this.activeBuyerId);
+    }
+    return publicUpdated || buyerUpdated;
+  }
+
   async initDatabase(): Promise<void> {
     try {
       const db = this.getDb();
@@ -314,7 +416,7 @@ class DatabaseService {
           id TEXT PRIMARY KEY, label TEXT, amount REAL, category TEXT, synced INTEGER, updatedAt TEXT, authorRole TEXT
         );
         CREATE TABLE IF NOT EXISTS cart_items (
-          buyerId TEXT NOT NULL DEFAULT 'anonymous',
+          buyerId TEXT NOT NULL,
           productId TEXT NOT NULL,
           id TEXT,
           name TEXT,
@@ -325,7 +427,7 @@ class DatabaseService {
           PRIMARY KEY (buyerId, productId)
         );
         CREATE TABLE IF NOT EXISTS orders (
-          buyerId TEXT NOT NULL DEFAULT 'anonymous',
+          buyerId TEXT NOT NULL,
           id TEXT NOT NULL,
           type TEXT,
           status TEXT,
@@ -357,6 +459,16 @@ class DatabaseService {
         CREATE TABLE IF NOT EXISTS trust_ratings (
           id TEXT PRIMARY KEY, targetId TEXT, targetType TEXT, rating INTEGER, comment TEXT, authorName TEXT, createdAt TEXT, synced INTEGER
         );
+
+        -- Nettoyage strict des anciennes données orphelines ou anonymes
+        DELETE FROM cart_items WHERE buyerId IS NULL OR buyerId = '' OR buyerId = 'anonymous';
+        DELETE FROM orders WHERE buyerId IS NULL OR buyerId = '' OR buyerId = 'anonymous';
+        DELETE FROM kv_store WHERE key IN (
+          'sitcha_cart_db', 'sitcha_cart_db_anonymous',
+          'sitcha_orders', 'sitcha_orders_anonymous',
+          'sitcha_alert_prefs', 'sitcha_alert_prefs_anonymous',
+          'sitcha_cart_client_req_id', 'sitcha_cart_client_req_id_anonymous'
+        );
       `);
 
       this.ensureKv(STORAGE_KEYS.GIC_PROFILE, DEFAULT_GIC_PROFILE);
@@ -367,79 +479,16 @@ class DatabaseService {
       this.ensureKv(STORAGE_KEYS.PROGRAMS, DEFAULT_PROGRAMS);
       this.ensureKv(STORAGE_KEYS.PRODUCTS, DEFAULT_PRODUCTS);
       this.ensureKv(STORAGE_KEYS.GICS_PUBLIC, DEFAULT_GICS_PUBLIC);
-      this.ensureKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS);
       this.ensureKv(STORAGE_KEYS.SYNC_PEER, DEFAULT_SYNC_PEER);
       this.ensureKv(STORAGE_KEYS.LOCAL_ROLE, 'leader');
 
-      // Migration sécurisée pour cart_items (clé composite buyerId + productId)
-      try {
-        const cartInfo = db.getAllSync('PRAGMA table_info(cart_items);') as any[];
-        if (cartInfo.length > 0 && !cartInfo.some((col: any) => col.name === 'buyerId')) {
-          db.execSync(`
-            CREATE TABLE cart_items_v2 (
-              buyerId TEXT NOT NULL DEFAULT 'anonymous',
-              productId TEXT NOT NULL,
-              id TEXT,
-              name TEXT,
-              price TEXT,
-              unit TEXT,
-              quantity INTEGER,
-              synced INTEGER,
-              PRIMARY KEY (buyerId, productId)
-            );
-            INSERT OR IGNORE INTO cart_items_v2 (buyerId, productId, id, name, price, unit, quantity, synced)
-            SELECT 'anonymous', productId, id, name, price, unit, quantity, synced FROM cart_items;
-            DROP TABLE cart_items;
-            ALTER TABLE cart_items_v2 RENAME TO cart_items;
-          `);
-        }
-      } catch (e) {
-        console.warn('Erreur migration cart_items SQLite:', e);
-      }
-
-      // Migration sécurisée pour orders (clé composite buyerId + id)
-      try {
-        const ordersInfo = db.getAllSync('PRAGMA table_info(orders);') as any[];
-        if (ordersInfo.length > 0 && !ordersInfo.some((col: any) => col.name === 'buyerId')) {
-          db.execSync(`
-            CREATE TABLE orders_v2 (
-              buyerId TEXT NOT NULL DEFAULT 'anonymous',
-              id TEXT NOT NULL,
-              type TEXT,
-              status TEXT,
-              productId TEXT,
-              productName TEXT,
-              quantity REAL,
-              unit TEXT,
-              price TEXT,
-              gicName TEXT,
-              createdAt TEXT,
-              synced INTEGER,
-              PRIMARY KEY (buyerId, id)
-            );
-            INSERT OR IGNORE INTO orders_v2 (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced)
-            SELECT 'anonymous', id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced FROM orders;
-            DROP TABLE orders;
-            ALTER TABLE orders_v2 RENAME TO orders;
-          `);
-        }
-      } catch (e) {
-        console.warn('Erreur migration orders SQLite:', e);
-      }
-
       // Migrations pour s'assurer que les colonnes 'synced' existent dans les tables préexistantes
-      try {
-        db.runSync("ALTER TABLE prefinancing ADD COLUMN synced INTEGER;");
-      } catch (e) { /* ignore if already exists */ }
-      try {
-        db.runSync("ALTER TABLE trust_ratings ADD COLUMN synced INTEGER;");
-      } catch (e) { /* ignore if already exists */ }
-      try {
-        db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;");
-      } catch (e) { /* ignore if already exists */ }
+      try { db.runSync("ALTER TABLE prefinancing ADD COLUMN synced INTEGER;"); } catch (e) {}
+      try { db.runSync("ALTER TABLE trust_ratings ADD COLUMN synced INTEGER;"); } catch (e) {}
+      try { db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;"); } catch (e) {}
 
-      // Async sync from remote backend if network is online
-      this.syncRemoteData().catch(() => {});
+      // Seules les données publiques sont synchronisées à l'initialisation
+      this.syncPublicData().catch(() => {});
     } catch (err) {
       console.warn('Erreur initDatabase:', err);
     }
@@ -507,18 +556,19 @@ class DatabaseService {
   }
 
   async getCart(): Promise<CartItemRecord[]> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const rows = this.getDb().getAllSync('SELECT * FROM cart_items WHERE buyerId = ? ORDER BY rowid ASC', [buyerId]) as any[];
     return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
   async getCartCount(): Promise<number> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const row = this.getDb().getFirstSync('SELECT SUM(quantity) as count FROM cart_items WHERE buyerId = ?', [buyerId]) as { count: number | null };
     return Number(row?.count) || 0;
   }
 
   async getCartTotal(): Promise<number> {
+    this.requireActiveBuyerId();
     const items = await this.getCart();
     return items.reduce((sum, item) => sum + (parseFloat(item.price || '0') * item.quantity), 0);
   }
@@ -544,7 +594,7 @@ class DatabaseService {
   }
 
   async clearCart(): Promise<void> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     this.getDb().runSync('DELETE FROM cart_items WHERE buyerId = ?', [buyerId]);
     await this.invalidateCartClientRequestId();
   }
@@ -553,7 +603,7 @@ class DatabaseService {
     product: { productId: string; name: string; price: string; unit: string },
     maxStock?: number
   ): Promise<CartItemRecord> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const targetId = String(product.productId);
     const db = this.getDb();
 
@@ -584,7 +634,7 @@ class DatabaseService {
   }
 
   async incrementCartItem(productId: string, maxStock?: number): Promise<CartItemRecord | null> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const targetId = String(productId);
     const db = this.getDb();
     const existing = db.getFirstSync('SELECT * FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]) as any;
@@ -602,7 +652,7 @@ class DatabaseService {
   }
 
   async decrementCartItem(productId: string): Promise<CartItemRecord | null> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const targetId = String(productId);
     const db = this.getDb();
     const existing = db.getFirstSync('SELECT * FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]) as any;
@@ -621,7 +671,7 @@ class DatabaseService {
   }
 
   async removeFromCart(productId: string): Promise<void> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const targetId = String(productId);
     this.getDb().runSync('DELETE FROM cart_items WHERE buyerId = ? AND productId = ?', [buyerId, targetId]);
     await this.invalidateCartClientRequestId();
@@ -688,22 +738,20 @@ class DatabaseService {
   }
 
   async getOrders(syncWithServer = true): Promise<OrderRecord[]> {
-    const buyerId = this.getBuyerId();
+    const buyerId = this.requireActiveBuyerId();
     const db = this.getDb();
 
     if (syncWithServer) {
       try {
-        const res = await apiClient.getOrders();
-        if (Array.isArray(res?.orders)) {
-          db.runSync('DELETE FROM orders WHERE buyerId = ?', [buyerId]);
-          for (const o of (res.orders as any[])) {
-            db.runSync(
-              'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
-            );
-          }
-          this.lastOrdersSyncSuccessful = true;
+        const orders = await this.fetchAllBuyerOrders();
+        db.runSync('DELETE FROM orders WHERE buyerId = ?', [buyerId]);
+        for (const o of orders) {
+          db.runSync(
+            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+          );
         }
+        this.lastOrdersSyncSuccessful = true;
       } catch (err) {
         this.lastOrdersSyncSuccessful = false;
         if (!isNetworkError(err)) {
@@ -718,35 +766,95 @@ class DatabaseService {
   }
 
   async updateOrderStatus(id: string, status: string): Promise<void> {
+    const buyerId = this.requireActiveBuyerId();
     const db = this.getDb();
-    db.runSync('UPDATE orders SET status = ?, synced = 0 WHERE id = ?', [status, id]);
-    this.syncRemoteData().catch(() => {});
+    db.runSync('UPDATE orders SET status = ?, synced = 0 WHERE buyerId = ? AND id = ?', [status, buyerId, id]);
+    this.syncBuyerData().catch(() => {});
   }
 
   async createOrderFromCart(type: OrderType): Promise<OrderRecord[]> {
+    const buyerId = this.requireActiveBuyerId();
     const cart = await this.getCart();
     if (!cart.length) return [];
 
     const clientRequestId = await this.getOrCreateCartClientRequestId();
-    const items = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
+    const items = cart.map((item) => ({ productId: item.productId, quantity: item.quantity }));
 
     // Appel direct au backend avec la clé d'idempotence
     // Aucune simulation locale : si échec (stock, réseau, 401, 500),
     // l'erreur est propagée, le panier reste INTACT, et la clé d'idempotence conservée pour le retry.
-    await apiClient.createOrder(type, items, clientRequestId);
+    const res = await apiClient.createOrder(type, items, clientRequestId);
 
-    // En cas de succès serveur avéré :
+    // En cas de succès serveur (201 ou 200 rejeu idempotent) :
     // 1. Vider le panier local et nettoyer la clé d'idempotence
     await this.clearCart();
 
-    // 2. Récupérer les commandes synchronisées depuis le serveur
-    return await this.getOrders(true);
+    // 2. Extraire les commandes renvoyées directement par la réponse du POST
+    const serverOrders = (Array.isArray(res?.orders) ? res.orders : []) as OrderRecord[];
+
+    // 3. Mettre à jour immédiatement la base SQLite locale de l'acheteur avec les commandes créées
+    const db = this.getDb();
+    for (const o of serverOrders) {
+      db.runSync(
+        'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+      );
+    }
+
+    // 4. Déclencher en tâche de fond la synchronisation complète sans bloquer le retour
+    this.fetchAllBuyerOrders()
+      .then((allOrders) => {
+        db.runSync('DELETE FROM orders WHERE buyerId = ?', [buyerId]);
+        for (const o of allOrders) {
+          db.runSync(
+            'INSERT OR REPLACE INTO orders (buyerId, id, type, status, productId, productName, quantity, unit, price, gicName, createdAt, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [buyerId, o.id, o.type, o.status, o.productId, o.productName, o.quantity, o.unit, o.price, o.gicName, o.createdAt, 1]
+          );
+        }
+      })
+      .catch((bgErr) => {
+        console.warn('Synchro en tâche de fond des commandes après POST SQLite non bloquante:', bgErr);
+      });
+
+    const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [buyerId]) as any[];
+    return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
   }
 
-  async getAlertPreferences(): Promise<AlertPreferences> { return this.readKv(STORAGE_KEYS.ALERT_PREFS, DEFAULT_ALERT_PREFS); }
-  async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> { this.writeKv(STORAGE_KEYS.ALERT_PREFS, prefs); return prefs; }
+  async getAlertPreferences(): Promise<AlertPreferences> {
+    this.requireActiveBuyerId();
+    try {
+      const res = await apiClient.getAlertPreferences();
+      if (res?.preferences) {
+        this.writeKv(this.getAlertPrefsKey(), res.preferences);
+        return res.preferences;
+      }
+    } catch (err) {
+      if (!isNetworkError(err)) {
+        throw err;
+      }
+      console.warn('Mode hors-ligne : lecture des alertes depuis le kv_store local.');
+    }
+    return this.readKv(this.getAlertPrefsKey(), DEFAULT_ALERT_PREFS);
+  }
+
+  async saveAlertPreferences(prefs: AlertPreferences): Promise<AlertPreferences> {
+    this.requireActiveBuyerId();
+    try {
+      const res = await apiClient.saveAlertPreferences(prefs);
+      const saved = res?.preferences || prefs;
+      this.writeKv(this.getAlertPrefsKey(), saved);
+      return saved;
+    } catch (err) {
+      if (isNetworkError(err)) {
+        this.writeKv(this.getAlertPrefsKey(), prefs);
+        return prefs;
+      }
+      throw err;
+    }
+  }
 
   async getMatchingAlertCount(): Promise<number> {
+    this.requireActiveBuyerId();
     const prefs = await this.getAlertPreferences();
     if (!prefs.productNames.length && !prefs.bassins.length) return 0;
     const products = await this.getProducts();

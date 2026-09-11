@@ -138,9 +138,6 @@ vi.mock('expo-sqlite', () => ({
       if (sql.includes('FROM cart_items WHERE buyerId = ? AND productId = ?')) {
         return sqliteCart.get(`${params[0]}:${params[1]}`) || null;
       }
-      if (sql.includes('FROM cart_items WHERE productId = ?')) {
-        return sqliteCart.get(`anonymous:${params[0]}`) || null;
-      }
       if (sql.includes('SUM(quantity)')) {
         let items = Array.from(sqliteCart.values());
         if (sql.includes('WHERE buyerId = ?') && params[0] !== undefined) {
