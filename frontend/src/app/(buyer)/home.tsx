@@ -33,7 +33,18 @@ export default function BuyerHomeScreen() {
 
   const router = useRouter();
   const { showToast } = useToast();
-  const { signOut } = useAuth();
+  const { signOut, buyerId, isLoading: authLoading } = useAuth();
+  const [lastBuyerId, setLastBuyerId] = useState<string | null>(buyerId);
+
+  // Close modals and reset private alert count immediately on auth loading or buyer change
+  useEffect(() => {
+    if (authLoading || buyerId !== lastBuyerId) {
+      setAlertCount(0);
+      setShowFilterModal(false);
+      setSelectedProduct(null);
+      setLastBuyerId(buyerId);
+    }
+  }, [buyerId, authLoading, lastBuyerId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -53,18 +64,26 @@ export default function BuyerHomeScreen() {
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
+      const targetBuyerId = buyerId;
+      const initialGen = dbService.getContextGeneration();
+
       const silentSync = async () => {
         try {
           await dbService.initDatabase();
           await dbService.syncPublicData().catch(() => {});
-          if (dbService.getActiveBuyerId()) {
-            await dbService.syncBuyerData().catch(() => {});
+          if (targetBuyerId && !authLoading) {
+            await dbService.syncBuyerData(targetBuyerId).catch(() => {});
           }
           const [offers, matches] = await Promise.all([
             dbService.getProducts(),
-            dbService.getActiveBuyerId() ? dbService.getMatchingAlertCount().catch(() => 0) : 0,
+            targetBuyerId && !authLoading
+              ? dbService.getMatchingAlertCount().catch(() => 0)
+              : Promise.resolve(0),
           ]);
           if (!isMounted) return;
+          if (authLoading || buyerId !== targetBuyerId || dbService.getContextGeneration() !== initialGen) {
+            return;
+          }
 
           setAlertCount(matches);
           setProducts(offers);
@@ -76,7 +95,7 @@ export default function BuyerHomeScreen() {
       return () => {
         isMounted = false;
       };
-    }, [])
+    }, [buyerId, authLoading])
   );
 
   const handleLogout = async () => {
@@ -85,6 +104,8 @@ export default function BuyerHomeScreen() {
   };
 
   const handleAddToCart = async (product: ProductOffer) => {
+    const actionBuyerId = buyerId;
+    const actionGen = dbService.getContextGeneration();
     try {
       await addProductToCart(
         {
@@ -95,8 +116,14 @@ export default function BuyerHomeScreen() {
         },
         product.volumeDisponible
       );
+      if (authLoading || buyerId !== actionBuyerId || dbService.getContextGeneration() !== actionGen) {
+        return;
+      }
       showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
     } catch (err: any) {
+      if (authLoading || buyerId !== actionBuyerId || dbService.getContextGeneration() !== actionGen) {
+        return;
+      }
       console.warn('Erreur ajout panier:', err);
       showToast({ message: err?.message || 'Impossible d\'ajouter au panier.', type: 'error' });
     }
@@ -158,6 +185,8 @@ export default function BuyerHomeScreen() {
     </TouchableOpacity>
   );
 
+  const displayAlertCount = authLoading || !buyerId ? 0 : alertCount;
+
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
@@ -182,9 +211,9 @@ export default function BuyerHomeScreen() {
 
             <TouchableOpacity style={styles.iconButton} onPress={() => router.replace('/(buyer)/alerts')}>
               <Feather name="bell" size={18} color="#f3ecd8" />
-              {alertCount > 0 && (
+              {displayAlertCount > 0 && (
                 <View style={[styles.badgeContainer, { backgroundColor: '#d97834' }]}>
-                  <Text style={styles.badgeText}>{alertCount}</Text>
+                  <Text style={styles.badgeText}>{displayAlertCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -503,7 +532,7 @@ export default function BuyerHomeScreen() {
           </View>
         </Modal>
 
-        <BottomNavBar role="buyer" cartCount={cartCount} alertCount={alertCount} />
+        <BottomNavBar role="buyer" cartCount={cartCount} alertCount={displayAlertCount} />
       </View>
     </SafeAreaView>
   );

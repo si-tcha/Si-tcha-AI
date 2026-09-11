@@ -18,6 +18,7 @@ import { isNetworkError } from '@/services/api';
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -32,6 +33,7 @@ const ORDER_TYPES: { type: OrderType; label: string; hint: string }[] = [
 export default function BuyerCheckoutScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
   const {
     cart,
     totalAmount,
@@ -46,13 +48,14 @@ export default function BuyerCheckoutScreen() {
   const [busy, setBusy] = useState(false);
 
   const loadProducts = useCallback(async () => {
+    if (authLoading || !currentBuyerId || !authenticated) return;
     try {
       const items = await dbService.getProducts();
       setProducts(items);
     } catch {
       // Ignorer si échec
     }
-  }, []);
+  }, [authLoading, currentBuyerId, authenticated]);
 
   useFocusEffect(
     useCallback(() => {
@@ -97,11 +100,15 @@ export default function BuyerCheckoutScreen() {
   };
 
   const handleConfirm = async () => {
-    if (!cart.length || busy) return;
+    if (!cart.length || busy || authLoading || !currentBuyerId || !authenticated) return;
+    const capturedBuyerId = currentBuyerId;
 
     setBusy(true);
     try {
       await dbService.createOrderFromCart(selectedType);
+      if (currentBuyerId !== capturedBuyerId) {
+        return;
+      }
       await refreshCart();
       showToast({
         message: 'Commande enregistrée auprès du GIC ! Le règlement s\'effectuera en espèces lors de la livraison.',
@@ -109,6 +116,9 @@ export default function BuyerCheckoutScreen() {
       });
       router.replace('/(buyer)/orders');
     } catch (err: any) {
+      if (currentBuyerId !== capturedBuyerId) {
+        return;
+      }
       console.warn('Erreur validation commande:', err);
       let errorMsg = 'Impossible de valider la commande. Votre panier a été conservé.';
       if (isNetworkError(err)) {
@@ -125,7 +135,9 @@ export default function BuyerCheckoutScreen() {
       }
       showToast({ message: errorMsg, type: 'error' });
     } finally {
-      setBusy(false);
+      if (currentBuyerId === capturedBuyerId) {
+        setBusy(false);
+      }
     }
   };
 

@@ -11,7 +11,7 @@ import {
   View,
   Image,
 } from 'react-native';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -20,6 +20,7 @@ import { dbService, OrderRecord } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { ApiError, isNetworkError } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -85,7 +86,10 @@ function formatOrderDate(dateStr?: string): string {
 export default function BuyerOrdersScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
+
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loadedBuyerId, setLoadedBuyerId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
@@ -97,15 +101,41 @@ export default function BuyerOrdersScreen() {
   const [ratingComment, setRatingComment] = useState('');
   const [ratedOrders, setRatedOrders] = useState<Set<string>>(new Set());
 
+  // Lors d'une bascule A -> B ou déconnexion : masquer immédiatement les données de A et fermer les modales
+  useEffect(() => {
+    if (!currentBuyerId || authLoading || !authenticated) {
+      setSelectedOrder(null);
+      setRatingOrder(null);
+      setOrders([]);
+      setLoadedBuyerId(null);
+    } else if (loadedBuyerId && loadedBuyerId !== currentBuyerId) {
+      setSelectedOrder(null);
+      setRatingOrder(null);
+      setOrders([]);
+      setLoadedBuyerId(null);
+    }
+  }, [currentBuyerId, authLoading, authenticated, loadedBuyerId]);
+
   const loadOrders = useCallback(async () => {
+    if (authLoading || !currentBuyerId || !authenticated) {
+      setOrders([]);
+      setLoadedBuyerId(null);
+      setIsLoading(false);
+      return;
+    }
+    const capturedBuyerId = currentBuyerId;
     setIsLoading(true);
     setServerError(null);
     try {
       await dbService.initDatabase();
       const loaded = await dbService.getOrders(true);
-      setOrders(loaded);
-      setIsOffline(!dbService.isLastOrdersSyncSuccessful());
+      if (currentBuyerId === capturedBuyerId) {
+        setOrders(loaded);
+        setLoadedBuyerId(capturedBuyerId);
+        setIsOffline(!dbService.isLastOrdersSyncSuccessful());
+      }
     } catch (err) {
+      if (currentBuyerId !== capturedBuyerId) return;
       if (err instanceof ApiError && err.status === 401) {
         showToast({ message: 'Session expirée. Veuillez vous reconnecter.', type: 'error' });
         router.replace('/(auth)/login');
@@ -113,8 +143,11 @@ export default function BuyerOrdersScreen() {
       }
       if (isNetworkError(err)) {
         const cached = await dbService.getOrders(false);
-        setOrders(cached);
-        setIsOffline(true);
+        if (currentBuyerId === capturedBuyerId) {
+          setOrders(cached);
+          setLoadedBuyerId(capturedBuyerId);
+          setIsOffline(true);
+        }
       } else {
         const message =
           err instanceof Error ? err.message : 'Erreur serveur lors de la récupération des commandes';
@@ -123,9 +156,11 @@ export default function BuyerOrdersScreen() {
         setIsOffline(false);
       }
     } finally {
-      setIsLoading(false);
+      if (currentBuyerId === capturedBuyerId) {
+        setIsLoading(false);
+      }
     }
-  }, [router, showToast]);
+  }, [router, showToast, currentBuyerId, authLoading, authenticated]);
 
   useFocusEffect(
     useCallback(() => {
@@ -152,6 +187,8 @@ export default function BuyerOrdersScreen() {
       showToast({ message: "Erreur lors de l'évaluation.", type: 'error' });
     }
   };
+
+  const isDataValid = !authLoading && Boolean(currentBuyerId) && loadedBuyerId === currentBuyerId && authenticated;
 
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
@@ -201,7 +238,11 @@ export default function BuyerOrdersScreen() {
         )}
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {isLoading ? (
+          {isLoading || authLoading || (!isDataValid && !orders.length) ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>Chargement de vos commandes...</Text>
+            </View>
+          ) : !isDataValid ? (
             <View style={styles.empty}>
               <Text style={styles.emptyText}>Chargement de vos commandes...</Text>
             </View>
@@ -317,7 +358,7 @@ export default function BuyerOrdersScreen() {
         </ScrollView>
 
         {/* Modal Bordereau QR */}
-        <Modal visible={!!selectedOrder} animationType="slide" transparent>
+        <Modal visible={Boolean(selectedOrder && isDataValid)} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -364,7 +405,7 @@ export default function BuyerOrdersScreen() {
         </Modal>
 
         {/* Modal Évaluation GIC */}
-        <Modal visible={!!ratingOrder} animationType="slide" transparent>
+        <Modal visible={Boolean(ratingOrder && isDataValid)} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
