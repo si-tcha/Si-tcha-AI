@@ -530,6 +530,45 @@ describe('Buyer Orders Endpoints — Atomic Creation, Stock Control, Idempotency
       expect(res.body.message).toMatch(/Conflit d'idempotence/);
       expect(prisma.recolteOffre.updateMany).not.toHaveBeenCalled();
     });
+
+    it("doit annuler la transaction et propager une erreur si l'acquisition du verrou obligatoire échoue", async () => {
+      (prisma.$executeRaw as any) = vi.fn().mockRejectedValueOnce(new Error('Lock acquisition failed'));
+
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '55555555-5555-4555-8555-555555555551',
+          items: [{ productId: '1', quantity: 10 }],
+        });
+
+      expect(res.status).toBe(500);
+    });
+
+    it("doit gérer défensivement l'erreur P2002 (Prisma) en retournant 409 Conflict", async () => {
+      (prisma.recolteOffre.findUnique as any).mockResolvedValueOnce({
+        id: BigInt(1),
+        quantiteDisponible: 100,
+        produitAgricole: { nom: 'Maïs', prix: 500, unite: 'kg' },
+        gic: { id: BigInt(10), nom: 'GIC Test' },
+      });
+      const p2002Error: any = new Error('Unique constraint failed on the fields: (`acheteurId`,`clientRequestId`,`recolteOffreId`)');
+      p2002Error.code = 'P2002';
+      (prisma.transactionAcheteur.create as any).mockRejectedValueOnce(p2002Error);
+
+      const res = await request(app)
+        .post('/api/buyer/orders')
+        .set('Authorization', `Bearer ${buyer1Token}`)
+        .send({
+          type: 'commande_ferme',
+          clientRequestId: '55555555-5555-4555-8555-555555555552',
+          items: [{ productId: '1', quantity: 10 }],
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.message).toMatch(/Conflit d'unicité/);
+    });
   });
 
   describe('Isolation des Acheteurs & Historique Réel (GET /api/buyer/orders)', () => {

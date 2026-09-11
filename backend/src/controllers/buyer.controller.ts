@@ -162,13 +162,9 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
     // 3. Exécution transactionnelle complète : sérialisation PostgreSQL, vérification d'idempotence,
     // lecture des offres, contrôle des prix et stocks, décrément et insertion.
     const result = await prisma.$transaction(async (tx) => {
-      // Verrou transactionnel PostgreSQL déterministe pour sérialiser deux requêtes concurrentes
+      // Verrou transactionnel PostgreSQL déterministe obligatoire pour sérialiser deux requêtes concurrentes
       // du même acheteur avec le même clientRequestId
-      try {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`buyer_order:${buyerId.toString()}:${clientRequestId}`}))`;
-      } catch {
-        // En cas d'environnement sans advisory locks (ex. mock tests mémoire), continuer
-      }
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`buyer_order:${buyerId.toString()}:${clientRequestId}`}))`;
 
       // Vérification d'idempotence sous transaction
       const existingTxs = await tx.transactionAcheteur.findMany({
@@ -310,6 +306,11 @@ export async function createBuyerOrders(req: AuthRequest, res: Response, next: N
   } catch (error: any) {
     if (error.statusCode) {
       return res.status(error.statusCode).json({ message: error.message });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({
+        message: "Conflit d'unicité sur la commande (clientRequestId déjà utilisé ou collision concurrente).",
+      });
     }
     next(error);
   }

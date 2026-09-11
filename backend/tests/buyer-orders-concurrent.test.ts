@@ -1,132 +1,166 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-import app from '../src/app.js';
-import prisma from '../src/lib/prisma.js';
-import { getJwtSecret } from '../src/middlewares/auth.js';
+import { randomUUID } from 'crypto';
+
+// 1. Validation stricte de la variable d'environnement TEST_DATABASE_URL
+const testDbUrl = process.env.TEST_DATABASE_URL;
+if (!testDbUrl) {
+  throw new Error(
+    "TEST_DATABASE_URL obligatoire pour exécuter buyer-orders-concurrent.test.ts. " +
+    "Ce test requiert une instance PostgreSQL de test dédiée. Exemple : " +
+    "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5438/sitcha_test?schema=public"
+  );
+}
+
+// 2. Refuser de démarrer si le nom de la base ne contient pas explicitement 'test'
+const parsedDbUrl = new URL(testDbUrl);
+const dbName = parsedDbUrl.pathname.replace(/^\//, '').toLowerCase();
+if (!dbName.includes('test')) {
+  throw new Error(
+    `Refus de démarrer : la base cible '${dbName}' ne porte pas un nom manifestement réservé aux tests (doit contenir 'test').`
+  );
+}
+
+// Forcer DATABASE_URL pour l'app
+process.env.DATABASE_URL = testDbUrl;
+
+// Import dynamique après assignation de DATABASE_URL
+const { default: app } = await import('../src/app.js');
+const { default: prisma } = await import('../src/lib/prisma.js');
+const { getJwtSecret } = await import('../src/middlewares/auth.js');
 
 describe('Buyer Orders Real PostgreSQL Concurrency & Idempotency Integration Test', () => {
   const secret = getJwtSecret();
-  const testBuyerId = '9801';
+
+  // Identifiants générés dynamiquement par exécution pour garantir l'isolation complète
+  const seed = Math.floor(100000 + Math.random() * 900000);
+  const testBuyerId = String(9000000 + seed);
+  const testOfferId = String(9100000 + seed);
+  const testProductId = String(9200000 + seed);
+  const testGicId = String(9300000 + seed);
+  const testBassinId = String(9400000 + seed);
+  const testPhone = `+23769${seed.toString().padStart(6, '0')}`;
+
   const testBuyerToken = jwt.sign(
-    { id: testBuyerId, role: 'buyer', phone: '+237699980101', nom: 'Concurrent Buyer Corp' },
+    { id: testBuyerId, role: 'buyer', phone: testPhone, nom: 'Concurrent Buyer Corp' },
     secret,
     { expiresIn: '1h' }
   );
 
-  const testOfferId = '9801';
-  const testProductId = '9801';
-  const testGicId = '9801';
-  const testBassinId = '9801';
+  const cleanupData = async () => {
+    try {
+      await prisma.transactionAcheteur.deleteMany({
+        where: { recolteOffreId: BigInt(testOfferId) },
+      });
+    } catch {}
+    try {
+      await prisma.recolteOffre.deleteMany({
+        where: { id: BigInt(testOfferId) },
+      });
+    } catch {}
+    try {
+      await prisma.gIC.deleteMany({
+        where: { id: BigInt(testGicId) },
+      });
+    } catch {}
+    try {
+      await prisma.bassinProduction.deleteMany({
+        where: { id: BigInt(testBassinId) },
+      });
+    } catch {}
+    try {
+      await prisma.produitAgricole.deleteMany({
+        where: { id: BigInt(testProductId) },
+      });
+    } catch {}
+    try {
+      await prisma.acheteur.deleteMany({
+        where: { id: BigInt(testBuyerId) },
+      });
+    } catch {}
+  };
 
   beforeAll(async () => {
-    // Nettoyer d'abord les enregistrements enfants puis parents
-    await prisma.transactionAcheteur.deleteMany({
-      where: { recolteOffreId: BigInt(testOfferId) },
-    });
-    await prisma.recolteOffre.deleteMany({
-      where: { id: BigInt(testOfferId) },
-    });
-    await prisma.gIC.deleteMany({
-      where: { id: BigInt(testGicId) },
-    });
-    await prisma.bassinProduction.deleteMany({
-      where: { id: BigInt(testBassinId) },
-    });
-    await prisma.produitAgricole.deleteMany({
-      where: { id: BigInt(testProductId) },
-    });
-    await prisma.acheteur.deleteMany({
-      where: { id: BigInt(testBuyerId) },
-    });
+    try {
+      await cleanupData();
 
-    // 1. Acheteur
-    await prisma.acheteur.create({
-      data: {
-        id: BigInt(testBuyerId),
-        nomEntreprise: 'Concurrent Buyer Corp',
-        contact: '+237699980101',
-        phoneVerified: true,
-        isVerified: true,
-      },
-    });
+      // 1. Acheteur
+      await prisma.acheteur.create({
+        data: {
+          id: BigInt(testBuyerId),
+          nomEntreprise: 'Concurrent Buyer Corp',
+          contact: testPhone,
+          phoneVerified: true,
+          isVerified: true,
+        },
+      });
 
-    // 2. BassinProduction
-    await prisma.bassinProduction.create({
-      data: {
-        id: BigInt(testBassinId),
-        nom: 'Bassin Test Concurrency',
-        region: 'Littoral',
-        latitude: 4.05,
-        longitude: 9.71,
-      },
-    });
+      // 2. BassinProduction
+      await prisma.bassinProduction.create({
+        data: {
+          id: BigInt(testBassinId),
+          nom: `Bassin Concurrency ${seed}`,
+          region: 'Littoral',
+          latitude: 4.05,
+          longitude: 9.71,
+        },
+      });
 
-    // 3. ProduitAgricole avec prix réel
-    await prisma.produitAgricole.create({
-      data: {
-        id: BigInt(testProductId),
-        nom: 'Café Arabica Concurrent',
-        categorie: 'Café',
-        prix: 3000,
-        unite: 'kg',
-      },
-    });
+      // 3. ProduitAgricole avec prix réel
+      await prisma.produitAgricole.create({
+        data: {
+          id: BigInt(testProductId),
+          nom: `Café Arabica Concurrent ${seed}`,
+          categorie: 'Café',
+          prix: 3000,
+          unite: 'kg',
+        },
+      });
 
-    // 4. GIC
-    await prisma.gIC.create({
-      data: {
-        id: BigInt(testGicId),
-        nom: 'GIC Concurrency Test',
-        logoURL: 'https://example.com/logo.png',
-        activitesPrincipales: 'Production Café',
-        identifiantREF: 'GIC-CONC-001',
-        statutLegalisation: 'LEGALISE',
-        timestampMaj: new Date(),
-        bassinProductionId: BigInt(testBassinId),
-      },
-    });
+      // 4. GIC
+      await prisma.gIC.create({
+        data: {
+          id: BigInt(testGicId),
+          nom: `GIC Concurrency ${seed}`,
+          logoURL: 'https://example.com/logo.png',
+          activitesPrincipales: 'Production Café',
+          identifiantREF: `GIC-CONC-${seed}`,
+          statutLegalisation: 'LEGALISE',
+          timestampMaj: new Date(),
+          bassinProductionId: BigInt(testBassinId),
+        },
+      });
 
-    // 5. RecolteOffre avec stock initial 100
-    await prisma.recolteOffre.create({
-      data: {
-        id: BigInt(testOfferId),
-        produitAgricoleId: BigInt(testProductId),
-        gicId: BigInt(testGicId),
-        quantiteEstimee: 100,
-        quantiteDisponible: 100,
-        dateDispoEstimee: new Date('2026-09-15'),
-        maturite: 'MURE',
-        timestampMaj: new Date(),
-      },
-    });
+      // 5. RecolteOffre avec stock initial 100
+      await prisma.recolteOffre.create({
+        data: {
+          id: BigInt(testOfferId),
+          produitAgricoleId: BigInt(testProductId),
+          gicId: BigInt(testGicId),
+          quantiteEstimee: 100,
+          quantiteDisponible: 100,
+          dateDispoEstimee: new Date('2026-09-15'),
+          maturite: 'MURE',
+          timestampMaj: new Date(),
+        },
+      });
+    } catch (err) {
+      await cleanupData();
+      throw err;
+    }
   });
 
   afterAll(async () => {
-    // Nettoyage final ordonné
-    await prisma.transactionAcheteur.deleteMany({
-      where: { recolteOffreId: BigInt(testOfferId) },
-    });
-    await prisma.recolteOffre.deleteMany({
-      where: { id: BigInt(testOfferId) },
-    });
-    await prisma.gIC.deleteMany({
-      where: { id: BigInt(testGicId) },
-    });
-    await prisma.bassinProduction.deleteMany({
-      where: { id: BigInt(testBassinId) },
-    });
-    await prisma.produitAgricole.deleteMany({
-      where: { id: BigInt(testProductId) },
-    });
-    await prisma.acheteur.deleteMany({
-      where: { id: BigInt(testBuyerId) },
-    });
-    await prisma.$disconnect();
+    try {
+      await cleanupData();
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
   it('deux requêtes hautement concurrentes avec le même clientRequestId aboutissent à une création et un rejeu idempotent, sans faux 409 et stock décrémenté UNE SEULE FOIS', async () => {
-    const clientRequestId = '99999999-9999-4999-8999-999999999901';
+    const clientRequestId = randomUUID();
     const orderPayload = {
       type: 'commande_ferme',
       clientRequestId,
@@ -181,11 +215,24 @@ describe('Buyer Orders Real PostgreSQL Concurrency & Idempotency Integration Tes
   });
 
   it('même clientRequestId avec un payload différent retourne 409 Conflict et ne décrémente pas le stock', async () => {
-    const clientRequestId = '99999999-9999-4999-8999-999999999901'; // Déjà utilisé au test précédent
+    const clientRequestId = randomUUID();
+
+    // 1ère commande réussie
+    const firstRes = await request(app)
+      .post('/api/buyer/orders')
+      .set('Authorization', `Bearer ${testBuyerToken}`)
+      .send({
+        type: 'commande_ferme',
+        clientRequestId,
+        items: [{ productId: testOfferId, quantity: 10 }],
+      });
+    expect(firstRes.status).toBe(201);
+
+    // 2ème commande réutilisant le même clientRequestId avec payload conflictuel
     const conflictingPayload = {
       type: 'commande_ferme',
       clientRequestId,
-      items: [{ productId: testOfferId, quantity: 25 }], // Quantité modifiée (25 au lieu de 15)
+      items: [{ productId: testOfferId, quantity: 20 }], // Quantité différente
     };
 
     const res = await request(app)
@@ -196,18 +243,18 @@ describe('Buyer Orders Real PostgreSQL Concurrency & Idempotency Integration Tes
     expect(res.status).toBe(409);
     expect(res.body.message).toMatch(/Conflit d'idempotence/);
 
-    // Le stock ne doit pas avoir bougé (toujours 85)
+    // Le stock ne doit avoir été décrémenté que de 10 (85 - 10 = 75)
     const dbOffer = await prisma.recolteOffre.findUnique({
       where: { id: BigInt(testOfferId) },
     });
-    expect(Number(dbOffer?.quantiteDisponible)).toBe(85);
+    expect(Number(dbOffer?.quantiteDisponible)).toBe(75);
   });
 
   it('concurrence sur stock restant : deux requêtes distinctes concurrentes demandant plus que le stock disponible mènent à 1 succès et 1 échec 409 sans survente', async () => {
-    // Actuellement le stock est à 85.
-    // Deux requêtes concurrentes avec clientRequestId différents demandent 50 chacune (50 + 50 = 100 > 85).
-    const reqIdA = '99999999-9999-4999-8999-999999999902';
-    const reqIdB = '99999999-9999-4999-8999-999999999903';
+    // Actuellement le stock est à 75.
+    // Deux requêtes concurrentes avec clientRequestId différents demandent 50 chacune (50 + 50 = 100 > 75).
+    const reqIdA = randomUUID();
+    const reqIdB = randomUUID();
 
     const [resA, resB] = await Promise.all([
       request(app)
@@ -238,10 +285,10 @@ describe('Buyer Orders Real PostgreSQL Concurrency & Idempotency Integration Tes
     expect(successRes.body.orders).toHaveLength(1);
     expect(failRes.body.message).toMatch(/Stock insuffisant/);
 
-    // Stock final doit être exactement 85 - 50 = 35 (jamais négatif)
+    // Stock final doit être exactement 75 - 50 = 25 (jamais négatif)
     const dbOffer = await prisma.recolteOffre.findUnique({
       where: { id: BigInt(testOfferId) },
     });
-    expect(Number(dbOffer?.quantiteDisponible)).toBe(35);
+    expect(Number(dbOffer?.quantiteDisponible)).toBe(25);
   });
 });

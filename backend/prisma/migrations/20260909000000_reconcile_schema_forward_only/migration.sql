@@ -628,11 +628,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS "JournalCroissance_recolteOffreId_key" ON "Jou
 -- Ensure indices for TransactionAcheteur
 DROP INDEX IF EXISTS "TransactionAcheteur_acheteurId_clientRequestId_recolteOffreId_k";
 DROP INDEX IF EXISTS "TransactionAcheteur_acheteurId_clientRequestId_recolteOffre_key";
-CREATE UNIQUE INDEX IF NOT EXISTS "TransactionAcheteur_acheteurId_clientRequestId_recolteOffreId_key" 
+CREATE UNIQUE INDEX IF NOT EXISTS "TransactionAcheteur_acheteurId_clientRequestId_recolteOffreId_key"
   ON "TransactionAcheteur"("acheteurId", "clientRequestId", "recolteOffreId");
-ALTER INDEX IF EXISTS "TransactionAcheteur_acheteurId_clientRequestId_recolteOffreId_k" 
+ALTER INDEX IF EXISTS "TransactionAcheteur_acheteurId_clientRequestId_recolteOffreId_k"
   RENAME TO "TransactionAcheteur_acheteurId_clientRequestId_recolteOffre_key";
-CREATE INDEX IF NOT EXISTS "TransactionAcheteur_acheteurId_clientRequestId_idx" 
+CREATE INDEX IF NOT EXISTS "TransactionAcheteur_acheteurId_clientRequestId_idx"
   ON "TransactionAcheteur"("acheteurId", "clientRequestId");
 
 -- Step 6: Foreign Keys
