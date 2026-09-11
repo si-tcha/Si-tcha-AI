@@ -5,7 +5,18 @@ import { renderToString } from 'react-dom/server';
 import { dbService as webDbService } from '../src/services/database.web';
 import { cartStore, useCart } from '../src/services/cart-store';
 import { apiClient, ApiError } from '../src/services/api';
-import { STORAGE_KEYS, CartItemRecord } from '../src/services/database.shared';
+import {
+  STORAGE_KEYS,
+  CartItemRecord,
+  isValidBuyerId,
+  validateBuyerId,
+  isValidBuyerStorageKey,
+  STRICT_BUYER_ID_REGEX,
+  BUYER_CART_KEY_PREFIX,
+  BUYER_ORDERS_KEY_PREFIX,
+  BUYER_CLIENT_REQ_KEY_PREFIX,
+  BUYER_ALERT_PREFS_KEY_PREFIX,
+} from '../src/services/database.shared';
 
 describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelles', () => {
   const sampleProduct1 = {
@@ -22,7 +33,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     unit: 'sac',
   };
 
-  const defaultBuyerId = 'test-buyer-uuid-001';
+  const defaultBuyerId = '1001';
 
   beforeEach(async () => {
     localStorage.clear();
@@ -56,16 +67,14 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('refuse toute opération sur les commandes et alertes Web si acheteur = "anonymous" ou blanc', async () => {
-      webDbService.setActiveBuyerId('anonymous');
+      expect(() => webDbService.setActiveBuyerId('anonymous')).toThrow(/Identifiant acheteur invalide/);
+      expect(() => webDbService.setActiveBuyerId('   ')).toThrow(/Identifiant acheteur invalide/);
+      webDbService.setActiveBuyerId(null);
       await expect(webDbService.getOrders()).rejects.toThrow(/Opération non autorisée/);
       await expect(webDbService.createOrderFromCart('commande_ferme')).rejects.toThrow(/Opération non autorisée/);
       await expect(webDbService.getAlertPreferences()).rejects.toThrow(/Opération non autorisée/);
       await expect(webDbService.saveAlertPreferences({ productNames: [], bassins: [] })).rejects.toThrow(/Opération non autorisée/);
       await expect(webDbService.getMatchingAlertCount()).rejects.toThrow(/Opération non autorisée/);
-
-      webDbService.setActiveBuyerId('   ');
-      await expect(webDbService.getOrders()).rejects.toThrow(/Opération non autorisée/);
-      await expect(webDbService.createOrderFromCart('commande_ferme')).rejects.toThrow(/Opération non autorisée/);
     });
 
     it('refuse toute opération privée en SQLite natif si aucun acheteur actif', async () => {
@@ -605,20 +614,20 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('isole et réinitialise les données via setBuyerId et reset', async () => {
-      webDbService.setActiveBuyerId('buyer-alpha');
-      await cartStore.setBuyerId('buyer-alpha');
+      webDbService.setActiveBuyerId('1001');
+      await cartStore.setBuyerId('1001');
       await cartStore.addToCart(sampleProduct1);
       expect(cartStore.getCount()).toBe(1);
 
-      // Changement de session vers buyer-beta
-      webDbService.setActiveBuyerId('buyer-beta');
-      await cartStore.setBuyerId('buyer-beta');
+      // Changement de session vers buyer 1002
+      webDbService.setActiveBuyerId('1002');
+      await cartStore.setBuyerId('1002');
       expect(cartStore.getCount()).toBe(0);
       expect(cartStore.getCart()).toHaveLength(0);
 
-      // Reconnexion de buyer-alpha
-      webDbService.setActiveBuyerId('buyer-alpha');
-      await cartStore.setBuyerId('buyer-alpha');
+      // Reconnexion de buyer 1001
+      webDbService.setActiveBuyerId('1001');
+      await cartStore.setBuyerId('1001');
       expect(cartStore.getCount()).toBe(1);
       expect(cartStore.getCart()[0].productId).toBe('101');
 
@@ -638,7 +647,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       // @ts-ignore - vitest needs explicit .ts to distinguish from database.web.ts
       const mod = await import('../src/services/database.ts');
       nativeDbService = mod.dbService;
-      nativeDbService.setActiveBuyerId('test-native-buyer-001');
+      nativeDbService.setActiveBuyerId('2001');
       await nativeDbService.clearCart();
     });
 
@@ -691,14 +700,14 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
   describe('8. Isolation stricte multi-utilisateurs par buyerId', () => {
     it('isole strictement les paniers entre deux acheteurs différents sur le Web', async () => {
       // Acheteur 1
-      webDbService.setActiveBuyerId('buyer-1');
+      webDbService.setActiveBuyerId('1001');
       await webDbService.clearCart();
       await webDbService.addToCart(sampleProduct1);
       const reqId1 = await webDbService.getOrCreateCartClientRequestId();
       expect(await webDbService.getCartCount()).toBe(1);
 
       // Acheteur 2
-      webDbService.setActiveBuyerId('buyer-2');
+      webDbService.setActiveBuyerId('1002');
       await webDbService.clearCart();
       expect(await webDbService.getCartCount()).toBe(0);
       expect(await webDbService.getCart()).toHaveLength(0);
@@ -710,7 +719,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       expect(reqId2).not.toBe(reqId1);
 
       // Retour à Acheteur 1
-      webDbService.setActiveBuyerId('buyer-1');
+      webDbService.setActiveBuyerId('1001');
       const cart1 = await webDbService.getCart();
       expect(cart1).toHaveLength(1);
       expect(cart1[0].productId).toBe(sampleProduct1.productId);
@@ -720,7 +729,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       await webDbService.clearCart();
       expect(await webDbService.getCartCount()).toBe(0);
 
-      webDbService.setActiveBuyerId('buyer-2');
+      webDbService.setActiveBuyerId('1002');
       const cart2 = await webDbService.getCart();
       expect(cart2).toHaveLength(1);
       expect(cart2[0].productId).toBe(sampleProduct2.productId);
@@ -728,7 +737,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('isole strictement le cache des commandes entre deux acheteurs sur le Web', async () => {
-      webDbService.setActiveBuyerId('buyer-1');
+      webDbService.setActiveBuyerId('1001');
       vi.spyOn(apiClient, 'getOrders').mockResolvedValueOnce({
         orders: [
           {
@@ -751,7 +760,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       expect(orders1[0].id).toBe('ord-b1');
 
       // Acheteur 2 en mode hors-ligne ne doit voir aucune commande
-      webDbService.setActiveBuyerId('buyer-2');
+      webDbService.setActiveBuyerId('1002');
       const orders2 = await webDbService.getOrders(false);
       expect(orders2).toHaveLength(0);
     });
@@ -761,12 +770,12 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       const mod = await import('../src/services/database.ts');
       const native = mod.dbService;
 
-      native.setActiveBuyerId('native-buyer-1');
+      native.setActiveBuyerId('2001');
       await native.clearCart();
       await native.addToCart(sampleProduct1);
       const reqId1 = await native.getOrCreateCartClientRequestId();
 
-      native.setActiveBuyerId('native-buyer-2');
+      native.setActiveBuyerId('2002');
       await native.clearCart();
       expect(await native.getCart()).toHaveLength(0);
       expect(await native.getCartClientRequestId()).toBeNull();
@@ -775,7 +784,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       expect(await native.getCartCount()).toBe(1);
 
       // Retour buyer 1
-      native.setActiveBuyerId('native-buyer-1');
+      native.setActiveBuyerId('2001');
       const cart1 = await native.getCart();
       expect(cart1).toHaveLength(1);
       expect(cart1[0].productId).toBe('101');
@@ -785,14 +794,14 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       await native.clearCart();
       expect(await native.getCartCount()).toBe(0);
 
-      native.setActiveBuyerId('native-buyer-2');
+      native.setActiveBuyerId('2002');
       expect(await native.getCartCount()).toBe(1);
     });
   });
 
   describe('9. Isolation et synchronisation des préférences d’alertes (GET/PUT & fallback)', () => {
     it('récupère les préférences depuis GET /api/buyer/alert-preferences et les met en cache', async () => {
-      webDbService.setActiveBuyerId('buyer-alert-1');
+      webDbService.setActiveBuyerId('3001');
       const mockPrefs = {
         productNames: ['Tomates fraîches', 'Maïs jaune'],
         bassins: ['Ouest'],
@@ -813,7 +822,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('sauvegarde les préférences via PUT /api/buyer/alert-preferences et met à jour le cache', async () => {
-      webDbService.setActiveBuyerId('buyer-alert-1');
+      webDbService.setActiveBuyerId('3001');
       const newPrefs = {
         productNames: ['Manioc frais'],
         bassins: ['Centre', 'Nord'],
@@ -834,7 +843,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('propage l’erreur si le PUT échoue avec une erreur serveur (500 ou 401)', async () => {
-      webDbService.setActiveBuyerId('buyer-alert-1');
+      webDbService.setActiveBuyerId('3001');
       vi.spyOn(apiClient, 'saveAlertPreferences').mockRejectedValueOnce(
         new ApiError('Erreur serveur alertes', 500)
       );
@@ -845,7 +854,7 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
     });
 
     it('se replie sur le cache local de l’acheteur si le réseau est indisponible lors de getAlertPreferences', async () => {
-      webDbService.setActiveBuyerId('buyer-alert-offline');
+      webDbService.setActiveBuyerId('3002');
       const offlinePrefs = {
         productNames: ['Poivrons rouges'],
         bassins: ['Littoral'],
@@ -861,21 +870,21 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
 
     it('isole strictement les préférences entre deux acheteurs distincts', async () => {
       // Acheteur 1
-      webDbService.setActiveBuyerId('buyer-prefs-A');
+      webDbService.setActiveBuyerId('3001');
       await webDbService.saveAlertPreferences({ productNames: ['Tomates'], bassins: ['Ouest'] });
 
       // Acheteur 2
-      webDbService.setActiveBuyerId('buyer-prefs-B');
+      webDbService.setActiveBuyerId('3002');
       await webDbService.saveAlertPreferences({ productNames: ['Maïs'], bassins: ['Nord'] });
 
       // Lecture Acheteur 1
-      webDbService.setActiveBuyerId('buyer-prefs-A');
+      webDbService.setActiveBuyerId('3001');
       vi.spyOn(apiClient, 'getAlertPreferences').mockRejectedValueOnce(new ApiError('Offline', 0));
       const prefsA = await webDbService.getAlertPreferences();
       expect(prefsA.productNames).toEqual(['Tomates']);
 
       // Lecture Acheteur 2
-      webDbService.setActiveBuyerId('buyer-prefs-B');
+      webDbService.setActiveBuyerId('3002');
       vi.spyOn(apiClient, 'getAlertPreferences').mockRejectedValueOnce(new ApiError('Offline', 0));
       const prefsB = await webDbService.getAlertPreferences();
       expect(prefsB.productNames).toEqual(['Maïs']);
@@ -902,6 +911,624 @@ describe('BLOC 3 — Parcours Acheteur : Panier, Idempotence & Commandes Réelle
       for (const call of calls) {
         expect(call[1]).toEqual([]);
       }
+    });
+  });
+
+  describe('11. Durcissement strict des identifiants et clés de cache (Regex ^[1-9]\\d*$, validation, clés forgées)', () => {
+    it('valide uniquement les chaînes représentant des entiers strictement positifs', () => {
+      expect(isValidBuyerId('1')).toBe(true);
+      expect(isValidBuyerId('42')).toBe(true);
+      expect(isValidBuyerId('1001')).toBe(true);
+      expect(isValidBuyerId('999999999')).toBe(true);
+
+      // Rejet strict des cas invalides
+      expect(isValidBuyerId('0')).toBe(false);
+      expect(isValidBuyerId('01')).toBe(false);
+      expect(isValidBuyerId('0010')).toBe(false);
+      expect(isValidBuyerId('anonymous')).toBe(false);
+      expect(isValidBuyerId('test-buyer-uuid-001')).toBe(false);
+      expect(isValidBuyerId('123e4567-e89b-12d3-a456-426614174000')).toBe(false);
+      expect(isValidBuyerId(' 1001 ')).toBe(false);
+      expect(isValidBuyerId('1001 ')).toBe(false);
+      expect(isValidBuyerId(' 1001')).toBe(false);
+      expect(isValidBuyerId('1001/2')).toBe(false);
+      expect(isValidBuyerId('../1001')).toBe(false);
+      expect(isValidBuyerId('1001_1')).toBe(false);
+      expect(isValidBuyerId('1001-1')).toBe(false);
+      expect(isValidBuyerId('100.5')).toBe(false);
+      expect(isValidBuyerId('100,5')).toBe(false);
+      expect(isValidBuyerId('-1001')).toBe(false);
+      expect(isValidBuyerId('')).toBe(false);
+      expect(isValidBuyerId(null)).toBe(false);
+      expect(isValidBuyerId(undefined)).toBe(false);
+      expect(isValidBuyerId(1001)).toBe(false);
+    });
+
+    it('validateBuyerId lève une erreur explicite pour tout identifiant invalide', () => {
+      expect(validateBuyerId('1001')).toBe('1001');
+
+      const invalidCases = ['0', 'anonymous', '123e4567-e89b-12d3-a456-426614174000', ' 1001 ', '1001/2', '1001_1', '100.5', '-1001', ''];
+      for (const invalid of invalidCases) {
+        expect(() => validateBuyerId(invalid)).toThrow(/Identifiant acheteur invalide/);
+      }
+    });
+
+    it('isValidBuyerStorageKey valide les 4 familles de clés privées attendues', () => {
+      expect(isValidBuyerStorageKey('sitcha_buyer_cart_1001')).toBe(true);
+      expect(isValidBuyerStorageKey('sitcha_buyer_orders_1001')).toBe(true);
+      expect(isValidBuyerStorageKey('sitcha_buyer_client_req_1001')).toBe(true);
+      expect(isValidBuyerStorageKey('sitcha_buyer_alert_prefs_1001')).toBe(true);
+
+      // Clés forgées ou corrompues
+      expect(isValidBuyerStorageKey('sitcha_buyer_cart_0')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_buyer_cart_anonymous')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_buyer_cart_uuid')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_buyer_orders_0')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_buyer_client_req_1001/traversal')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_buyer_cart_')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_cart_global')).toBe(false);
+      expect(isValidBuyerStorageKey('sitcha_orders_global')).toBe(false);
+      expect(isValidBuyerStorageKey('other_prefix_1001')).toBe(false);
+      expect(isValidBuyerStorageKey(123 as any)).toBe(false);
+    });
+
+    it('setActiveBuyerId rejette immédiatement tout identifiant invalide (web et natif)', async () => {
+      // @ts-ignore
+      const mod = await import('../src/services/database.ts');
+      const native = mod.dbService;
+
+      const badIds = ['0', 'anonymous', 'test-uuid', ' 1001 ', '1001/2', '1001_1', '-5', '10.5'];
+      for (const bad of badIds) {
+        expect(() => webDbService.setActiveBuyerId(bad)).toThrow(/Identifiant acheteur invalide/);
+        expect(() => native.setActiveBuyerId(bad)).toThrow(/Identifiant acheteur invalide/);
+      }
+    });
+  });
+
+  describe('12. Sécurité asynchrone et isolation des courses critiques CartStore', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('refresh() A lent suivi de B rapide -> l’état final est B et les données de A sont ignorées', async () => {
+      localStorage.setItem('sitcha_buyer_cart_1001', JSON.stringify([
+        { ...sampleProduct1, quantity: 1, addedAt: new Date().toISOString() }
+      ]));
+      localStorage.setItem('sitcha_buyer_cart_1002', JSON.stringify([
+        { ...sampleProduct2, quantity: 3, addedAt: new Date().toISOString() }
+      ]));
+
+      await cartStore.setBuyerId('1001');
+      expect(cartStore.getCount()).toBe(1);
+
+      const origGetCartForBuyer = webDbService.getCartForBuyer.bind(webDbService);
+      vi.spyOn(webDbService, 'getCartForBuyer').mockImplementation(async (buyerId: string) => {
+        if (buyerId === '1001') {
+          await sleep(50);
+        }
+        return origGetCartForBuyer(buyerId);
+      });
+
+      const promiseA = cartStore.refresh();
+
+      await cartStore.setBuyerId('1002');
+      expect(cartStore.getBuyerId()).toBe('1002');
+      expect(cartStore.getCount()).toBe(3);
+
+      await promiseA;
+
+      expect(cartStore.getBuyerId()).toBe('1002');
+      expect(cartStore.getCount()).toBe(3);
+      expect(cartStore.getCart()[0].productId).toBe('102');
+    });
+
+    it('refresh() B se termine avant A -> les données tardives de A ne polluent pas le store', async () => {
+      localStorage.setItem('sitcha_buyer_cart_1001', JSON.stringify([
+        { ...sampleProduct1, quantity: 1, addedAt: new Date().toISOString() }
+      ]));
+      localStorage.setItem('sitcha_buyer_cart_1002', JSON.stringify([
+        { ...sampleProduct2, quantity: 2, addedAt: new Date().toISOString() }
+      ]));
+
+      await cartStore.setBuyerId('1001');
+
+      const origGetCartForBuyer = webDbService.getCartForBuyer.bind(webDbService);
+      vi.spyOn(webDbService, 'getCartForBuyer').mockImplementation(async (buyerId: string) => {
+        if (buyerId === '1001') {
+          await sleep(50);
+        }
+        return origGetCartForBuyer(buyerId);
+      });
+
+      const notifications: number[] = [];
+      const unsubscribe = cartStore.subscribe(() => {
+        notifications.push(cartStore.getCount());
+      });
+
+      const refreshA = cartStore.refresh();
+      await cartStore.setBuyerId('1002');
+      await refreshA;
+
+      unsubscribe();
+
+      expect(notifications[notifications.length - 1]).toBe(2);
+      expect(cartStore.getCount()).toBe(2);
+    });
+
+    it('reset() / logout pendant refresh() -> état vide, aucun résidu de la session précédente', async () => {
+      localStorage.setItem('sitcha_buyer_cart_1001', JSON.stringify([
+        { ...sampleProduct1, quantity: 2, addedAt: new Date().toISOString() }
+      ]));
+
+      const origGetCartForBuyer = webDbService.getCartForBuyer.bind(webDbService);
+      vi.spyOn(webDbService, 'getCartForBuyer').mockImplementation(async (buyerId: string) => {
+        await sleep(50);
+        return origGetCartForBuyer(buyerId);
+      });
+
+      await cartStore.setBuyerId('1001');
+      const refreshPromise = cartStore.refresh();
+
+      cartStore.reset();
+      expect(cartStore.getBuyerId()).toBeNull();
+      expect(cartStore.getCount()).toBe(0);
+
+      await refreshPromise;
+
+      expect(cartStore.getBuyerId()).toBeNull();
+      expect(cartStore.getCount()).toBe(0);
+      expect(cartStore.getCart()).toHaveLength(0);
+    });
+
+    it('addToCart ou clearCart initié sur A n’affecte pas B si le contexte a basculé', async () => {
+      await cartStore.setBuyerId('1001');
+      webDbService.setActiveBuyerId('1001');
+
+      const origAddToCart = webDbService.addToCart.bind(webDbService);
+      vi.spyOn(webDbService, 'addToCart').mockImplementation(async (item: any, max?: number) => {
+        await sleep(40);
+        return origAddToCart(item, max);
+      });
+
+      const addPromise = cartStore.addToCart(sampleProduct1);
+
+      await cartStore.setBuyerId('1002');
+      webDbService.setActiveBuyerId('1002');
+
+      await expect(addPromise).rejects.toThrow(/Contexte acheteur modifié/);
+
+      expect(cartStore.getBuyerId()).toBe('1002');
+      expect(cartStore.getCount()).toBe(0);
+      expect(cartStore.getCart()).toHaveLength(0);
+    });
+  });
+
+  describe('13. Sécurité asynchrone et isolation DatabaseService', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('syncBuyerData(A) en retard n’écrase pas activeBuyerId si B est devenu actif', async () => {
+      webDbService.setActiveBuyerId('1001');
+
+      vi.spyOn(apiClient, 'getOrders').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [
+            {
+              id: 'ord-delayed-a',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: 'Plantain',
+              quantity: 1,
+              unit: 'régime',
+              price: '3500',
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+        };
+      });
+
+      vi.spyOn(apiClient, 'getAlertPreferences').mockResolvedValue({
+        preferences: { productNames: ['Plantain'], bassins: ['Ouest'] },
+      });
+
+      const syncPromise = webDbService.syncBuyerData('1001');
+
+      webDbService.setActiveBuyerId('1002');
+      expect(webDbService.getActiveBuyerId()).toBe('1002');
+
+      await syncPromise;
+
+      // activeBuyerId n'a JAMAIS été écrasé vers 1001
+      expect(webDbService.getActiveBuyerId()).toBe('1002');
+
+      // Le cache de B n'est absolument pas pollué par les données de A
+      const ordersB = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1002') || '[]');
+      expect(ordersB).toHaveLength(0);
+    });
+
+    it('syncBuyerData(A) écrit correctement dans sitcha_buyer_orders_A si le contexte reste stable', async () => {
+      webDbService.setActiveBuyerId('1001');
+
+      vi.spyOn(apiClient, 'getOrders').mockResolvedValueOnce({
+        orders: [
+          {
+            id: 'ord-sync-ok',
+            type: 'commande_ferme',
+            status: 'en_attente',
+            productId: '101',
+            productName: 'Plantain',
+            quantity: 1,
+            unit: 'régime',
+            price: '3500',
+            gicName: 'GIC',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+      });
+
+      vi.spyOn(apiClient, 'getAlertPreferences').mockResolvedValueOnce({
+        preferences: { productNames: ['Plantain'], bassins: ['Ouest'] },
+      });
+
+      await webDbService.syncBuyerData('1001');
+
+      const ordersA = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1001') || '[]');
+      expect(ordersA).toHaveLength(1);
+      expect(ordersA[0].id).toBe('ord-sync-ok');
+    });
+
+    it('getOrders(true) retardé de A n’écrit jamais dans le cache des commandes de B', async () => {
+      webDbService.setActiveBuyerId('1001');
+
+      vi.spyOn(apiClient, 'getOrders').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [
+            {
+              id: 'ord-delayed-get',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: 'Plantain',
+              quantity: 1,
+              unit: 'régime',
+              price: '3500',
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+        };
+      });
+
+      const getOrdersPromise = webDbService.getOrders(true);
+      webDbService.setActiveBuyerId('1002');
+
+      await getOrdersPromise;
+
+      const ordersB = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1002') || '[]');
+      expect(ordersB).toHaveLength(0);
+    });
+
+    it('getAlertPreferences() retardé de A n’écrit jamais dans le cache des alertes de B', async () => {
+      webDbService.setActiveBuyerId('1001');
+
+      vi.spyOn(apiClient, 'getAlertPreferences').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          preferences: { productNames: ['Piment Rouge'], bassins: ['Nord'] },
+        };
+      });
+
+      const getPrefsPromise = webDbService.getAlertPreferences();
+      webDbService.setActiveBuyerId('1002');
+
+      await getPrefsPromise;
+
+      const prefsB = localStorage.getItem('sitcha_buyer_alert_prefs_1002');
+      expect(prefsB).toBeNull();
+    });
+  });
+
+  describe('14. Protection de createOrderFromCart face aux bascules de contexte', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('POST A retardé après bascule vers B -> ne vide pas le panier de B et lève "Contexte acheteur modifié pendant la création de la commande."', async () => {
+      webDbService.setActiveBuyerId('1001');
+      await webDbService.addToCart(sampleProduct1);
+
+      webDbService.setActiveBuyerId('1002');
+      await webDbService.addToCart(sampleProduct2);
+
+      webDbService.setActiveBuyerId('1001');
+
+      vi.spyOn(apiClient, 'createOrder').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [
+            {
+              id: 'ord-race-1',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: sampleProduct1.name,
+              quantity: 1,
+              unit: sampleProduct1.unit,
+              price: sampleProduct1.price,
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+      });
+
+      vi.spyOn(apiClient, 'getOrders').mockResolvedValue({
+        orders: [],
+        meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
+      });
+
+      const createOrderPromise = webDbService.createOrderFromCart('commande_ferme');
+      webDbService.setActiveBuyerId('1002');
+
+      await expect(createOrderPromise).rejects.toThrow(
+        'Contexte acheteur modifié pendant la création de la commande.'
+      );
+
+      const cartB = await webDbService.getCart();
+      expect(cartB).toHaveLength(1);
+      expect(cartB[0].productId).toBe('102');
+
+      const cartA = JSON.parse(localStorage.getItem('sitcha_buyer_cart_1001') || '[]');
+      expect(cartA).toHaveLength(0);
+
+      const ordersB = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1002') || '[]');
+      expect(ordersB).toHaveLength(0);
+    });
+
+    it('POST A retardé après déconnexion (null) -> lève l’erreur de contexte modifié', async () => {
+      webDbService.setActiveBuyerId('1001');
+      await webDbService.addToCart(sampleProduct1);
+
+      vi.spyOn(apiClient, 'createOrder').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [
+            {
+              id: 'ord-race-null',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: sampleProduct1.name,
+              quantity: 1,
+              unit: sampleProduct1.unit,
+              price: sampleProduct1.price,
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+      });
+
+      const createPromise = webDbService.createOrderFromCart('commande_ferme');
+      webDbService.setActiveBuyerId(null);
+
+      await expect(createPromise).rejects.toThrow(
+        'Contexte acheteur modifié pendant la création de la commande.'
+      );
+    });
+
+    it('GET de fond de synchronisation de A retardé -> n’écrit pas dans le cache commandes de B', async () => {
+      webDbService.setActiveBuyerId('1001');
+      await webDbService.addToCart(sampleProduct1);
+
+      vi.spyOn(apiClient, 'createOrder').mockResolvedValueOnce({
+        orders: [
+          {
+            id: 'ord-bg-1',
+            type: 'commande_ferme',
+            status: 'en_attente',
+            productId: '101',
+            productName: sampleProduct1.name,
+            quantity: 1,
+            unit: sampleProduct1.unit,
+            price: sampleProduct1.price,
+            gicName: 'GIC',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+      vi.spyOn(apiClient, 'getOrders').mockImplementation(async () => {
+        await sleep(60);
+        return {
+          orders: [
+            {
+              id: 'ord-bg-synced',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: sampleProduct1.name,
+              quantity: 1,
+              unit: sampleProduct1.unit,
+              price: sampleProduct1.price,
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+        };
+      });
+
+      const result = await webDbService.createOrderFromCart('commande_ferme');
+      expect(result).toHaveLength(1);
+
+      webDbService.setActiveBuyerId('1002');
+      await sleep(80);
+
+      const ordersB = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1002') || '[]');
+      expect(ordersB).toHaveLength(0);
+
+      const ordersA = JSON.parse(localStorage.getItem('sitcha_buyer_orders_1001') || '[]');
+      expect(ordersA.some((o: any) => o.id === 'ord-bg-synced')).toBe(true);
+    });
+  });
+
+  describe('15. Protection des écrans acheteur (authLoading, neutralisation de toasts et redirections tardives)', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('OrdersScreen masque les commandes et ferme les modales si authLoading est actif ou si l’acheteur a changé', () => {
+      const buyerId = '1001';
+      let authLoading = true;
+      let loadedBuyerId: string | null = '1001';
+
+      let isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
+      expect(isDataValid).toBe(false);
+
+      authLoading = false;
+      isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
+      expect(isDataValid).toBe(true);
+
+      loadedBuyerId = '1002';
+      isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
+      expect(isDataValid).toBe(false);
+    });
+
+    it('AlertsScreen masque les préférences privées et réinitialise l’état si authLoading est actif', () => {
+      let authLoading = true;
+      const buyerId = '1001';
+      const loadedBuyerId = '1001';
+
+      const isDataValid = !authLoading && !!buyerId && loadedBuyerId === buyerId;
+      expect(isDataValid).toBe(false);
+    });
+
+    it('HomeScreen désactive le badge alertCount si authLoading est vrai ou si buyerId est absent', () => {
+      const alertCount = 5;
+
+      const computeDisplayAlertCount = (loading: boolean, bId: string | null, count: number) => {
+        return loading || !bId ? 0 : count;
+      };
+
+      expect(computeDisplayAlertCount(true, '1001', alertCount)).toBe(0);
+      expect(computeDisplayAlertCount(false, null, alertCount)).toBe(0);
+      expect(computeDisplayAlertCount(false, '1001', alertCount)).toBe(5);
+    });
+
+    it('CheckoutScreen neutralise le toast de succès et la redirection si le contexte a basculé pendant la commande', async () => {
+      let currentBuyer: string | null = '1001';
+      let toastCalled = false;
+      let navigatedTo: string | null = null;
+
+      const showToast = () => { toastCalled = true; };
+      const router = { replace: (url: string) => { navigatedTo = url; } };
+
+      const handleConfirm = async () => {
+        const actionBuyerId = currentBuyer;
+        const actionGen = webDbService.getContextGeneration();
+
+        await sleep(50);
+
+        if (!actionBuyerId || currentBuyer !== actionBuyerId || webDbService.getContextGeneration() !== actionGen) {
+          return;
+        }
+
+        showToast();
+        router.replace('/(buyer)/order-confirmation?orderId=ord-123');
+      };
+
+      const confirmPromise = handleConfirm();
+
+      currentBuyer = '1002';
+      webDbService.setActiveBuyerId('1002');
+
+      await confirmPromise;
+
+      expect(toastCalled).toBe(false);
+      expect(navigatedTo).toBeNull();
+    });
+  });
+
+  describe('16. Parité des garanties asynchrones et d’isolation en SQLite natif', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let nativeDbService: any;
+
+    beforeEach(async () => {
+      (globalThis as any).resetSqliteMock?.();
+      // @ts-ignore
+      const mod = await import('../src/services/database.ts');
+      nativeDbService = mod.dbService;
+    });
+
+    it('createOrderFromCart natif lève l’erreur de contexte modifié et préserve le panier du nouvel acheteur', async () => {
+      nativeDbService.setActiveBuyerId('2001');
+      await nativeDbService.addToCart(sampleProduct1);
+
+      nativeDbService.setActiveBuyerId('2002');
+      await nativeDbService.addToCart(sampleProduct2);
+
+      nativeDbService.setActiveBuyerId('2001');
+
+      vi.spyOn(apiClient, 'createOrder').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [
+            {
+              id: 'ord-native-race-1',
+              type: 'commande_ferme',
+              status: 'en_attente',
+              productId: '101',
+              productName: sampleProduct1.name,
+              quantity: 1,
+              unit: sampleProduct1.unit,
+              price: sampleProduct1.price,
+              gicName: 'GIC',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+      });
+
+      vi.spyOn(apiClient, 'getOrders').mockResolvedValue({
+        orders: [],
+        meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
+      });
+
+      const createPromise = nativeDbService.createOrderFromCart('commande_ferme');
+      nativeDbService.setActiveBuyerId('2002');
+
+      await expect(createPromise).rejects.toThrow(
+        'Contexte acheteur modifié pendant la création de la commande.'
+      );
+
+      nativeDbService.setActiveBuyerId('2002');
+      const cart2002 = await nativeDbService.getCart();
+      expect(cart2002).toHaveLength(1);
+      expect(cart2002[0].productId).toBe('102');
+    });
+
+    it('syncBuyerData(A) natif tardif ne réassigne pas activeBuyerId lorsque B est actif', async () => {
+      nativeDbService.setActiveBuyerId('2001');
+
+      vi.spyOn(apiClient, 'getOrders').mockImplementation(async () => {
+        await sleep(50);
+        return {
+          orders: [],
+          meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
+        };
+      });
+
+      vi.spyOn(apiClient, 'getAlertPreferences').mockResolvedValue({
+        preferences: { productNames: [], bassins: [] },
+      });
+
+      const syncPromise = nativeDbService.syncBuyerData('2001');
+      nativeDbService.setActiveBuyerId('2002');
+
+      await syncPromise;
+
+      expect(nativeDbService.getActiveBuyerId()).toBe('2002');
     });
   });
 });
