@@ -19,7 +19,6 @@ import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { apiClient, ApiError } from '@/services/api';
 import { useToast } from '@/components/ui/toast';
-import { dbService } from '@/services/database';
 import { useAuth } from '@/context/AuthContext';
 import { resolveSellerActivationState } from '@/auth/sessionRouting';
 import {
@@ -148,9 +147,6 @@ export default function OtpVerificationScreen() {
       const res = await completeOtp(validation.params.phone, code, validation.params.role);
       if (res.token && res.user) {
         showToast({ message: 'Numéro vérifié avec succès !', type: 'success' });
-        try {
-          await dbService.syncRemoteData();
-        } catch {}
 
         if (res.user.role === 'seller') {
           const state = resolveSellerActivationState(res.user);

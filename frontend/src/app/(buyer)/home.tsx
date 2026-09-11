@@ -19,9 +19,6 @@ const MATURITES = ['Tous', 'Mature', 'En maturation', 'Précoce', 'Séché'];
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
-let cachedProducts: ProductOffer[] = DEFAULT_PRODUCTS;
-let cachedAlertCount = 0;
-
 export default function BuyerHomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState('Tous');
   const [selectedBassin, setSelectedBassin] = useState('Tous');
@@ -31,21 +28,26 @@ export default function BuyerHomeScreen() {
   const [selectedProduct, setSelectedProduct] = useState<ProductOffer | null>(null);
 
   const { cartCount, addToCart: addProductToCart } = useCart();
-  const [alertCount, setAlertCount] = useState(cachedAlertCount);
-  const [products, setProducts] = useState<ProductOffer[]>(cachedProducts);
+  const [alertCount, setAlertCount] = useState(0);
+  const [products, setProducts] = useState<ProductOffer[]>(DEFAULT_PRODUCTS);
 
   const router = useRouter();
   const { showToast } = useToast();
   const { signOut } = useAuth();
 
   useEffect(() => {
+    let isMounted = true;
     const init = async () => {
       await dbService.initDatabase();
       const offers = await dbService.getProducts();
-      cachedProducts = offers;
-      setProducts(offers);
+      if (isMounted) {
+        setProducts(offers);
+      }
     };
     init();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useFocusEffect(
@@ -54,14 +56,15 @@ export default function BuyerHomeScreen() {
       const silentSync = async () => {
         try {
           await dbService.initDatabase();
-          await dbService.syncRemoteData().catch(() => {});
+          await dbService.syncPublicData().catch(() => {});
+          if (dbService.getActiveBuyerId()) {
+            await dbService.syncBuyerData().catch(() => {});
+          }
           const [offers, matches] = await Promise.all([
             dbService.getProducts(),
-            dbService.getMatchingAlertCount(),
+            dbService.getActiveBuyerId() ? dbService.getMatchingAlertCount().catch(() => 0) : 0,
           ]);
           if (!isMounted) return;
-          cachedProducts = offers;
-          cachedAlertCount = matches;
 
           setAlertCount(matches);
           setProducts(offers);
@@ -70,7 +73,9 @@ export default function BuyerHomeScreen() {
         }
       };
       silentSync();
-      return () => { isMounted = false; };
+      return () => {
+        isMounted = false;
+      };
     }, [])
   );
 

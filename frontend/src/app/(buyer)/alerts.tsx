@@ -22,23 +22,39 @@ export default function BuyerAlertsScreen() {
   const [matchCount, setMatchCount] = useState(0);
 
   useEffect(() => {
+    let isMounted = true;
     const load = async () => {
-      await dbService.initDatabase();
-      const stored = await dbService.getAlertPreferences();
-      setPrefs(stored);
-      setMatchCount(await dbService.getMatchingAlertCount());
+      try {
+        await dbService.initDatabase();
+        const stored = await dbService.getAlertPreferences();
+        const count = await dbService.getMatchingAlertCount();
+        if (isMounted) {
+          setPrefs(stored);
+          setMatchCount(count);
+        }
+      } catch (err: any) {
+        console.warn('Erreur chargement alertes:', err);
+      }
     };
     load();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
   const handleSave = async () => {
-    await dbService.saveAlertPreferences(prefs);
-    const updatedCount = await dbService.getMatchingAlertCount();
-    setMatchCount(updatedCount);
-    showToast({ message: 'Préférences d\'alertes sauvegardées !', type: 'success' });
+    try {
+      await dbService.saveAlertPreferences(prefs);
+      const updatedCount = await dbService.getMatchingAlertCount();
+      setMatchCount(updatedCount);
+      showToast({ message: "Préférences d'alertes sauvegardées !", type: 'success' });
+    } catch (err: any) {
+      console.warn('Erreur sauvegarde alertes:', err);
+      showToast({ message: err?.message || 'Erreur lors de la sauvegarde des alertes.', type: 'error' });
+    }
   };
 
   return (

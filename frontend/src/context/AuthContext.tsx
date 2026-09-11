@@ -53,6 +53,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
+  const activateUserSession = useCallback(async (user: UserProfile | null) => {
+    if (user && user.role === 'buyer') {
+      const buyerId = (user.buyerId || user.id || '').trim();
+      if (buyerId) {
+        dbService.setActiveBuyerId(buyerId);
+        await cartStore.setBuyerId(buyerId);
+        // Synchronisation des commandes / alertes privées UNIQUEMENT APRÈS cette activation
+        dbService.syncBuyerData(buyerId).catch(() => {});
+        return;
+      }
+    }
+    // Rôle non-acheteur, non-authentifié, ou déconnexion
+    cartStore.reset();
+    dbService.setActiveBuyerId(null);
+  }, []);
+
   const signOut = useCallback(async () => {
     try {
       await apiClient.logout();
@@ -60,8 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ignorer l'échec backend pour garantir le nettoyage local
     } finally {
       await clearSession();
-      cartStore.reset();
-      dbService.setActiveBuyerId(null);
+      await activateUserSession(null);
       setSession({
         status: 'unauthenticated',
         user: null,
@@ -69,12 +84,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         error: null,
       });
     }
-  }, []);
+  }, [activateUserSession]);
 
   const refreshUser = useCallback(async (): Promise<RefreshUserResult> => {
     try {
       const res = await apiClient.getMe();
       if (res.user) {
+        await activateUserSession(res.user);
         setSession((prev) => ({
           ...prev,
           user: res.user,
@@ -105,15 +121,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return { type: 'server_error', status: 500, message: err?.message || 'Erreur serveur' };
     }
-  }, [signOut]);
+  }, [signOut, activateUserSession]);
 
   const restoreSession = useCallback(async () => {
     setSession((prev) => ({ ...prev, status: 'loading' }));
     try {
       const result = await performSessionRestore();
       const nextSession = resolveRestoreSessionState(result);
+      if (nextSession.status === 'authenticated' && nextSession.user) {
+        await activateUserSession(nextSession.user);
+      } else {
+        await activateUserSession(null);
+      }
       setSession(nextSession);
     } catch (err: any) {
+      await activateUserSession(null);
       setSession({
         status: 'storage_error',
         user: null,
@@ -121,12 +143,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         error: { message: err?.message || 'Erreur critique lors de la lecture du stockage' },
       });
     }
-  }, []);
+  }, [activateUserSession]);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      cartStore.reset();
-      dbService.setActiveBuyerId(null);
+      activateUserSession(null);
       setSession({
         status: 'unauthenticated',
         user: null,
@@ -140,22 +161,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [restoreSession]);
-
-  useEffect(() => {
-    if (session.status === 'authenticated' && session.user) {
-      const buyerId = (session.user.role === 'buyer' ? (session.user.buyerId || session.user.id) : null) || null;
-      cartStore.setBuyerId(buyerId);
-    } else if (session.status === 'unauthenticated') {
-      cartStore.reset();
-      dbService.setActiveBuyerId(null);
-    }
-  }, [session.status, session.user]);
+  }, [restoreSession, activateUserSession]);
 
   const signIn = useCallback(
     async (phone: string, pin: string, role?: 'buyer' | 'seller'): Promise<SessionResponse> => {
       const res = await apiClient.login(phone, pin, role);
       if (res.token && res.user) {
+        await activateUserSession(res.user);
         setSession({
           status: 'authenticated',
           user: res.user,
@@ -165,13 +177,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return res;
     },
-    []
+    [activateUserSession]
   );
 
   const completeOtp = useCallback(
     async (phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> => {
       const res = await apiClient.verifyOtp(phone, code, role);
       if (res.token && res.user) {
+        await activateUserSession(res.user);
         setSession({
           status: 'authenticated',
           user: res.user,
@@ -181,7 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return res;
     },
-    []
+    [activateUserSession]
   );
 
   // Propriétés dérivées de manière stricte et prévisible
