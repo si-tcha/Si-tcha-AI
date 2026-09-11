@@ -21,6 +21,7 @@ import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { ApiError, isNetworkError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import { useBuyerOrdersCoordinator } from '@/hooks/useBuyerCoordinators';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -88,104 +89,57 @@ export default function BuyerOrdersScreen() {
   const { showToast } = useToast();
   const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
 
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [loadedBuyerId, setLoadedBuyerId] = useState<string | null>(null);
-  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isOffline, setIsOffline] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  const {
+    orders,
+    loadedBuyerId,
+    selectedOrder,
+    setSelectedOrder,
+    ratingOrder,
+    setRatingOrder,
+    isLoading,
+    isOffline,
+    serverError,
+    loadOrders,
+    submitRating,
+  } = useBuyerOrdersCoordinator(currentBuyerId, authLoading, authenticated);
 
-  // Rating state
-  const [ratingOrder, setRatingOrder] = useState<OrderRecord | null>(null);
   const [ratingStars, setRatingStars] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
   const [ratedOrders, setRatedOrders] = useState<Set<string>>(new Set());
 
-  // Lors d'une bascule A -> B ou déconnexion : masquer immédiatement les données de A et fermer les modales
-  useEffect(() => {
-    if (!currentBuyerId || authLoading || !authenticated) {
-      setSelectedOrder(null);
-      setRatingOrder(null);
-      setOrders([]);
-      setLoadedBuyerId(null);
-    } else if (loadedBuyerId && loadedBuyerId !== currentBuyerId) {
-      setSelectedOrder(null);
-      setRatingOrder(null);
-      setOrders([]);
-      setLoadedBuyerId(null);
-    }
-  }, [currentBuyerId, authLoading, authenticated, loadedBuyerId]);
-
-  const loadOrders = useCallback(async () => {
-    if (authLoading || !currentBuyerId || !authenticated) {
-      setOrders([]);
-      setLoadedBuyerId(null);
-      setIsLoading(false);
-      return;
-    }
-    const capturedBuyerId = currentBuyerId;
-    setIsLoading(true);
-    setServerError(null);
-    try {
-      await dbService.initDatabase();
-      const loaded = await dbService.getOrders(true);
-      if (currentBuyerId === capturedBuyerId) {
-        setOrders(loaded);
-        setLoadedBuyerId(capturedBuyerId);
-        setIsOffline(!dbService.isLastOrdersSyncSuccessful());
-      }
-    } catch (err) {
-      if (currentBuyerId !== capturedBuyerId) return;
-      if (err instanceof ApiError && err.status === 401) {
+  const handleRefresh = useCallback(() => {
+    loadOrders({
+      onExpired: () => {
         showToast({ message: 'Session expirée. Veuillez vous reconnecter.', type: 'error' });
         router.replace('/(auth)/login');
-        return;
-      }
-      if (isNetworkError(err)) {
-        const cached = await dbService.getOrders(false);
-        if (currentBuyerId === capturedBuyerId) {
-          setOrders(cached);
-          setLoadedBuyerId(capturedBuyerId);
-          setIsOffline(true);
-        }
-      } else {
-        const message =
-          err instanceof Error ? err.message : 'Erreur serveur lors de la récupération des commandes';
-        setServerError(message);
-        showToast({ message, type: 'error' });
-        setIsOffline(false);
-      }
-    } finally {
-      if (currentBuyerId === capturedBuyerId) {
-        setIsLoading(false);
-      }
-    }
-  }, [router, showToast, currentBuyerId, authLoading, authenticated]);
+      },
+      onError: (msg: string) => {
+        showToast({ message: msg, type: 'error' });
+      },
+    });
+  }, [loadOrders, router, showToast]);
 
   useFocusEffect(
     useCallback(() => {
-      loadOrders();
-    }, [loadOrders])
+      handleRefresh();
+    }, [handleRefresh])
   );
 
   const handleSubmitRating = async () => {
     if (!ratingOrder || ratingStars === 0) return;
-    try {
-      await dbService.addTrustRating(
-        ratingOrder.gicName,
-        'gic',
-        ratingStars,
-        ratingComment.trim(),
-        'Acheteur'
-      );
-      setRatedOrders((prev) => new Set([...prev, ratingOrder.id]));
-      setRatingOrder(null);
-      setRatingStars(0);
-      setRatingComment('');
-      showToast({ message: 'Merci pour votre évaluation !', type: 'success' });
-    } catch {
-      showToast({ message: "Erreur lors de l'évaluation.", type: 'error' });
-    }
+    const targetOrder = ratingOrder;
+    await submitRating(targetOrder, ratingStars, ratingComment, {
+      onSuccess: () => {
+        setRatedOrders((prev) => new Set([...prev, targetOrder.id]));
+        setRatingOrder(null);
+        setRatingStars(0);
+        setRatingComment('');
+        showToast({ message: 'Merci pour votre évaluation !', type: 'success' });
+      },
+      onError: () => {
+        showToast({ message: "Erreur lors de l'évaluation.", type: 'error' });
+      },
+    });
   };
 
   const isDataValid = !authLoading && Boolean(currentBuyerId) && loadedBuyerId === currentBuyerId && authenticated;
@@ -205,7 +159,7 @@ export default function BuyerOrdersScreen() {
           <View style={styles.headerIcons}>
             <TouchableOpacity
               style={styles.iconButton}
-              onPress={loadOrders}
+              onPress={handleRefresh}
               accessibilityLabel="Actualiser les commandes"
             >
               <Feather name="refresh-cw" size={16} color="#f3ecd8" />
@@ -220,7 +174,7 @@ export default function BuyerOrdersScreen() {
             <Text style={styles.offlineBannerText}>
               Mode hors-ligne : affichage des commandes enregistrées en cache local.
             </Text>
-            <TouchableOpacity style={styles.refreshBtn} onPress={loadOrders}>
+            <TouchableOpacity style={styles.refreshBtn} onPress={() => handleRefresh()}>
               <Text style={styles.refreshBtnText}>Réessayer</Text>
             </TouchableOpacity>
           </View>
@@ -231,7 +185,7 @@ export default function BuyerOrdersScreen() {
           <View style={styles.errorBanner}>
             <Feather name="alert-circle" size={14} color="#dc2626" />
             <Text style={styles.errorBannerText}>{serverError}</Text>
-            <TouchableOpacity style={styles.refreshBtn} onPress={loadOrders}>
+            <TouchableOpacity style={styles.refreshBtn} onPress={() => handleRefresh()}>
               <Text style={styles.refreshBtnText}>Réessayer</Text>
             </TouchableOpacity>
           </View>

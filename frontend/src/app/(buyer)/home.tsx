@@ -9,6 +9,7 @@ import { dbService, ProductOffer, DEFAULT_PRODUCTS } from '@/services/database';
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { useBuyerHomeCoordinator } from '@/hooks/useBuyerCoordinators';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -27,75 +28,32 @@ export default function BuyerHomeScreen() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductOffer | null>(null);
 
-  const { cartCount, addToCart: addProductToCart } = useCart();
-  const [alertCount, setAlertCount] = useState(0);
-  const [products, setProducts] = useState<ProductOffer[]>(DEFAULT_PRODUCTS);
-
   const router = useRouter();
   const { showToast } = useToast();
-  const { signOut, buyerId, isLoading: authLoading } = useAuth();
-  const [lastBuyerId, setLastBuyerId] = useState<string | null>(buyerId);
+  const { signOut, buyerId, loading: authLoading, authenticated } = useAuth();
+  const { cartCount, addToCart: addProductToCart } = useCart();
 
-  // Close modals and reset private alert count immediately on auth loading or buyer change
+  const {
+    isCartAligned,
+    effectiveCartCount,
+    alertCount,
+    products,
+    silentSync,
+    handleAddToCartSafe,
+  } = useBuyerHomeCoordinator(buyerId, authLoading, authenticated, cartCount, addProductToCart);
+
+  // Fermer les modales immédiatement sur chargement auth ou changement d'acheteur
   useEffect(() => {
-    if (authLoading || buyerId !== lastBuyerId) {
-      setAlertCount(0);
+    if (authLoading || !buyerId) {
       setShowFilterModal(false);
       setSelectedProduct(null);
-      setLastBuyerId(buyerId);
     }
-  }, [buyerId, authLoading, lastBuyerId]);
-
-  useEffect(() => {
-    let isMounted = true;
-    const init = async () => {
-      await dbService.initDatabase();
-      const offers = await dbService.getProducts();
-      if (isMounted) {
-        setProducts(offers);
-      }
-    };
-    init();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  }, [buyerId, authLoading]);
 
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
-      const targetBuyerId = buyerId;
-      const initialGen = dbService.getContextGeneration();
-
-      const silentSync = async () => {
-        try {
-          await dbService.initDatabase();
-          await dbService.syncPublicData().catch(() => {});
-          if (targetBuyerId && !authLoading) {
-            await dbService.syncBuyerData(targetBuyerId).catch(() => {});
-          }
-          const [offers, matches] = await Promise.all([
-            dbService.getProducts(),
-            targetBuyerId && !authLoading
-              ? dbService.getMatchingAlertCount().catch(() => 0)
-              : Promise.resolve(0),
-          ]);
-          if (!isMounted) return;
-          if (authLoading || buyerId !== targetBuyerId || dbService.getContextGeneration() !== initialGen) {
-            return;
-          }
-
-          setAlertCount(matches);
-          setProducts(offers);
-        } catch (err) {
-          console.warn('Erreur synchro silencieuse acheteur:', err);
-        }
-      };
       silentSync();
-      return () => {
-        isMounted = false;
-      };
-    }, [buyerId, authLoading])
+    }, [silentSync])
   );
 
   const handleLogout = async () => {
@@ -104,29 +62,15 @@ export default function BuyerHomeScreen() {
   };
 
   const handleAddToCart = async (product: ProductOffer) => {
-    const actionBuyerId = buyerId;
-    const actionGen = dbService.getContextGeneration();
-    try {
-      await addProductToCart(
-        {
-          productId: product.id,
-          name: product.name,
-          price: product.price,
-          unit: product.unit,
-        },
-        product.volumeDisponible
-      );
-      if (authLoading || buyerId !== actionBuyerId || dbService.getContextGeneration() !== actionGen) {
-        return;
-      }
-      showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
-    } catch (err: any) {
-      if (authLoading || buyerId !== actionBuyerId || dbService.getContextGeneration() !== actionGen) {
-        return;
-      }
-      console.warn('Erreur ajout panier:', err);
-      showToast({ message: err?.message || 'Impossible d\'ajouter au panier.', type: 'error' });
-    }
+    await handleAddToCartSafe(product, {
+      onSuccess: () => {
+        showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
+      },
+      onError: (err: any) => {
+        console.warn('Erreur ajout panier:', err);
+        showToast({ message: err?.message || 'Impossible d\'ajouter au panier.', type: 'error' });
+      },
+    });
   };
 
   const activeFiltersCount =
@@ -202,9 +146,9 @@ export default function BuyerHomeScreen() {
           <View style={styles.headerIcons}>
             <TouchableOpacity style={styles.iconButton} onPress={() => router.replace('/(buyer)/checkout')}>
               <Feather name="shopping-bag" size={18} color="#f3ecd8" />
-              {cartCount > 0 && (
+              {effectiveCartCount > 0 && (
                 <View style={styles.badgeContainer}>
-                  <Text style={styles.badgeText}>{cartCount}</Text>
+                  <Text style={styles.badgeText}>{effectiveCartCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -337,7 +281,7 @@ export default function BuyerHomeScreen() {
         </View>
 
         {/* Floating Cart bar */}
-        {cartCount > 0 && (
+        {effectiveCartCount > 0 && (
           <TouchableOpacity
             style={styles.floatingCartBar}
             onPress={() => router.replace('/(buyer)/checkout')}
@@ -345,7 +289,7 @@ export default function BuyerHomeScreen() {
           >
             <View style={styles.floatingCartLeft}>
               <View style={styles.floatingCartBadge}>
-                <Text style={styles.floatingCartBadgeText}>{cartCount}</Text>
+                <Text style={styles.floatingCartBadgeText}>{effectiveCartCount}</Text>
               </View>
               <Text style={styles.floatingCartText}>Voir mon panier</Text>
             </View>
@@ -532,7 +476,7 @@ export default function BuyerHomeScreen() {
           </View>
         </Modal>
 
-        <BottomNavBar role="buyer" cartCount={cartCount} alertCount={displayAlertCount} />
+        <BottomNavBar role="buyer" cartCount={effectiveCartCount} alertCount={displayAlertCount} />
       </View>
     </SafeAreaView>
   );

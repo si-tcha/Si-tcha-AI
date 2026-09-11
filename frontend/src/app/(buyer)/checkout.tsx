@@ -19,6 +19,7 @@ import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
+import { useBuyerCheckoutCoordinator } from '@/hooks/useBuyerCoordinators';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -44,18 +45,23 @@ export default function BuyerCheckoutScreen() {
     refreshCart,
   } = useCart();
   const [selectedType, setSelectedType] = useState<OrderType>('commande_ferme');
-  const [products, setProducts] = useState<ProductOffer[]>([]);
-  const [busy, setBusy] = useState(false);
 
-  const loadProducts = useCallback(async () => {
-    if (authLoading || !currentBuyerId || !authenticated) return;
-    try {
-      const items = await dbService.getProducts();
-      setProducts(items);
-    } catch {
-      // Ignorer si échec
-    }
-  }, [authLoading, currentBuyerId, authenticated]);
+  const {
+    isCartAligned,
+    effectiveCart,
+    effectiveTotalAmount,
+    busy,
+    products,
+    loadProducts,
+    confirmOrder,
+  } = useBuyerCheckoutCoordinator(
+    currentBuyerId,
+    authLoading,
+    authenticated,
+    cart,
+    totalAmount,
+    refreshCart
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -65,6 +71,7 @@ export default function BuyerCheckoutScreen() {
   );
 
   const handleIncrement = async (productId: string) => {
+    if (!isCartAligned || busy) return;
     const product = products.find((p) => p.id === productId);
     const maxStock = product?.volumeDisponible;
     try {
@@ -78,6 +85,7 @@ export default function BuyerCheckoutScreen() {
   };
 
   const handleDecrement = async (productId: string) => {
+    if (!isCartAligned || busy) return;
     try {
       await decrementCartItem(productId);
     } catch {
@@ -86,6 +94,7 @@ export default function BuyerCheckoutScreen() {
   };
 
   const handleRemove = async (productId: string) => {
+    if (!isCartAligned || busy) return;
     try {
       await removeFromCart(productId);
       showToast({ message: 'Article retiré du panier.', type: 'info' });
@@ -95,50 +104,38 @@ export default function BuyerCheckoutScreen() {
   };
 
   const handleClearCart = async () => {
+    if (!isCartAligned || busy) return;
     await clearCart();
     showToast({ message: 'Panier vidé.', type: 'info' });
   };
 
   const handleConfirm = async () => {
-    if (!cart.length || busy || authLoading || !currentBuyerId || !authenticated) return;
-    const capturedBuyerId = currentBuyerId;
-
-    setBusy(true);
-    try {
-      await dbService.createOrderFromCart(selectedType);
-      if (currentBuyerId !== capturedBuyerId) {
-        return;
-      }
-      await refreshCart();
-      showToast({
-        message: 'Commande enregistrée auprès du GIC ! Le règlement s\'effectuera en espèces lors de la livraison.',
-        type: 'success',
-      });
-      router.replace('/(buyer)/orders');
-    } catch (err: any) {
-      if (currentBuyerId !== capturedBuyerId) {
-        return;
-      }
-      console.warn('Erreur validation commande:', err);
-      let errorMsg = 'Impossible de valider la commande. Votre panier a été conservé.';
-      if (isNetworkError(err)) {
-        errorMsg = 'Connexion réseau impossible. Votre panier reste intact, vous pouvez retenter dès le retour de la connexion.';
-      } else if (err?.status === 409) {
-        errorMsg =
-          err.payload?.message ||
-          err.message ||
-          'Stock insuffisant ou conflit d\'idempotence. Votre panier a été conservé.';
-      } else if (err?.status === 401) {
-        errorMsg = 'Session expirée. Veuillez vous reconnecter pour valider votre commande.';
-      } else if (err?.message) {
-        errorMsg = err.message;
-      }
-      showToast({ message: errorMsg, type: 'error' });
-    } finally {
-      if (currentBuyerId === capturedBuyerId) {
-        setBusy(false);
-      }
-    }
+    await confirmOrder(selectedType, {
+      onSuccess: () => {
+        showToast({
+          message: 'Commande enregistrée auprès du GIC ! Le règlement s\'effectuera en espèces lors de la livraison.',
+          type: 'success',
+        });
+        router.replace('/(buyer)/orders');
+      },
+      onError: (err: any) => {
+        console.warn('Erreur validation commande:', err);
+        let errorMsg = 'Impossible de valider la commande. Votre panier a été conservé.';
+        if (isNetworkError(err)) {
+          errorMsg = 'Connexion réseau impossible. Votre panier reste intact, vous pouvez retenter dès le retour de la connexion.';
+        } else if (err?.status === 409) {
+          errorMsg =
+            err.payload?.message ||
+            err.message ||
+            'Stock insuffisant ou conflit d\'idempotence. Votre panier a été conservé.';
+        } else if (err?.status === 401) {
+          errorMsg = 'Session expirée. Veuillez vous reconnecter pour valider votre commande.';
+        } else if (err?.message) {
+          errorMsg = err.message;
+        }
+        showToast({ message: errorMsg, type: 'error' });
+      },
+    });
   };
 
   return (
@@ -154,7 +151,7 @@ export default function BuyerCheckoutScreen() {
           </View>
 
           <View style={styles.headerIcons}>
-            {cart.length > 0 && (
+            {effectiveCart.length > 0 && (
               <TouchableOpacity
                 style={styles.iconButton}
                 onPress={handleClearCart}
@@ -170,8 +167,8 @@ export default function BuyerCheckoutScreen() {
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Section Liste Panier */}
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Articles du panier ({cart.length})</Text>
-            {cart.length > 0 && (
+            <Text style={styles.sectionTitle}>Articles du panier ({effectiveCart.length})</Text>
+            {effectiveCart.length > 0 && (
               <TouchableOpacity onPress={handleClearCart} disabled={busy}>
                 <Text style={styles.clearCartText}>Vider tout</Text>
               </TouchableOpacity>
@@ -179,7 +176,7 @@ export default function BuyerCheckoutScreen() {
           </View>
 
           <View style={styles.listCard}>
-            {cart.length === 0 ? (
+            {effectiveCart.length === 0 ? (
               <View style={styles.emptyItem}>
                 <Feather name="shopping-cart" size={40} color="#889e87" />
                 <Text style={styles.emptyTitle}>Votre panier est actuellement vide.</Text>
@@ -192,7 +189,7 @@ export default function BuyerCheckoutScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              cart.map((item) => {
+              effectiveCart.map((item) => {
                 const product = products.find((p) => p.id === item.productId);
                 const maxStock = product?.volumeDisponible;
                 const isAtMaxStock = maxStock !== undefined && item.quantity >= maxStock;
@@ -249,12 +246,12 @@ export default function BuyerCheckoutScreen() {
             )}
           </View>
 
-          {cart.length > 0 && (
+          {effectiveCart.length > 0 && (
             <>
               {/* Total Résumé */}
               <View style={styles.totalSummaryCard}>
                 <Text style={styles.totalSummaryLabel}>Total de la commande</Text>
-                <Text style={styles.totalSummaryValue}>{totalAmount.toLocaleString()} FCFA</Text>
+                <Text style={styles.totalSummaryValue}>{effectiveTotalAmount.toLocaleString()} FCFA</Text>
               </View>
 
               {/* Type de transaction */}
@@ -297,9 +294,9 @@ export default function BuyerCheckoutScreen() {
 
               {/* Bouton de confirmation */}
               <TouchableOpacity
-                style={[styles.confirmBtn, (!cart.length || busy) && styles.confirmDisabled]}
+                style={[styles.confirmBtn, (!effectiveCart.length || busy) && styles.confirmDisabled]}
                 onPress={handleConfirm}
-                disabled={!cart.length || busy}
+                disabled={!effectiveCart.length || busy}
                 activeOpacity={0.85}
               >
                 <Feather
@@ -309,14 +306,14 @@ export default function BuyerCheckoutScreen() {
                   style={{ marginRight: 8 }}
                 />
                 <Text style={styles.confirmText}>
-                  {busy ? 'Transmission en cours…' : `Valider la commande (${totalAmount.toLocaleString()} FCFA)`}
+                  {busy ? 'Transmission en cours…' : `Valider la commande (${effectiveTotalAmount.toLocaleString()} FCFA)`}
                 </Text>
               </TouchableOpacity>
             </>
           )}
         </ScrollView>
 
-        <BottomNavBar role="buyer" cartCount={cart.length} />
+        <BottomNavBar role="buyer" cartCount={effectiveCart.length} />
       </View>
     </SafeAreaView>
   );

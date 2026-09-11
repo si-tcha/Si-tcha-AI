@@ -8,6 +8,7 @@ import { AlertPreferences, dbService } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
+import { useBuyerAlertsCoordinator } from '@/hooks/useBuyerCoordinators';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -21,81 +22,33 @@ export default function BuyerAlertsScreen() {
   const { showToast } = useToast();
   const { buyerId: currentBuyerId, loading: authLoading, authenticated } = useAuth();
 
-  const [prefs, setPrefs] = useState<AlertPreferences>({ productNames: [], bassins: [] });
-  const [loadedBuyerId, setLoadedBuyerId] = useState<string | null>(null);
-  const [matchCount, setMatchCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Bascule A -> B ou déconnexion : masquer immédiatement les données de A
-  useEffect(() => {
-    if (!currentBuyerId || authLoading || !authenticated) {
-      setPrefs({ productNames: [], bassins: [] });
-      setMatchCount(0);
-      setLoadedBuyerId(null);
-    } else if (loadedBuyerId && loadedBuyerId !== currentBuyerId) {
-      setPrefs({ productNames: [], bassins: [] });
-      setMatchCount(0);
-      setLoadedBuyerId(null);
-    }
-  }, [currentBuyerId, authLoading, authenticated, loadedBuyerId]);
+  const {
+    prefs,
+    setPrefs,
+    matchCount,
+    isLoading,
+    isDataValid,
+    loadAlerts,
+    saveAlerts,
+  } = useBuyerAlertsCoordinator(currentBuyerId, authLoading, authenticated);
 
   useEffect(() => {
-    if (authLoading || !currentBuyerId || !authenticated) {
-      setIsLoading(false);
-      return;
-    }
-    let isMounted = true;
-    const capturedBuyerId = currentBuyerId;
-    setIsLoading(true);
-
-    const load = async () => {
-      try {
-        await dbService.initDatabase();
-        const stored = await dbService.getAlertPreferences();
-        const count = await dbService.getMatchingAlertCount();
-        if (isMounted && currentBuyerId === capturedBuyerId) {
-          setPrefs(stored);
-          setMatchCount(count);
-          setLoadedBuyerId(capturedBuyerId);
-        }
-      } catch (err: any) {
-        console.warn('Erreur chargement alertes:', err);
-      } finally {
-        if (isMounted && currentBuyerId === capturedBuyerId) {
-          setIsLoading(false);
-        }
-      }
-    };
-    load();
-    return () => {
-      isMounted = false;
-    };
-  }, [currentBuyerId, authLoading, authenticated]);
+    loadAlerts();
+  }, [loadAlerts]);
 
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
   const handleSave = async () => {
-    if (!currentBuyerId || authLoading || !authenticated) return;
-    const capturedBuyerId = currentBuyerId;
-    try {
-      await dbService.saveAlertPreferences(prefs);
-      if (currentBuyerId !== capturedBuyerId) {
-        return;
-      }
-      const updatedCount = await dbService.getMatchingAlertCount();
-      if (currentBuyerId === capturedBuyerId) {
-        setMatchCount(updatedCount);
+    await saveAlerts(prefs, {
+      onSuccess: () => {
         showToast({ message: "Préférences d'alertes sauvegardées !", type: 'success' });
-      }
-    } catch (err: any) {
-      if (currentBuyerId !== capturedBuyerId) return;
-      console.warn('Erreur sauvegarde alertes:', err);
-      showToast({ message: err?.message || 'Erreur lors de la sauvegarde des alertes.', type: 'error' });
-    }
+      },
+      onError: (err: any) => {
+        showToast({ message: err?.message || 'Erreur lors de la sauvegarde des alertes.', type: 'error' });
+      },
+    });
   };
-
-  const isDataValid = !authLoading && Boolean(currentBuyerId) && loadedBuyerId === currentBuyerId && authenticated;
 
   return (
     <SafeAreaView style={styles.outer}>
