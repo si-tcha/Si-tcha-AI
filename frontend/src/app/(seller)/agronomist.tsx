@@ -12,19 +12,26 @@ import {
   View,
   KeyboardAvoidingView,
 } from 'react-native';
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { dbService } from '@/services/database';
 import { apiClient, isNetworkError } from '@/services/api';
-import { growthService, UserCacheContext, AgronomistHistoryEntry } from '@/services/growthService';
+import { growthService, AgronomistHistoryEntry } from '@/services/growthService';
+import { persistOrKeepAgronomistAnswer } from '@/services/agronomistPersistence';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
 
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
+import {
+  ContextBoundValue,
+  ContextRequestGuard,
+  sellerContextKey,
+  valueForContext,
+} from '@/utils/contextRequestGuard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -53,8 +60,8 @@ export default function AgronomistScreen() {
     if (user?.role === 'seller' && user.id && user.gicId) {
       const candidate = {
         role: 'seller' as const,
-        userId: String(user.id).trim(),
-        gicId: String(user.gicId).trim(),
+        userId: String(user.id),
+        gicId: String(user.gicId),
       };
       if (isValidSellerContext(candidate)) {
         return candidate;
@@ -63,7 +70,14 @@ export default function AgronomistScreen() {
     return null;
   }, [user]);
 
-  const [questions, setQuestions] = useState<AgronomistHistoryEntry[]>([]);
+  const contextKey = authLoading ? null : sellerContextKey(sellerCtx);
+  const requestGuard = useRef(new ContextRequestGuard()).current;
+  requestGuard.setContext(contextKey);
+  const [questionState, setQuestionState] = useState<ContextBoundValue<AgronomistHistoryEntry[]>>({
+    contextKey: null,
+    value: [],
+  });
+  const questions = valueForContext(questionState, contextKey, []);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
@@ -73,6 +87,13 @@ export default function AgronomistScreen() {
   const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0]);
   const [questionText, setQuestionText] = useState('');
 
+  useEffect(() => {
+    setQuestionState({ contextKey: null, value: [] });
+    setModalVisible(false);
+    setIsAsking(false);
+    setQuestionText('');
+  }, [contextKey]);
+
   const loadQuestions = useCallback(async () => {
     // Pendant l'hydratation auth : ne pas lire de cache privé
     if (authLoading) {
@@ -81,21 +102,24 @@ export default function AgronomistScreen() {
     }
 
     if (!sellerCtx) {
-      setQuestions([]);
+      setQuestionState({ contextKey: null, value: [] });
       setLoadingHistory(false);
       return;
     }
 
+    const ticket = requestGuard.begin(contextKey!, 'agronomist-history');
     try {
       await dbService.initDatabase();
       const history = await growthService.loadAgronomistHistory(sellerCtx);
-      setQuestions(history);
+      if (!requestGuard.isCurrent(ticket)) return;
+      setQuestionState({ contextKey: ticket.contextKey, value: history });
     } catch {
-      setQuestions([]);
+      if (!requestGuard.isCurrent(ticket)) return;
+      setQuestionState({ contextKey: ticket.contextKey, value: [] });
     } finally {
-      setLoadingHistory(false);
+      if (requestGuard.isCurrent(ticket)) setLoadingHistory(false);
     }
-  }, [authLoading, sellerCtx]);
+  }, [authLoading, contextKey, requestGuard, sellerCtx]);
 
   useEffect(() => {
     loadQuestions();
@@ -122,51 +146,39 @@ export default function AgronomistScreen() {
     }
 
     setIsAsking(true);
+    const ticket = requestGuard.begin(contextKey!, 'gemini-question');
     try {
       // 1. Appel au backend Gemini
       const res = await apiClient.askAgronomist(selectedCrop, selectedCategory, trimmedQuestion);
+
+      if (!requestGuard.isCurrent(ticket)) return;
 
       if (!res?.answer) {
         throw new Error('Réponse vide du service agronomique.');
       }
 
       const disclaimer = res.disclaimer || TERRAIN_DISCLAIMER;
-      let persistedSuccessfully = false;
-      let entryToDisplay: AgronomistHistoryEntry;
+      // 2. Persistance dans le cache utilisateur/GIC isolé. Une erreur d'écriture
+      // conserve la réponse en mémoire et produit explicitement un résultat volatile.
+      const persistence = await persistOrKeepAgronomistAnswer({
+        crop: selectedCrop,
+        category: selectedCategory,
+        question: trimmedQuestion,
+        answer: res.answer,
+        disclaimer,
+        askedAt: new Date().toISOString(),
+      }, (input) => growthService.persistAgronomistConsultation(sellerCtx, input));
 
-      // 2. Persistance dans le cache utilisateur/GIC isolé
-      try {
-        const persisted = await growthService.persistAgronomistConsultation(sellerCtx, {
-          crop: selectedCrop,
-          category: selectedCategory,
-          question: trimmedQuestion,
-          answer: res.answer,
-          disclaimer,
-          askedAt: new Date().toISOString(),
-        });
-        entryToDisplay = persisted;
-        persistedSuccessfully = true;
-      } catch (saveErr) {
-        // En cas d'échec d'écriture locale :
-        // La réponse réelle du serveur reste visible en mémoire pour lecture/copie,
-        // mais on marque explicitement notSavedLocally: true.
-        entryToDisplay = {
-          id: `agro-volatile-${Date.now()}`,
-          crop: selectedCrop,
-          category: selectedCategory,
-          question: trimmedQuestion,
-          answer: res.answer,
-          disclaimer,
-          askedAt: new Date().toISOString(),
-          notSavedLocally: true,
-        };
-      }
+      if (!requestGuard.isCurrent(ticket)) return;
+      const entryToDisplay = persistence.entry;
 
-      setQuestions((prev) => [entryToDisplay, ...prev]);
+      setQuestionState((prev) => prev.contextKey === ticket.contextKey
+        ? { contextKey: ticket.contextKey, value: [entryToDisplay, ...prev.value] }
+        : { contextKey: ticket.contextKey, value: [entryToDisplay] });
       setQuestionText('');
       setModalVisible(false);
 
-      if (persistedSuccessfully) {
+      if (persistence.status === 'saved') {
         showToast({ message: 'Ordonnance agronomique générée et enregistrée !', type: 'success' });
       } else {
         showToast({
@@ -175,6 +187,7 @@ export default function AgronomistScreen() {
         });
       }
     } catch (err: any) {
+      if (!requestGuard.isCurrent(ticket)) return;
       // En cas d'erreur serveur ou réseau : la modale RESTE OUVERTE, la question est PRÉSERVÉE dans l'input,
       // et AUCUNE fausse consultation "en attente" n'est ajoutée.
       let failureReason = 'Service indisponible pour le moment.';
@@ -189,7 +202,7 @@ export default function AgronomistScreen() {
 
       showToast({ message: failureReason, type: 'error' });
     } finally {
-      setIsAsking(false);
+      if (requestGuard.isCurrent(ticket)) setIsAsking(false);
     }
   };
 
@@ -277,7 +290,7 @@ export default function AgronomistScreen() {
           {/* Liste des consultations passées */}
           <Text style={styles.sectionTitle}>Historique des Consultations ({questions.length})</Text>
 
-          {loadingHistory ? (
+          {authLoading || loadingHistory ? (
             <View style={{ padding: 20, alignItems: 'center' }}>
               <ActivityIndicator color="#d97834" />
             </View>
@@ -349,7 +362,7 @@ export default function AgronomistScreen() {
         </ScrollView>
 
         {/* Modale de saisie de question */}
-        <Modal visible={modalVisible} animationType="slide" transparent>
+        <Modal visible={contextKey !== null && modalVisible} animationType="slide" transparent>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}

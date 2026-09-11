@@ -12,7 +12,7 @@ import {
   View,
   KeyboardAvoidingView,
 } from 'react-native';
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
@@ -25,6 +25,12 @@ import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
 
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
+import {
+  ContextBoundValue,
+  ContextRequestGuard,
+  sellerContextKey,
+  valueForContext,
+} from '@/utils/contextRequestGuard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -49,8 +55,8 @@ export default function GrowthLogScreen() {
     if (user?.role === 'seller' && user.id && user.gicId) {
       const candidate = {
         role: 'seller' as const,
-        userId: String(user.id).trim(),
-        gicId: String(user.gicId).trim(),
+        userId: String(user.id),
+        gicId: String(user.gicId),
       };
       if (isValidSellerContext(candidate)) {
         return candidate;
@@ -59,7 +65,14 @@ export default function GrowthLogScreen() {
     return null;
   }, [user]);
 
-  const [parcels, setParcels] = useState<ParcelGrowthRecord[]>([]);
+  const contextKey = authLoading ? null : sellerContextKey(sellerCtx);
+  const requestGuard = useRef(new ContextRequestGuard()).current;
+  requestGuard.setContext(contextKey);
+  const [parcelState, setParcelState] = useState<ContextBoundValue<ParcelGrowthRecord[]>>({
+    contextKey: null,
+    value: [],
+  });
+  const parcels = valueForContext(parcelState, contextKey, []);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
@@ -85,6 +98,16 @@ export default function GrowthLogScreen() {
   const [editActualDate, setEditActualDate] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
 
+  useEffect(() => {
+    setParcelState({ contextKey: null, value: [] });
+    setModalVisible(false);
+    setEditingParcel(null);
+    setIsSubmitting(false);
+    setIsUpdating(false);
+    setLoadError(null);
+    setIsOfflineMode(false);
+  }, [contextKey]);
+
   const loadParcels = useCallback(async () => {
     // Pendant l'hydratation de l'authentification : ne pas appeler l'API ni lire/écrire de cache
     if (authLoading) {
@@ -94,7 +117,7 @@ export default function GrowthLogScreen() {
 
     // Si contexte invalide ou non disponible : vider les données privées et afficher l'erreur
     if (!sellerCtx) {
-      setParcels([]);
+      setParcelState({ contextKey: null, value: [] });
       setLoading(false);
       setLoadError('Authentification vendeur requise pour afficher le journal de croissance.');
       return;
@@ -102,19 +125,22 @@ export default function GrowthLogScreen() {
 
     setLoading(true);
     setLoadError(null);
+    const ticket = requestGuard.begin(contextKey!, 'parcels');
     try {
       const res = await growthService.loadParcels(sellerCtx);
-      setParcels(res.parcels);
+      if (!requestGuard.isCurrent(ticket)) return;
+      setParcelState({ contextKey: ticket.contextKey, value: res.parcels });
       setIsOfflineMode(res.isOffline);
       if (res.error) {
         setLoadError(res.error);
       }
     } catch (err: any) {
+      if (!requestGuard.isCurrent(ticket)) return;
       setLoadError(err?.message || 'Impossible de charger les parcelles.');
     } finally {
-      setLoading(false);
+      if (requestGuard.isCurrent(ticket)) setLoading(false);
     }
-  }, [authLoading, sellerCtx]);
+  }, [authLoading, contextKey, requestGuard, sellerCtx]);
 
   useEffect(() => {
     loadParcels();
@@ -194,6 +220,7 @@ export default function GrowthLogScreen() {
     }
 
     setIsSubmitting(true);
+    const ticket = requestGuard.begin(contextKey!, 'parcels');
     try {
       const created = await growthService.createParcel(sellerCtx, {
         parcelName: parcelName.trim(),
@@ -206,8 +233,12 @@ export default function GrowthLogScreen() {
         actualHarvestDate: actualHarvestDate.trim() || null,
       });
 
+      if (!requestGuard.isCurrent(ticket)) return;
+
       // Succès confirmé : mise à jour de l'affichage et fermeture du formulaire
-      setParcels((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+      setParcelState((prev) => prev.contextKey === ticket.contextKey
+        ? { contextKey: ticket.contextKey, value: [created, ...prev.value.filter((p) => p.id !== created.id)] }
+        : { contextKey: ticket.contextKey, value: [created] });
       setParcelName('');
       setCrop('Tomates');
       setSowingDate('');
@@ -223,6 +254,7 @@ export default function GrowthLogScreen() {
         type: 'success',
       });
     } catch (err: any) {
+      if (!requestGuard.isCurrent(ticket)) return;
       // Échec : NE PAS afficher de faux succès, conserver la saisie dans le modal
       const errorMsg =
         err?.message ||
@@ -232,7 +264,7 @@ export default function GrowthLogScreen() {
         type: 'error',
       });
     } finally {
-      setIsSubmitting(false);
+      if (requestGuard.isCurrent(ticket)) setIsSubmitting(false);
     }
   };
 
@@ -285,6 +317,7 @@ export default function GrowthLogScreen() {
     }
 
     setIsUpdating(true);
+    const ticket = requestGuard.begin(contextKey!, 'parcels');
     try {
       const updated = await growthService.updateParcel(
         sellerCtx,
@@ -297,17 +330,22 @@ export default function GrowthLogScreen() {
         editingParcel.sowingDate
       );
 
-      setParcels((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      if (!requestGuard.isCurrent(ticket)) return;
+
+      setParcelState((prev) => prev.contextKey === ticket.contextKey
+        ? { contextKey: ticket.contextKey, value: prev.value.map((p) => (p.id === updated.id ? updated : p)) }
+        : prev);
       setEditingParcel(null);
       showToast({ message: 'Parcelle mise à jour avec succès !', type: 'success' });
     } catch (err: any) {
+      if (!requestGuard.isCurrent(ticket)) return;
       // En cas d'échec : conserver la saisie dans le formulaire d'édition
       showToast({
         message: err?.message || 'Échec de la mise à jour sur le serveur. Saisie conservée.',
         type: 'error',
       });
     } finally {
-      setIsUpdating(false);
+      if (requestGuard.isCurrent(ticket)) setIsUpdating(false);
     }
   };
 
@@ -351,7 +389,7 @@ export default function GrowthLogScreen() {
         )}
 
         {/* État de chargement initial */}
-        {loading ? (
+        {authLoading || loading ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="large" color="#d97834" />
             <Text style={styles.loadingText}>Chargement des parcelles...</Text>
@@ -524,7 +562,7 @@ export default function GrowthLogScreen() {
         )}
 
         {/* Modale d'ajout de parcelle */}
-        <Modal visible={modalVisible} animationType="slide" transparent>
+        <Modal visible={contextKey !== null && modalVisible} animationType="slide" transparent>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
@@ -654,7 +692,7 @@ export default function GrowthLogScreen() {
         </Modal>
 
         {/* Modale de mise à jour (étape et récolte) */}
-        <Modal visible={!!editingParcel} animationType="slide" transparent>
+        <Modal visible={contextKey !== null && !!editingParcel} animationType="slide" transparent>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}

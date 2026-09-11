@@ -1,5 +1,5 @@
 import { Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -16,6 +16,12 @@ import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useAuth } from '@/context/AuthContext';
 import { growthService } from '@/services/growthService';
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
+import {
+  ContextBoundValue,
+  ContextRequestGuard,
+  sellerContextKey,
+  valueForContext,
+} from '@/utils/contextRequestGuard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -49,8 +55,8 @@ export default function SellerTerrainScreen() {
     if (user?.role === 'seller' && user.id && user.gicId) {
       const candidate = {
         role: 'seller' as const,
-        userId: String(user.id).trim(),
-        gicId: String(user.gicId).trim(),
+        userId: String(user.id),
+        gicId: String(user.gicId),
       };
       if (isValidSellerContext(candidate)) {
         return candidate;
@@ -64,7 +70,14 @@ export default function SellerTerrainScreen() {
   const [market, setMarket] = useState<MarketPriceRecord[]>([]);
   const [programs, setPrograms] = useState<AgriProgramRecord[]>([]);
   const [phyto, setPhyto] = useState<PhytoAlertRecord[]>([]);
-  const [parcels, setParcels] = useState<ParcelGrowthRecord[]>([]);
+  const contextKey = authLoading ? null : sellerContextKey(sellerCtx);
+  const requestGuard = useRef(new ContextRequestGuard()).current;
+  requestGuard.setContext(contextKey);
+  const [parcelState, setParcelState] = useState<ContextBoundValue<ParcelGrowthRecord[]>>({
+    contextKey: null,
+    value: [],
+  });
+  const parcels = valueForContext(parcelState, contextKey, []);
 
   const loadTerrainData = useCallback(async () => {
     try {
@@ -87,15 +100,19 @@ export default function SellerTerrainScreen() {
         return;
       }
       if (!sellerCtx) {
-        setParcels([]);
+        setParcelState({ contextKey: null, value: [] });
         return;
       }
+      const ticket = requestGuard.begin(contextKey!, 'parcels-load');
+      if (!requestGuard.isCurrent(ticket)) return;
       const growthRes = await growthService.loadParcels(sellerCtx);
-      setParcels(growthRes.parcels);
+      if (requestGuard.isCurrent(ticket)) {
+        setParcelState({ contextKey: ticket.contextKey, value: growthRes.parcels });
+      }
     } catch (err) {
       console.warn('Erreur chargement terrain:', err);
     }
-  }, [authLoading, sellerCtx]);
+  }, [authLoading, contextKey, requestGuard, sellerCtx]);
 
   useFocusEffect(
     useCallback(() => {
