@@ -715,9 +715,20 @@ class DatabaseService {
     );
     writeJson(ordersKey, updatedOrders);
 
-    // 4. Déclencher en tâche de fond la synchronisation complète du cache capturé
+    // 4. Vérifier si le contexte actif a changé pendant le POST
+    // Si le contexte a déjà changé, ne pas lancer ce GET et lever l'erreur
+    if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié pendant la création de la commande.');
+    }
+
+    // 5. Déclencher en tâche de fond la synchronisation complète du cache capturé UNIQUEMENT si contexte inchangé
     this.fetchAllBuyerOrders()
       .then((allOrders) => {
+        // Avant toute écriture du résultat GET, revérifier buyerId + génération
+        if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+          // Si le contexte a changé à n’importe quel moment, ignorer le résultat
+          return;
+        }
         if (Array.isArray(allOrders)) {
           writeJson(ordersKey, allOrders);
         }
@@ -725,11 +736,6 @@ class DatabaseService {
       .catch((bgErr) => {
         console.warn('Synchro en tâche de fond des commandes après POST non bloquante:', bgErr);
       });
-
-    // 5. Vérifier si le contexte actif a changé pendant le POST
-    if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
-      throw new Error('Contexte acheteur modifié pendant la création de la commande.');
-    }
 
     return updatedOrders;
   }

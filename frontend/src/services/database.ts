@@ -833,9 +833,20 @@ class DatabaseService {
       );
     }
 
-    // 4. Déclencher en tâche de fond la synchronisation complète pour le buyerId capturé
+    // 4. Vérifier si le contexte actif a changé pendant le POST
+    // Si le contexte a déjà changé, ne pas lancer ce GET et lever l'erreur
+    if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+      throw new Error('Contexte acheteur modifié pendant la création de la commande.');
+    }
+
+    // 5. Déclencher en tâche de fond la synchronisation complète pour le buyerId capturé UNIQUEMENT si contexte inchangé
     this.fetchAllBuyerOrders()
       .then((allOrders) => {
+        // Avant toute écriture du résultat GET, revérifier buyerId + génération
+        if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
+          // Si le contexte a changé à n’importe quel moment, ignorer le résultat
+          return;
+        }
         if (Array.isArray(allOrders)) {
           db.runSync('DELETE FROM orders WHERE buyerId = ?', [capturedBuyerId]);
           for (const o of allOrders) {
@@ -849,11 +860,6 @@ class DatabaseService {
       .catch((bgErr) => {
         console.warn('Synchro en tâche de fond des commandes après POST SQLite non bloquante:', bgErr);
       });
-
-    // 5. Vérifier si le contexte actif a changé pendant le POST
-    if (this.contextGeneration !== capturedGen || this.activeBuyerId !== capturedBuyerId) {
-      throw new Error('Contexte acheteur modifié pendant la création de la commande.');
-    }
 
     const rows = db.getAllSync('SELECT * FROM orders WHERE buyerId = ? ORDER BY createdAt DESC, id DESC', [capturedBuyerId]) as any[];
     return rows.map(r => ({ ...r, quantity: Number(r.quantity), synced: !!r.synced }));
