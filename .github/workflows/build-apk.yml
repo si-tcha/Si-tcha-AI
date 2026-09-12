@@ -6,13 +6,19 @@ on:
   pull_request:
     branches: [ main, master, elsonkjimmy ]
   workflow_dispatch:
+    inputs:
+      api_url:
+        description: URL API à embarquer dans l'APK interne (publique ou IP LAN, chemin /api obligatoire)
+        required: true
+        type: string
 
 jobs:
   build:
     name: Build Android Internal Test Debug APK
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.EXPO_PUBLIC_API_URL != '' }}
     runs-on: ubuntu-latest
     env:
-      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+      EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || vars.EXPO_PUBLIC_API_URL }}
 
     steps:
       - name: Free Disk Space on Runner
@@ -44,10 +50,13 @@ jobs:
 
       - name: Validate EXPO_PUBLIC_API_URL Configuration
         run: |
-          echo "Vérification stricte de la variable EXPO_PUBLIC_API_URL..."
-          node scripts/validate-api-url.mjs "$EXPO_PUBLIC_API_URL"
-        env:
-          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Vérification de l'URL API pour APK de test interne..."
+            node scripts/validate-local-test-api-url.mjs "$EXPO_PUBLIC_API_URL"
+          else
+            echo "Vérification stricte de la variable EXPO_PUBLIC_API_URL..."
+            node scripts/validate-api-url.mjs "$EXPO_PUBLIC_API_URL"
+          fi
 
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
@@ -66,8 +75,6 @@ jobs:
         run: |
           cd frontend
           npx expo prebuild --platform android --clean
-        env:
-          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
 
       - name: Make gradlew executable
         run: |
@@ -78,7 +85,6 @@ jobs:
           cd frontend/android
           ./gradlew assembleDebug --no-daemon
         env:
-          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: Upload APK Artifact

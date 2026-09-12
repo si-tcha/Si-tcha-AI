@@ -737,6 +737,42 @@ describe('Production API Client, Networking & Configuration Tests', () => {
     });
   });
 
+  describe('Internal APK local API URL validation', () => {
+    it('accepte une API LAN explicite et conserve les garde-fous de structure', async () => {
+      const { validateLocalTestApiUrl } = await import('../../scripts/validate-local-test-api-url.mjs');
+
+      expect(validateLocalTestApiUrl('http://172.20.10.3:4000/api')).toBe(
+        'http://172.20.10.3:4000/api'
+      );
+      expect(validateLocalTestApiUrl('https://staging.example.com/api///')).toBe(
+        'https://staging.example.com/api'
+      );
+
+      for (const invalidUrl of [
+        '',
+        'ftp://172.20.10.3/api',
+        'http://localhost:4000/api',
+        'http://127.0.0.1:4000/api',
+        'http://0.0.0.0:4000/api',
+        'http://user:pass@172.20.10.3:4000/api',
+        'http://172.20.10.3:4000/',
+        'http://172.20.10.3:4000/api?token=x',
+      ]) {
+        expect(() => validateLocalTestApiUrl(invalidUrl)).toThrow();
+      }
+    });
+
+    it('configure le workflow manuel sans affaiblir la validation automatique', async () => {
+      const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
+      const workflow = readProjectFile('.github/workflows/build-apk.yml');
+
+      expect(workflow).toContain('api_url:');
+      expect(workflow).toContain('validate-local-test-api-url.mjs');
+      expect(workflow).toContain('node scripts/validate-api-url.mjs');
+      expect(workflow).toContain("github.event_name == 'workflow_dispatch'");
+    });
+  });
+
   describe('EAS Build Profiles & Environment Separation', () => {
     it('eas.json ne contient aucun endpoint inventé en dur et configure les environnements preview et production', async () => {
       const easConfig = (await import('../eas.json')).default;
