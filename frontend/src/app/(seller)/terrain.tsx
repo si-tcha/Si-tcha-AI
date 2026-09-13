@@ -294,6 +294,23 @@ export default function SellerTerrainScreen() {
                 </View>
               </View>
 
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Ouvrir le journal de croissance"
+                onPress={() => router.push('/(seller)/growth-log')}
+                style={styles.growthLogButton}
+                activeOpacity={0.8}
+              >
+                <View style={styles.growthLogIconCircle}>
+                  <Feather name="book-open" size={17} color="#ffffff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.growthLogTitle}>Journal de croissance</Text>
+                  <Text style={styles.growthLogSub}>Ajouter une parcelle et suivre ses étapes</Text>
+                </View>
+                <Feather name="chevron-right" size={20} color="#d97834" />
+              </TouchableOpacity>
+
               {/* Field inspection banner */}
               <View style={styles.fieldCard}>
                 <View style={styles.fieldIconCircle}>
@@ -771,6 +788,25 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
   legendText: { fontSize: 10, fontWeight: '600', color: '#101e0f' },
+
+  growthLogButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#101e0f',
+    borderRadius: 16,
+    padding: 14,
+  },
+  growthLogIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#d97834',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  growthLogTitle: { fontSize: 14, fontWeight: '800', color: '#ffffff' },
+  growthLogSub: { fontSize: 11, color: '#f3ecd8', marginTop: 2 },
 
   /* Field Card */
   fieldCard: {
