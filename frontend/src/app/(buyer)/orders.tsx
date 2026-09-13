@@ -9,7 +9,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  Image,
 } from 'react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -22,6 +21,7 @@ import { useToast } from '@/components/ui/toast';
 import { ApiError, isNetworkError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { useBuyerOrdersCoordinator } from '@/hooks/useBuyerCoordinators';
+import { OrderQrCode } from '@/components/ui/order-qr-code';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -336,14 +336,7 @@ export default function BuyerOrdersScreen() {
               {selectedOrder && (
                 <View style={styles.receiptBox}>
                   <View style={styles.qrPlaceholder}>
-                    <Image
-                      source={{
-                        uri: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
-                          selectedOrder.id
-                        )}`,
-                      }}
-                      style={{ width: 120, height: 120 }}
-                    />
+                    <OrderQrCode orderId={selectedOrder.id} />
                   </View>
                   <Text style={styles.receiptCode}>
                     REF-{selectedOrder.id.substring(0, 8).toUpperCase()}
