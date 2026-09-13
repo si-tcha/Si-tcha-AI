@@ -7,7 +7,12 @@ import {
   UserProfile,
   ApiError,
   SESSION_KEY,
+  allocateSessionMutationTicket,
+  _resetMemorySessionForTesting,
+  _resetSessionMutationSeqForTesting,
+  request,
 } from '../src/services/api';
+import { AuthSessionCoordinator } from '../src/context/AuthContext';
 import {
   performSessionRestore,
   resolveRestoreSessionState,
@@ -38,7 +43,50 @@ describe('Production Session Restoration, Persistence & Lifecycle Tests', () => 
   beforeEach(async () => {
     await clearSession();
     localStorage.clear();
+    _resetMemorySessionForTesting();
+    _resetSessionMutationSeqForTesting(0);
     vi.restoreAllMocks();
+  });
+
+  describe('Seller Session Persistence', () => {
+    it('persists a seller token and sends it on the next protected request', async () => {
+      const seller: UserProfile = {
+        ...mockSellerPending,
+        status: 'active',
+        statut: 'APPROUVE',
+        gicId: '10',
+      };
+      const coordinator = new AuthSessionCoordinator();
+      const ticket = allocateSessionMutationTicket();
+
+      const committed = await coordinator.commitSession(
+        ticket,
+        { status: 'authenticated', user: seller, token: 'seller-token', error: null },
+        seller,
+        { saveToken: 'seller-token' }
+      );
+
+      expect(committed).toBe(true);
+      expect(await readStoredSession()).toEqual({
+        version: 1,
+        token: 'seller-token',
+        user: seller,
+      });
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ profile: {}, members: [], needs: [] }),
+      } as Response);
+
+      await request('/gic/profile');
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining('/gic/profile'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer seller-token' }),
+        })
+      );
+    });
   });
 
   describe('Session Restoration (performSessionRestore)', () => {

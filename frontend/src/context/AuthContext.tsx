@@ -153,6 +153,18 @@ export class AuthSessionCoordinator {
       }
     }
 
+    // Les sessions vendeur/admin doivent être persistées exactement comme les
+    // sessions acheteur. request() lit le jeton depuis cette autorité de
+    // stockage ; ne conserver le jeton que dans l'état React produirait un
+    // tableau de bord apparemment connecté suivi de requêtes privées sans
+    // Authorization.
+    if (options?.saveToken && userToActivate && userToActivate.role !== 'buyer') {
+      const saved = await saveSession(options.saveToken, userToActivate, ticket);
+      if (!saved || this.activeTicket > ticket) {
+        return false;
+      }
+    }
+
     // Rôle non-acheteur, non-connecté ou déconnexion
     if (options?.saveToken === null) {
       const cleared = await clearSession(ticket);
