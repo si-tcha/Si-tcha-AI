@@ -134,7 +134,7 @@ export default function BuyerCheckoutScreen() {
         } else if (err?.message) {
           errorMsg = err.message;
         }
-        showToast({ message: errorMsg, type: 'error' });
+        showToast({ message: errorMsg, type: 'error', duration: 7000 });
       },
     });
   };
@@ -314,7 +314,10 @@ export default function BuyerCheckoutScreen() {
           )}
         </ScrollView>
 
-        <BottomNavBar role="buyer" cartCount={effectiveCart.length} />
+        <BottomNavBar
+          role="buyer"
+          cartCount={effectiveCart.reduce((sum, item) => sum + item.quantity, 0)}
+        />
       </View>
     </SafeAreaView>
   );

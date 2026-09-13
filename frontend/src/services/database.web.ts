@@ -235,7 +235,8 @@ class DatabaseService {
       ]);
 
       let updated = false;
-      if (Array.isArray(products) && products.length > 0) {
+      // Une réponse serveur valide, même vide, doit évincer un cache obsolète.
+      if (Array.isArray(products)) {
         writeJson(STORAGE_KEYS.PRODUCTS, products);
         updated = true;
       }

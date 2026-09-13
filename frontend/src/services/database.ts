@@ -121,6 +121,28 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
   syncErrorHandler = handler;
 }
 
+type BuyerTableMigrationDatabase = Pick<SQLite.SQLiteDatabase, 'execSync' | 'getAllSync'>;
+
+/**
+ * Les anciennes versions de l'application créaient ces tables sans buyerId.
+ * Ces lignes privées ne peuvent pas être rattachées de façon sûre au compte
+ * actuellement connecté : elles doivent donc être purgées avant de recréer les
+ * tables isolées par acheteur.
+ */
+export function migrateLegacyBuyerTables(db: BuyerTableMigrationDatabase): boolean {
+  const legacyTables = ['cart_items', 'orders'].filter((tableName) => {
+    const columns = db.getAllSync(`PRAGMA table_info(${tableName});`) as Array<{ name?: string }>;
+    return columns.length > 0 && !columns.some((column) => column.name === 'buyerId');
+  });
+
+  if (legacyTables.length === 0) {
+    return false;
+  }
+
+  db.execSync(legacyTables.map((tableName) => `DROP TABLE IF EXISTS ${tableName};`).join('\n'));
+  return true;
+}
+
 class DatabaseService {
   private dbInstance: SQLite.SQLiteDatabase | null = null;
   private activeBuyerId: string | null = null;
@@ -277,7 +299,9 @@ class DatabaseService {
       let updated = false;
       const db = this.getDb();
 
-      if (Array.isArray(productsRes) && productsRes.length > 0) {
+      // Une réponse serveur valide, même vide, est canonique. La conserver évite
+      // de réafficher indéfiniment un ancien catalogue de démonstration en cache.
+      if (Array.isArray(productsRes)) {
         this.writeKv(STORAGE_KEYS.PRODUCTS, productsRes);
         updated = true;
       }
@@ -417,6 +441,7 @@ class DatabaseService {
   async initDatabase(): Promise<void> {
     try {
       const db = this.getDb();
+      migrateLegacyBuyerTables(db);
       db.execSync(`
         CREATE TABLE IF NOT EXISTS kv_store (
           key TEXT PRIMARY KEY NOT NULL,
@@ -504,6 +529,12 @@ class DatabaseService {
       } catch (e) { /* ignore if already exists */ }
       try {
         db.runSync("ALTER TABLE orders ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE b2b_offers ADD COLUMN synced INTEGER;");
+      } catch (e) { /* ignore if already exists */ }
+      try {
+        db.runSync("ALTER TABLE parcels ADD COLUMN synced INTEGER;");
       } catch (e) { /* ignore if already exists */ }
       try {
         db.runSync("ALTER TABLE parcels ADD COLUMN actualHarvestDate TEXT;");
