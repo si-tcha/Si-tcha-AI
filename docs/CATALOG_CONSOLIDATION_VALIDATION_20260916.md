@@ -29,10 +29,26 @@ Il est volontairement placé hors de `backend/prisma/migrations`. Il ne peut pas
 |---|---:|---|
 | Produits 19 à 26 | 8 | `917e046b57388449d488b09bbb5a08da` |
 | RecolteOffre | 26 | `cf8f7753901414e44f5f6254d244c91b` |
-| TransactionAcheteur | 2 | `5848e86e477707dd571765630036d058` |
+| TransactionAcheteur | 2 | `689b5a31f5bb10571ec51495d9fd7867` (champs métier stables explicites, hors `createdAt`) |
 | JournalCroissance | 0 | contrôle de cardinalité à zéro |
 
 Le script prend des verrous `ACCESS EXCLUSIVE` sur `ProduitAgricole`, `RecolteOffre`, `TransactionAcheteur` et `JournalCroissance` avant de recalculer ces empreintes.
+
+L'empreinte des transactions porte explicitement sur `id`, `type`, `quantite`, `prixConvenu`, `statut`, `recolteOffreId`, `acheteurId` et `clientRequestId`. Le champ technique `createdAt`, attribué lors de la réconciliation legacy, est volontairement exclu. La cardinalité exacte de deux transactions et les liaisons `1 → offre 1` et `2 → offre 4` restent contrôlées avant et après la consolidation.
+
+## Correction de l'empreinte des transactions
+
+Après le refus contrôlé de la première exécution distante, la base distante et une staging propre restaurée depuis `sitcha-remote-pre-catalog-consolidation-20260916.dump` ont été comparées champ par champ. Les deux transactions sont identiques sur tous les champs audités, y compris `createdAt`.
+
+Empreintes communes aux deux bases :
+
+- JSON complet : `d3403dbca6053aa135462c320313a8b3` ;
+- champs métier stables hors `createdAt` : `689b5a31f5bb10571ec51495d9fd7867` ;
+- triplet minimal `id`, `recolteOffreId`, `acheteurId` : `bbafb1ab7a94972227afca436f62576a`.
+
+L'ancienne empreinte complète provenait de la staging historique où `createdAt` avait été créé par la réconciliation legacy avec `DEFAULT CURRENT_TIMESTAMP`. La correction n'affaiblit aucun invariant métier : elle rend seulement l'empreinte indépendante de ce timestamp technique.
+
+La version corrigée a été rejouée sur une staging PostgreSQL 17 propre restaurée depuis le dump pré-opération : première exécution complète avec `COMMIT`, deuxième exécution refusée par les préconditions, huit offres finales (`1,4,19,20,22,23,25,26`), transactions `1→1` et `2→4`, aucune FK orpheline, quatre cartes, volume total `11 050 kg`, prix validés et diff Prisma vide sous Node 22.
 
 ## Consolidation encodée
 

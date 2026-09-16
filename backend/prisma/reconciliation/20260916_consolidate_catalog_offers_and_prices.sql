@@ -31,11 +31,28 @@ BEGIN
     RAISE EXCEPTION 'Harvest-offer inventory changed (count=%, hash=%)', actual_count, actual_hash;
   END IF;
 
-  SELECT md5(string_agg(row_to_json(t)::text, chr(124) ORDER BY t.id)), count(*)
+  SELECT md5(string_agg(
+           jsonb_build_object(
+             'id', t.id,
+             'type', t.type::text,
+             'quantite', t.quantite,
+             'prixConvenu', t."prixConvenu",
+             'statut', t.statut::text,
+             'recolteOffreId', t."recolteOffreId",
+             'acheteurId', t."acheteurId",
+             'clientRequestId', t."clientRequestId"
+           )::text,
+           chr(124) ORDER BY t.id
+         )), count(*)
     INTO actual_hash, actual_count
     FROM "TransactionAcheteur" t;
-  IF actual_count <> 2 OR actual_hash IS DISTINCT FROM '5848e86e477707dd571765630036d058' THEN
+  IF actual_count <> 2 OR actual_hash IS DISTINCT FROM '689b5a31f5bb10571ec51495d9fd7867' THEN
     RAISE EXCEPTION 'Transaction references changed (count=%, hash=%)', actual_count, actual_hash;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM "TransactionAcheteur" WHERE id=1 AND "recolteOffreId"=1)
+     OR NOT EXISTS (SELECT 1 FROM "TransactionAcheteur" WHERE id=2 AND "recolteOffreId"=4) THEN
+    RAISE EXCEPTION 'Transaction bindings changed before consolidation';
   END IF;
 
   SELECT count(*) INTO actual_count FROM "JournalCroissance";
