@@ -10,7 +10,7 @@ Ce fichier est la source de reprise rapide pour une nouvelle discussion Codex. L
 |---|---|
 | Dépôt officiel | `https://github.com/si-tcha/Si-tcha-AI.git` |
 | Branche livrable de Jimmy | `elsonkjimmy` |
-| HEAD livré | `5aa8ef6124d5a8ed037d210d6ed50465fc56968e` |
+| HEAD opératoire avant mise à jour documentaire | `bece5fd` |
 | Workspace | `/home/qwerty/PROJETS/si-tcha-ai-mobile` |
 | Application Android | `com.sitcha.sitchamobile` |
 | Téléphone de test | TECNO KM5, Android 15, ADB `14413155CP015543` |
@@ -32,12 +32,17 @@ La branche `elsonkjimmy` est la branche de référence. Ne pas prendre une autre
 | Agronome IA réel | En attente externe | Gestion d'erreur validée, mais aucune réponse Gemini réelle sans `GEMINI_API_KEY` |
 | OTP par SMS réel | En attente externe | Fournisseur et identifiants commerciaux non fournis |
 | Paiement en ligne | Hors périmètre actuel | Le produit utilise explicitement le cash à la livraison |
-| Nouveau backend Heroku | À faire | Tester puis déployer le backend actuel et sa base/migrations ; ne pas réutiliser aveuglément l'ancien déploiement |
+| Base distante Prisma Postgres | Réconciliée | Script one-shot exécuté, diff Prisma vide, 17 migrations standard résolues, readiness et authentification validées |
+| Catalogue acheteur distant | Validé | 4 cartes, prix serveur validés, volume total 11 050 kg, recherche et filtres contrôlés |
+| Nouveau backend Heroku | À faire | Déployer le backend actuel ; ne pas réutiliser aveuglément l'ancien déploiement |
 
 ## 3. Derniers commits importants
 
 | Commit | Objet |
 |---|---|
+| `bece5fd` | Stabiliser l'empreinte métier des transactions du script catalogue |
+| `b404920` | Ajouter le script gardé de consolidation des offres et prix |
+| `52afd74` | Ajouter le script gardé de réconciliation legacy et son rapport staging |
 | `5aa8ef6` | Exposer la navigation vers le Journal de croissance |
 | `e903d6e` | Persister les sessions vendeur pour les requêtes protégées |
 | `77acaf2` | Générer les QR acheteur hors ligne |
@@ -78,7 +83,6 @@ Le PIN n'est pas connu de Codex. Ne jamais déconnecter le compte de test sans a
 
 | Priorité | Action | Critère de fin |
 |---:|---|---|
-| P0 | Télécharger puis installer l'APK du run `34775961195` sur le téléphone connecté | APK installée et ouverte sans erreur |
 | P0 | Rejouer un smoke test sur l'APK autonome | Connexion/session, acheteur, profil GIC, journal, B2B et QR fonctionnent sans Metro |
 | P0 | Préparer et déployer le backend actuel sur Heroku | Health/readiness verts, migrations appliquées, application mobile connectée à l'URL publique |
 | P1 | Configurer le fournisseur SMS OTP réel | Un vrai téléphone reçoit et valide l'OTP ; aucun OTP n'est exposé dans les logs de production |
