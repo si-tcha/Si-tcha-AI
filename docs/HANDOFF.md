@@ -35,6 +35,7 @@ La branche `elsonkjimmy` est la branche de référence. Ne pas prendre une autre
 | Base distante Prisma Postgres | Réconciliée | Script one-shot exécuté, diff Prisma vide, 17 migrations standard résolues, readiness et authentification validées |
 | Catalogue acheteur distant | Validé | 4 cartes, prix serveur validés, volume total 11 050 kg, recherche et filtres contrôlés |
 | Compte vendeur distant de test | Validé | `Mlk`, `+237695715021`, GIC 21, vérifié et `APPROUVE`; migré car le fournisseur SMS est indisponible |
+| Smoke APK vendeur | Validé avec Metro | Profil GIC, Terrain, Journal, B2B et persistance après `force-stop` validés sur TECNO ; l'APK fournie est un Expo Development Build et n'est pas autonome |
 | Nouveau backend Heroku | À faire | Déployer le backend actuel ; ne pas réutiliser aveuglément l'ancien déploiement |
 
 ## 3. Derniers commits importants
@@ -84,7 +85,7 @@ Le PIN n'est pas connu de Codex. Ne jamais déconnecter le compte de test sans a
 
 | Priorité | Action | Critère de fin |
 |---:|---|---|
-| P0 | Rejouer un smoke test sur l'APK autonome | Connexion/session, acheteur, profil GIC, journal, B2B et QR fonctionnent sans Metro |
+| P0 | Produire puis tester une vraie APK autonome | Le build ne présente pas l'écran Expo Development Build ; connexion/session, acheteur, profil GIC, journal, B2B et QR fonctionnent sans Metro |
 | P0 | Préparer et déployer le backend actuel sur Heroku | Health/readiness verts, migrations appliquées, application mobile connectée à l'URL publique |
 | P1 | Configurer le fournisseur SMS OTP réel | Un vrai téléphone reçoit et valide l'OTP ; aucun OTP n'est exposé dans les logs de production |
 | P1 | Configurer `GEMINI_API_KEY` | Une consultation agronomique réelle réussit et persiste |
