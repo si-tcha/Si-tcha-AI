@@ -178,3 +178,9 @@ Les recherches et filtres du catalogue sont appliqués côté mobile ; ils ont �
 ## Prochaine action P0
 
 La consolidation distante du catalogue est terminée. Le prochain P0 est le smoke test de l'APK autonome, puis la préparation du nouveau backend Heroku.
+
+## Compte de test vendeur migré
+
+Le fournisseur SMS étant indisponible (`503` lors de l'inscription), le compte de test local `Mlk` a été migré de manière contrôlée vers la base distante. Le numéro a été normalisé en `+237695715021`, le hash PIN existant a été transféré exclusivement en mémoire sans être affiché ni journalisé, et un nouvel ID distant a été généré par la séquence.
+
+État distant validé : ID 7, GIC ID 21 `GIC Agro-Vallée Bafoussam`, leader, téléphone vérifié, compte vérifié et statut `APPROUVE`. Aucun autre compte n'a été modifié. Jimmy a saisi manuellement le PIN sur le téléphone ; la connexion a réussi et l'écran vendeur affiche le GIC attendu avec l'état `En Ligne`.

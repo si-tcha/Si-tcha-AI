@@ -34,6 +34,7 @@ La branche `elsonkjimmy` est la branche de référence. Ne pas prendre une autre
 | Paiement en ligne | Hors périmètre actuel | Le produit utilise explicitement le cash à la livraison |
 | Base distante Prisma Postgres | Réconciliée | Script one-shot exécuté, diff Prisma vide, 17 migrations standard résolues, readiness et authentification validées |
 | Catalogue acheteur distant | Validé | 4 cartes, prix serveur validés, volume total 11 050 kg, recherche et filtres contrôlés |
+| Compte vendeur distant de test | Validé | `Mlk`, `+237695715021`, GIC 21, vérifié et `APPROUVE`; migré car le fournisseur SMS est indisponible |
 | Nouveau backend Heroku | À faire | Déployer le backend actuel ; ne pas réutiliser aveuglément l'ancien déploiement |
 
 ## 3. Derniers commits importants
