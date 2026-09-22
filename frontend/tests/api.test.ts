@@ -772,6 +772,7 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       expect(workflow).toContain('./gradlew assembleRelease --no-daemon');
       expect(workflow).toContain('assets/index.android.bundle');
       expect(workflow).toContain('SI-TCHA-AI-Standalone-Release-APK');
+      expect(workflow).toContain('packages: platform-tools');
       expect(workflow).not.toContain('./gradlew assembleDebug');
       expect(workflow).not.toContain('validate-local-test-api-url.mjs');
     });
