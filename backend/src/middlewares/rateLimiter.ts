@@ -63,4 +63,3 @@ export const agronomistLimiter = rateLimit({
     message: 'Trop de consultations agronomiques demandées. Veuillez patienter avant de renouveler votre question.',
   },
 });
-
