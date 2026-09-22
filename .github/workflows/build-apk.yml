@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       api_url:
-        description: URL API à embarquer dans l'APK interne (publique ou IP LAN, chemin /api obligatoire)
+        description: URL HTTPS publique à embarquer dans l'APK autonome (chemin /api obligatoire)
         required: true
         type: string
 
 jobs:
   build:
-    name: Build Android Internal Test Debug APK
+    name: Build Android Standalone Release APK
     if: ${{ github.event_name == 'workflow_dispatch' || vars.EXPO_PUBLIC_API_URL != '' }}
     runs-on: ubuntu-latest
     env:
@@ -49,14 +49,7 @@ jobs:
           cache-dependency-path: 'frontend/package-lock.json'
 
       - name: Validate EXPO_PUBLIC_API_URL Configuration
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Vérification de l'URL API pour APK de test interne..."
-            node scripts/validate-local-test-api-url.mjs "$EXPO_PUBLIC_API_URL"
-          else
-            echo "Vérification stricte de la variable EXPO_PUBLIC_API_URL..."
-            node scripts/validate-api-url.mjs "$EXPO_PUBLIC_API_URL"
-          fi
+        run: node scripts/validate-api-url.mjs "$EXPO_PUBLIC_API_URL"
 
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
@@ -80,16 +73,22 @@ jobs:
         run: |
           chmod +x frontend/android/gradlew
 
-      - name: Build Android Debug APK
+      - name: Build Android Standalone Release APK
         run: |
           cd frontend/android
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
         env:
+          NODE_ENV: production
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -XX:+HeapDumpOnOutOfMemoryError"
+
+      - name: Verify Standalone Release APK
+        run: |
+          test -s frontend/android/app/build/outputs/apk/release/app-release.apk
+          unzip -l frontend/android/app/build/outputs/apk/release/app-release.apk | grep -q 'assets/index.android.bundle'
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SI-TCHA-AI-Internal-Test-Debug-APK
-          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          name: SI-TCHA-AI-Standalone-Release-APK
+          path: frontend/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
