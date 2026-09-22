@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../lib/prisma.js';
+import { CanonicalRole } from '../../types/user.types.js';
 
 // 1. Création (Saisie manuelle Admin)
 export async function createDonneeMarcheManuelle(req: Request, res: Response): Promise<void> {
@@ -7,8 +8,8 @@ export async function createDonneeMarcheManuelle(req: Request, res: Response): P
     const { prixMin, prixMax, rentabilite, dateReleve, produitAgricoleId, bassinProductionId } = req.body;
 
     if (!prixMin || !prixMax || !produitAgricoleId || !bassinProductionId) {
-      res.status(400).json({ 
-        message: 'Prix min, prix max, produitAgricoleId et bassinProductionId sont requis.' 
+      res.status(400).json({
+        message: 'Prix min, prix max, produitAgricoleId et bassinProductionId sont requis.'
       });
       return;
     }
@@ -25,8 +26,8 @@ export async function createDonneeMarcheManuelle(req: Request, res: Response): P
         rentabilite: rentabilite ? parseFloat(rentabilite) : 0, // Assurez-vous que rentabilite est bien un Decimal dans votre schema
         source: 'MANUEL', // Indique que la donnée a été saisie manuellement
         dateReleve: dateReleve ? new Date(dateReleve) : new Date(),
-        produitAgricoleId,
-        bassinProductionId
+        produitAgricoleId: BigInt(produitAgricoleId),
+        bassinProductionId: BigInt(bassinProductionId)
       },
       include: {
         produitAgricole: true,
@@ -54,7 +55,7 @@ export async function getDonneesMarche(req: Request, res: Response): Promise<voi
 
     // Formater la réponse pour inclure Min, Max et Moyen
     const resultatsFormat = donnees.map(d => ({
-      id: d.id,
+      id: d.id.toString(),
       produit: d.produitAgricole.nom,
       bassin: d.bassinProduction.nom,
       region: d.bassinProduction.region,
@@ -87,21 +88,28 @@ interface MarketDataWithTrend {
   conseil: string;
 }
 
-function getConseil(tendance: Tendance, role: 'AGRICULTEUR' | 'ACHETEUR' | 'ADMIN', produit: string): string {
+function getConseil(tendance: Tendance, role: CanonicalRole, produit: string): string {
     const produitNormalise = produit.charAt(0).toUpperCase() + produit.slice(1).toLowerCase();
-    if (role === 'AGRICULTEUR') {
+    if (role === 'seller') {
         switch (tendance) {
             case 'HAUSSE': return `Le prix du ${produitNormalise} est en hausse. C'est peut-être un bon moment pour vendre.`;
             case 'BAISSE': return `Le prix du ${produitNormalise} chute. Envisagez de stocker si possible en attendant une meilleure offre.`;
             case 'STABLE': return `Le prix du ${produitNormalise} est stable. Évaluez vos besoins avant de vendre.`;
         }
-    } else { // ACHETEUR or ADMIN
+    } else if (role === 'buyer') {
         switch (tendance) {
             case 'HAUSSE': return `Le prix du ${produitNormalise} augmente. Pensez à acheter maintenant si vous en avez besoin.`;
             case 'BAISSE': return `Le prix du ${produitNormalise} est en baisse. C'est une excellente opportunité d'achat.`;
             case 'STABLE': return `Le prix du ${produitNormalise} est stable. Planifiez vos achats en conséquence.`;
         }
+    } else if (role === 'admin') {
+        switch (tendance) {
+            case 'HAUSSE': return `Tendance haussière observée sur le ${produitNormalise}. Surveiller l'impact sur l'offre globale.`;
+            case 'BAISSE': return `Tendance baissière observée sur le ${produitNormalise}. Surveiller l'équilibre du marché.`;
+            case 'STABLE': return `Marché stable pour le ${produitNormalise}. Équilibre offre/demande maintenu.`;
+        }
     }
+    return `Données du marché pour le ${produitNormalise}.`;
 }
 
 export async function getMarketDashboard(req: Request, res: Response): Promise<void> {
@@ -131,13 +139,13 @@ export async function getMarketDashboard(req: Request, res: Response): Promise<v
         for (const group of groupedData.values()) {
             const latest = group[0];
             const previous = group[1];
-            
+
             let tendance: Tendance = 'STABLE';
             if (previous && latest.prixMoyen > previous.prixMoyen) tendance = 'HAUSSE';
             else if (previous && latest.prixMoyen < previous.prixMoyen) tendance = 'BAISSE';
 
             dashboardData.push({
-                id: latest.id,
+                id: latest.id.toString(),
                 produit: latest.produitAgricole.nom,
                 bassin: latest.bassinProduction.nom,
                 region: latest.bassinProduction.region,
@@ -146,7 +154,7 @@ export async function getMarketDashboard(req: Request, res: Response): Promise<v
                 prixMoyen: Number(latest.prixMoyen),
                 dateReleve: latest.dateReleve,
                 tendance,
-                conseil: getConseil(tendance, user.role, latest.produitAgricole.nom),
+                conseil: getConseil(tendance, user.role as CanonicalRole, latest.produitAgricole.nom),
             });
         }
 

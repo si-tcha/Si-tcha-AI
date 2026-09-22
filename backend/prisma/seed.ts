@@ -47,6 +47,8 @@ async function main() {
     data: {
       nom: 'Tomates fraîches',
       categorie: 'Légumes',
+      prix: 500,
+      unite: 'kg',
       imageURL: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?w=600&auto=format&fit=crop',
     },
   });
@@ -55,6 +57,8 @@ async function main() {
     data: {
       nom: 'Maïs jaune',
       categorie: 'Céréales',
+      prix: 500,
+      unite: 'kg',
       imageURL: 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?w=600&auto=format&fit=crop',
     },
   });
@@ -63,6 +67,8 @@ async function main() {
     data: {
       nom: 'Manioc frais',
       categorie: 'Tubercules',
+      prix: 500,
+      unite: 'kg',
       imageURL: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?w=600&auto=format&fit=crop',
     },
   });
@@ -71,6 +77,8 @@ async function main() {
     data: {
       nom: 'Régimes de Plantains',
       categorie: 'Fruits',
+      prix: 500,
+      unite: 'régime',
       imageURL: 'https://images.unsplash.com/photo-1528825871115-3581a5387919?w=600&auto=format&fit=crop',
     },
   });
@@ -79,6 +87,8 @@ async function main() {
     data: {
       nom: 'Poivrons rouges',
       categorie: 'Légumes',
+      prix: 650,
+      unite: 'kg',
       imageURL: 'https://images.unsplash.com/photo-1563565375-f3fdfdbefa83?w=600&auto=format&fit=crop',
     },
   });
@@ -87,6 +97,8 @@ async function main() {
     data: {
       nom: 'Arachides séchées',
       categorie: 'Légumineuses',
+      prix: 800,
+      unite: 'kg',
       imageURL: 'https://images.unsplash.com/photo-1567892906800-47120cb95dfd?w=600&auto=format&fit=crop',
     },
   });

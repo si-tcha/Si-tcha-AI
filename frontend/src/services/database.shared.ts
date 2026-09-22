@@ -27,6 +27,7 @@ export interface CartItemRecord {
   price: string;
   unit: string;
   quantity: number;
+  buyerId?: string;
   synced?: boolean;
 }
 
@@ -65,7 +66,10 @@ export interface WeatherRecord {
   bassin: string;
   temperature: number;
   pluviometrie: number;
+  humidity?: number;
+  description?: string;
   date: string;
+  icon?: string;
 }
 
 export interface MarketPriceRecord {
@@ -117,6 +121,7 @@ export interface ConfidentialGic {
   emoji: string;
   logoUrl?: string;
   bassin: string;
+  needs?: GicNeed[];
 }
 
 export type OrderType = 'commande_ferme' | 'achat_direct' | 'reservation';
@@ -133,6 +138,9 @@ export interface OrderRecord {
   price: string;
   gicName: string;
   createdAt: string;
+  buyerId?: string;
+  gicId?: string;
+  synced?: boolean;
 }
 
 export interface AlertPreferences {
@@ -170,7 +178,75 @@ export const STORAGE_KEYS = {
   PARCELS: 'sitcha_parcels',
   PREFINANCING: 'sitcha_prefinancing',
   TRUST_RATINGS: 'sitcha_trust_ratings',
+  CART_CLIENT_REQUEST_ID: 'sitcha_cart_client_request_id',
 } as const;
+
+/**
+ * Regex stricte pour les identifiants acheteurs (BigInt backend sérialisés en chaînes).
+ * N'accepte qu'un entier décimal strictement positif sans zéros initiaux ni espaces.
+ */
+export const STRICT_BUYER_ID_REGEX = /^[1-9]\d*$/;
+
+export function isValidBuyerId(buyerId: unknown): buyerId is string {
+  return typeof buyerId === 'string' && STRICT_BUYER_ID_REGEX.test(buyerId);
+}
+
+export function validateBuyerId(buyerId: unknown): string {
+  if (typeof buyerId !== 'string' || !STRICT_BUYER_ID_REGEX.test(buyerId)) {
+    throw new Error(
+      `Identifiant acheteur invalide. Un entier strictement positif sous forme de chaîne est requis (reçu: ${String(
+        buyerId
+      )}).`
+    );
+  }
+  return buyerId;
+}
+
+export const BUYER_CART_KEY_PREFIX = 'sitcha_buyer_cart_';
+export const BUYER_ORDERS_KEY_PREFIX = 'sitcha_buyer_orders_';
+export const BUYER_CLIENT_REQ_KEY_PREFIX = 'sitcha_buyer_client_req_';
+export const BUYER_CLIENT_REQUEST_ID_KEY_PREFIX = BUYER_CLIENT_REQ_KEY_PREFIX;
+export const BUYER_ALERT_PREFS_KEY_PREFIX = 'sitcha_buyer_alert_prefs_';
+
+export const VALID_BUYER_KEY_PREFIXES = [
+  BUYER_CART_KEY_PREFIX,
+  BUYER_ORDERS_KEY_PREFIX,
+  BUYER_CLIENT_REQ_KEY_PREFIX,
+  BUYER_ALERT_PREFS_KEY_PREFIX,
+] as const;
+
+export function isValidBuyerStorageKey(key: unknown, prefix?: string): boolean {
+  if (typeof key !== 'string') return false;
+  if (prefix) {
+    if (!key.startsWith(prefix)) return false;
+    const suffix = key.slice(prefix.length);
+    return STRICT_BUYER_ID_REGEX.test(suffix);
+  }
+  const matchedPrefix = VALID_BUYER_KEY_PREFIXES.find((p) => key.startsWith(p));
+  if (!matchedPrefix) return false;
+  const suffix = key.slice(matchedPrefix.length);
+  return STRICT_BUYER_ID_REGEX.test(suffix);
+}
+
+export function getBuyerCartKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_CART_KEY_PREFIX}${validId}`;
+}
+
+export function getBuyerOrdersKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_ORDERS_KEY_PREFIX}${validId}`;
+}
+
+export function getBuyerClientRequestIdKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_CLIENT_REQ_KEY_PREFIX}${validId}`;
+}
+
+export function getBuyerAlertPrefsKey(buyerId?: string | null): string {
+  const validId = validateBuyerId(buyerId);
+  return `${BUYER_ALERT_PREFS_KEY_PREFIX}${validId}`;
+}
 
 export const DEFAULT_HARVESTS: HarvestRecord[] = [];
 
@@ -208,123 +284,9 @@ export const DEFAULT_PHYTO: PhytoAlertRecord[] = [];
 
 export const DEFAULT_PROGRAMS: AgriProgramRecord[] = [];
 
-export const DEFAULT_PRODUCTS: ProductOffer[] = [
-  {
-    id: 'p1',
-    name: 'Tomates fraîches',
-    category: 'Légumes',
-    gicId: 'g1',
-    gicName: 'GIC Champs Verts',
-    gicRef: 'GIC-CEN-011',
-    price: '480',
-    unit: 'kg',
-    emoji: '🍅',
-    imageUrl: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?w=600&auto=format&fit=crop',
-    bassin: 'Centre',
-    maturite: 'Mature',
-    volumeDisponible: 2400,
-    dateDispo: '2026-07-25',
-  },
-  {
-    id: 'p2',
-    name: 'Maïs jaune',
-    category: 'Céréales',
-    gicId: 'g2',
-    gicName: 'GIC Agro-Vallée Bafoussam',
-    gicRef: 'GIC-OUEST-2024-014',
-    price: '350',
-    unit: 'kg',
-    emoji: '🌽',
-    imageUrl: 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?w=600&auto=format&fit=crop',
-    bassin: 'Ouest',
-    maturite: 'En maturation',
-    volumeDisponible: 5000,
-    dateDispo: '2026-08-10',
-  },
-  {
-    id: 'p3',
-    name: 'Manioc frais',
-    category: 'Tubercules',
-    gicId: 'g3',
-    gicName: 'GIC Récoltes du Nord',
-    gicRef: 'GIC-NORD-008',
-    price: '200',
-    unit: 'kg',
-    emoji: '🥔',
-    imageUrl: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?w=600&auto=format&fit=crop',
-    bassin: 'Nord',
-    maturite: 'Mature',
-    volumeDisponible: 3200,
-    dateDispo: '2026-07-28',
-  },
-  {
-    id: 'p4',
-    name: 'Régimes de Plantains',
-    category: 'Fruits',
-    gicId: 'g4',
-    gicName: 'GIC Producteurs Centre',
-    gicRef: 'GIC-CEN-022',
-    price: '1500',
-    unit: 'régime',
-    emoji: '🍌',
-    imageUrl: 'https://images.unsplash.com/photo-1528825871115-3581a5387919?w=600&auto=format&fit=crop',
-    bassin: 'Centre',
-    maturite: 'Précoce',
-    volumeDisponible: 450,
-    dateDispo: '2026-08-05',
-  },
-  {
-    id: 'p5',
-    name: 'Ananas',
-    category: 'Fruits',
-    gicId: 'g2',
-    gicName: 'GIC Agro-Vallée Bafoussam',
-    gicRef: 'GIC-OUEST-2024-014',
-    price: '600',
-    unit: 'kg',
-    emoji: '🍍',
-    imageUrl: 'https://images.unsplash.com/photo-1550258987-190a2d41a8ba?w=600&auto=format&fit=crop',
-    bassin: 'Ouest',
-    maturite: 'Mature',
-    volumeDisponible: 1200,
-    dateDispo: '2026-07-26',
-  },
-];
+export const DEFAULT_PRODUCTS: ProductOffer[] = [];
 
-export const DEFAULT_GICS_PUBLIC: ConfidentialGic[] = [
-  {
-    id: 'g1',
-    name: 'GIC Champs Verts',
-    identifiantREF: 'GIC-CEN-011',
-    emoji: '🌿',
-    logoUrl: 'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=200',
-    bassin: 'Centre',
-  },
-  {
-    id: 'g2',
-    name: 'GIC Agro-Vallée Bafoussam',
-    identifiantREF: 'GIC-OUEST-2024-014',
-    emoji: '🌿',
-    logoUrl: 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?w=200',
-    bassin: 'Ouest',
-  },
-  {
-    id: 'g3',
-    name: 'GIC Récoltes du Nord',
-    identifiantREF: 'GIC-NORD-008',
-    emoji: '🌿',
-    logoUrl: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=200',
-    bassin: 'Nord',
-  },
-  {
-    id: 'g4',
-    name: 'GIC Producteurs Centre',
-    identifiantREF: 'GIC-CEN-022',
-    emoji: '🌿',
-    logoUrl: 'https://images.unsplash.com/photo-1523348837708-15d4a09cfac2?w=200',
-    bassin: 'Centre',
-  },
-];
+export const DEFAULT_GICS_PUBLIC: ConfidentialGic[] = [];
 
 export const DEFAULT_ALERT_PREFS: AlertPreferences = {
   productNames: [],
@@ -366,17 +328,24 @@ export const DEFAULT_AGRONOMIST_QUESTIONS: AgronomistQuestion[] = [];
 
 export const DEFAULT_B2B_OFFERS: B2BOffer[] = [];
 
+export type ParcelStage = 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter' | 'Récolté';
+
 export interface ParcelGrowthRecord {
   id: string;
   parcelName: string;
   crop: string;
   sowingDate: string;
-  stage: 'Semis' | 'Levée' | 'Floraison' | 'Maturation' | 'Prêt à récolter';
+  stage: ParcelStage;
   estimatedHarvestDate: string;
   estimatedVolumeKg: number;
-  actualHarvestVolumeKg?: number;
+  actualHarvestVolumeKg?: number | null;
+  actualHarvestDate?: string | null;
+  yieldDropPercent?: number;
+  yieldDropAlert?: boolean;
   updatedAt: string;
+  synced?: boolean;
 }
+
 
 export interface PrefinancingDeal {
   id: string;

@@ -53,8 +53,8 @@ const SLIDES: Slide[] = [
     id: '3',
     badge: '🚚 LOGISTIQUE HORS-LIGNE',
     title: 'Livraison rapide & commandes sécurisées',
-    subtitle: 'Réseau P2P & Mobile Money',
-    description: 'Commandez en toute confiance avec reçu numérique QR et suivi chronologique des expéditions de l\'entrepôt au point de livraison.',
+    subtitle: 'Réseau P2P & Règlement en espèces',
+    description: 'Commandez en toute confiance avec bordereau numérique QR et suivi chronologique des expéditions de l\'entrepôt au point de livraison.',
     imageSource: { uri: 'https://images.unsplash.com/photo-1610348725531-843dff563e2c?auto=format&fit=crop&w=800&q=80' },
   }
 ];

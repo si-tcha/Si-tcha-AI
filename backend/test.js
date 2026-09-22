@@ -1,0 +1,1 @@
+import pkg from '@prisma/client'; const { PrismaClient } = pkg; const prisma = new PrismaClient(); prisma.otpCode.findUnique({where: {phone: '+237690000000'}}).then(console.log).finally(() => prisma.$disconnect());

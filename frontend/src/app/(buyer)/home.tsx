@@ -1,13 +1,15 @@
 import { Dimensions, FlatList, Image, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { useAuth } from '@/context/AuthContext';
 import { dbService, ProductOffer, DEFAULT_PRODUCTS } from '@/services/database';
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { useBuyerHomeCoordinator } from '@/hooks/useBuyerCoordinators';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -18,78 +20,86 @@ const MATURITES = ['Tous', 'Mature', 'En maturation', 'Précoce', 'Séché'];
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
-let cachedProducts: ProductOffer[] = DEFAULT_PRODUCTS;
-let cachedCartCount = 0;
-let cachedAlertCount = 0;
-
 export default function BuyerHomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState('Tous');
   const [selectedBassin, setSelectedBassin] = useState('Tous');
   const [selectedMaturite, setSelectedMaturite] = useState('Tous');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
+  const [filterModalBuyerId, setFilterModalBuyerId] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ProductOffer | null>(null);
-  
-  const { cartCount, addToCart: addProductToCart } = useCart();
-  const [alertCount, setAlertCount] = useState(cachedAlertCount);
-  const [products, setProducts] = useState<ProductOffer[]>(cachedProducts);
-  
+  const [selectedProductBuyerId, setSelectedProductBuyerId] = useState<string | null>(null);
+
   const router = useRouter();
   const { showToast } = useToast();
+  const { signOut, buyerId, loading: authLoading, authenticated, sessionSeq } = useAuth();
+  const { cartCount, addToCart: addProductToCart } = useCart();
 
+  const effectiveShowFilterModal = Boolean(
+    showFilterModal && filterModalBuyerId === buyerId && !authLoading && buyerId
+  );
+  const effectiveSelectedProduct = Boolean(
+    selectedProduct && selectedProductBuyerId === buyerId && !authLoading && buyerId
+  )
+    ? selectedProduct
+    : null;
+
+  const handleOpenFilterModal = () => {
+    setFilterModalBuyerId(buyerId);
+    setShowFilterModal(true);
+  };
+  const handleCloseFilterModal = () => {
+    setShowFilterModal(false);
+  };
+
+  const handleSelectProduct = (item: ProductOffer) => {
+    setSelectedProductBuyerId(buyerId);
+    setSelectedProduct(item);
+  };
+  const handleCloseProductModal = () => {
+    setSelectedProduct(null);
+  };
+
+  const {
+    isCartAligned,
+    effectiveCartCount,
+    alertCount,
+    products,
+    silentSync,
+    handleAddToCartSafe,
+  } = useBuyerHomeCoordinator(buyerId, authLoading, authenticated, cartCount, addProductToCart, sessionSeq);
+
+  // Nettoyage en arrière-plan lors de changements d'authentification
+  const prevBuyerIdRef = useRef(buyerId);
   useEffect(() => {
-    const init = async () => {
-      await dbService.initDatabase();
-      const offers = await dbService.getProducts();
-      cachedProducts = offers;
-      setProducts(offers);
-    };
-    init();
-  }, []);
+    if (authLoading || !buyerId || prevBuyerIdRef.current !== buyerId) {
+      prevBuyerIdRef.current = buyerId;
+      setShowFilterModal(false);
+      setSelectedProduct(null);
+    }
+  }, [buyerId, authLoading]);
 
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
-      const silentSync = async () => {
-        try {
-          await dbService.initDatabase();
-          await dbService.syncRemoteData().catch(() => {});
-          const [offers, matches] = await Promise.all([
-            dbService.getProducts(),
-            dbService.getMatchingAlertCount(),
-          ]);
-          if (!isMounted) return;
-          cachedProducts = offers;
-          cachedAlertCount = matches;
-
-          setAlertCount(matches);
-          setProducts(offers);
-        } catch (err) {
-          console.warn('Erreur synchro silencieuse acheteur:', err);
-        }
-      };
       silentSync();
-      return () => { isMounted = false; };
-    }, [])
+    }, [silentSync])
   );
 
-  const handleLogout = () => {
-    router.replace('/(auth)/welcome');
+  const handleLogout = async () => {
+    await signOut();
+    router.replace('/(auth)/login');
   };
 
   const handleAddToCart = async (product: ProductOffer) => {
-    try {
-      await addProductToCart({
-        productId: product.id,
-        name: product.name,
-        price: product.price,
-        unit: product.unit,
-      });
-      showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
-    } catch (err) {
-      console.warn('Erreur ajout panier:', err);
-      showToast({ message: 'Impossible d\'ajouter au panier.', type: 'error' });
-    }
+    await handleAddToCartSafe(product, {
+      onSuccess: () => {
+        showToast({ message: `🛒 ${product.name} ajouté au panier !`, type: 'success' });
+      },
+      onError: (err: any) => {
+        console.warn('Erreur ajout panier:', err);
+        showToast({ message: err?.message || 'Impossible d\'ajouter au panier.', type: 'error' });
+      },
+    });
   };
 
   const activeFiltersCount =
@@ -112,16 +122,18 @@ export default function BuyerHomeScreen() {
     return matchesCategory && matchesBassin && matchesMaturite && matchesSearch;
   });
 
-  const similarProducts = selectedProduct
+  const similarProducts = effectiveSelectedProduct
     ? products.filter(
-        (p) => p.id !== selectedProduct.id && (p.bassin === selectedProduct.bassin || p.category === selectedProduct.category)
+        (p) =>
+          p.id !== effectiveSelectedProduct.id &&
+          (p.bassin === effectiveSelectedProduct.bassin || p.category === effectiveSelectedProduct.category)
       )
     : [];
 
   const renderProductItem = ({ item }: { item: ProductOffer }) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.productCard}
-      onPress={() => setSelectedProduct(item)}
+      onPress={() => handleSelectProduct(item)}
       activeOpacity={0.85}
     >
       <View style={styles.productImageContainer}>
@@ -148,6 +160,8 @@ export default function BuyerHomeScreen() {
     </TouchableOpacity>
   );
 
+  const displayAlertCount = authLoading || !buyerId ? 0 : alertCount;
+
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
       <View style={styles.container}>
@@ -163,24 +177,24 @@ export default function BuyerHomeScreen() {
           <View style={styles.headerIcons}>
             <TouchableOpacity style={styles.iconButton} onPress={() => router.replace('/(buyer)/checkout')}>
               <Feather name="shopping-bag" size={18} color="#f3ecd8" />
-              {cartCount > 0 && (
+              {effectiveCartCount > 0 && (
                 <View style={styles.badgeContainer}>
-                  <Text style={styles.badgeText}>{cartCount}</Text>
+                  <Text style={styles.badgeText}>{effectiveCartCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.iconButton} onPress={() => router.replace('/(buyer)/alerts')}>
               <Feather name="bell" size={18} color="#f3ecd8" />
-              {alertCount > 0 && (
+              {displayAlertCount > 0 && (
                 <View style={[styles.badgeContainer, { backgroundColor: '#d97834' }]}>
-                  <Text style={styles.badgeText}>{alertCount}</Text>
+                  <Text style={styles.badgeText}>{displayAlertCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={handleLogout} style={styles.iconButton}>
-              <Feather name="log-out" size={16} color="#d97834" />
+            <TouchableOpacity style={styles.iconButton} onPress={handleLogout}>
+              <Feather name="log-out" size={18} color="#f3ecd8" />
             </TouchableOpacity>
           </View>
         </View>
@@ -203,9 +217,9 @@ export default function BuyerHomeScreen() {
             ) : null}
           </View>
 
-          <TouchableOpacity 
-            style={[styles.filterTriggerBtn, activeFiltersCount > 0 && styles.filterTriggerBtnActive]} 
-            onPress={() => setShowFilterModal(true)}
+          <TouchableOpacity
+            style={[styles.filterTriggerBtn, activeFiltersCount > 0 && styles.filterTriggerBtnActive]}
+            onPress={handleOpenFilterModal}
             activeOpacity={0.8}
           >
             <Feather name="sliders" size={18} color={activeFiltersCount > 0 ? '#f3ecd8' : '#101e0f'} />
@@ -254,6 +268,18 @@ export default function BuyerHomeScreen() {
           </View>
         )}
 
+        {/* B2B Marketplace Link */}
+        <TouchableOpacity style={styles.b2bPromoCard} onPress={() => router.push('/(buyer)/b2b')} activeOpacity={0.9}>
+          <View style={styles.b2bPromoLeft}>
+            <Feather name="truck" size={24} color="#d97834" />
+            <View>
+              <Text style={styles.b2bPromoTitle}>Marché B2B</Text>
+              <Text style={styles.b2bPromoSub}>Location de matériel & Terres</Text>
+            </View>
+          </View>
+          <Feather name="chevron-right" size={20} color="#101e0f" />
+        </TouchableOpacity>
+
         {/* Product Grid ultra-optimisée */}
         <View style={styles.productsSection}>
           <View style={styles.productsHeader}>
@@ -286,34 +312,34 @@ export default function BuyerHomeScreen() {
         </View>
 
         {/* Floating Cart bar */}
-        {cartCount > 0 && (
-          <TouchableOpacity 
-            style={styles.floatingCartBar} 
+        {effectiveCartCount > 0 && (
+          <TouchableOpacity
+            style={styles.floatingCartBar}
             onPress={() => router.replace('/(buyer)/checkout')}
             activeOpacity={0.9}
           >
             <View style={styles.floatingCartLeft}>
               <View style={styles.floatingCartBadge}>
-                <Text style={styles.floatingCartBadgeText}>{cartCount}</Text>
+                <Text style={styles.floatingCartBadgeText}>{effectiveCartCount}</Text>
               </View>
               <Text style={styles.floatingCartText}>Voir mon panier</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.floatingCartAction}>Payer MoMo / OM</Text>
+              <Text style={styles.floatingCartAction}>Commander</Text>
               <Feather name="arrow-right" size={16} color="#ffffff" />
             </View>
           </TouchableOpacity>
         )}
 
         {/* MODAL FICHE PRODUIT DÉTAILLÉE */}
-        <Modal visible={!!selectedProduct} animationType="slide" transparent>
+        <Modal visible={Boolean(effectiveSelectedProduct)} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, { maxHeight: '90%' }]}>
-              {selectedProduct && (
+              {effectiveSelectedProduct && (
                 <>
                   <View style={styles.modalHeader}>
                     <Text style={styles.modalTitle}>Détails de la Récolte</Text>
-                    <TouchableOpacity onPress={() => setSelectedProduct(null)}>
+                    <TouchableOpacity onPress={handleCloseProductModal}>
                       <Feather name="x" size={24} color="#101e0f" />
                     </TouchableOpacity>
                   </View>
@@ -321,45 +347,45 @@ export default function BuyerHomeScreen() {
                   <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
                     {/* Bannière Visuelle Produit */}
                     <View style={styles.detailHeroBox}>
-                      {selectedProduct.imageUrl ? (
-                        <Image source={{ uri: selectedProduct.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                      {effectiveSelectedProduct.imageUrl ? (
+                        <Image source={{ uri: effectiveSelectedProduct.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                       ) : (
-                        <Text style={styles.detailHeroEmoji}>{selectedProduct.emoji}</Text>
+                        <Text style={styles.detailHeroEmoji}>{effectiveSelectedProduct.emoji}</Text>
                       )}
                       <View style={styles.detailBadgesRow}>
                         <View style={styles.detailTagGreen}>
-                          <Text style={styles.detailTagGreenText}>✓ {selectedProduct.maturite}</Text>
+                          <Text style={styles.detailTagGreenText}>✓ {effectiveSelectedProduct.maturite}</Text>
                         </View>
                         <View style={styles.detailTagOrange}>
-                          <Text style={styles.detailTagOrangeText}>📍 Bassin {selectedProduct.bassin}</Text>
+                          <Text style={styles.detailTagOrangeText}>📍 Bassin {effectiveSelectedProduct.bassin}</Text>
                         </View>
                       </View>
                     </View>
 
                     {/* Informations Principales */}
                     <View style={{ gap: 4 }}>
-                      <Text style={styles.detailName}>{selectedProduct.name}</Text>
-                      <Text style={styles.detailGicName}>fourni par {selectedProduct.gicName}</Text>
-                      <Text style={styles.detailRef}>Réf. Homologuée: {selectedProduct.gicRef ?? 'GIC-CERT-2026'}</Text>
+                      <Text style={styles.detailName}>{effectiveSelectedProduct.name}</Text>
+                      <Text style={styles.detailGicName}>fourni par {effectiveSelectedProduct.gicName}</Text>
+                      <Text style={styles.detailRef}>Réf. Homologuée: {effectiveSelectedProduct.gicRef ?? 'GIC-CERT-2026'}</Text>
                     </View>
 
                     {/* Grille de métriques */}
                     <View style={styles.detailMetricsGrid}>
                       <View style={styles.detailMetricCard}>
                         <Feather name="box" size={18} color="#d97834" />
-                        <Text style={styles.detailMetricValue}>{selectedProduct.volumeDisponible} {selectedProduct.unit}</Text>
+                        <Text style={styles.detailMetricValue}>{effectiveSelectedProduct.volumeDisponible} {effectiveSelectedProduct.unit}</Text>
                         <Text style={styles.detailMetricLabel}>Volume disponible</Text>
                       </View>
 
                       <View style={styles.detailMetricCard}>
                         <Feather name="calendar" size={18} color="#15803d" />
-                        <Text style={styles.detailMetricValue}>{selectedProduct.dateDispo}</Text>
+                        <Text style={styles.detailMetricValue}>{effectiveSelectedProduct.dateDispo}</Text>
                         <Text style={styles.detailMetricLabel}>Disponibilité</Text>
                       </View>
 
                       <View style={styles.detailMetricCard}>
                         <Feather name="pie-chart" size={18} color="#101e0f" />
-                        <Text style={styles.detailMetricValue}>{selectedProduct.volumeDisponible} {selectedProduct.unit}</Text>
+                        <Text style={styles.detailMetricValue}>{effectiveSelectedProduct.volumeDisponible} {effectiveSelectedProduct.unit}</Text>
                         <Text style={styles.detailMetricLabel}>Récolte estimée</Text>
                       </View>
                     </View>
@@ -367,7 +393,7 @@ export default function BuyerHomeScreen() {
                     {/* Encadré Prix */}
                     <View style={styles.detailPriceCard}>
                       <Text style={styles.detailPriceLabel}>Prix Direct Producteur :</Text>
-                      <Text style={styles.detailPriceValue}>{selectedProduct.price} FCFA / {selectedProduct.unit}</Text>
+                      <Text style={styles.detailPriceValue}>{effectiveSelectedProduct.price} FCFA / {effectiveSelectedProduct.unit}</Text>
                     </View>
 
                     {/* Section Produits Similaires */}
@@ -379,7 +405,7 @@ export default function BuyerHomeScreen() {
                             <TouchableOpacity
                               key={sim.id}
                               style={styles.similarCard}
-                              onPress={() => setSelectedProduct(sim)}
+                              onPress={() => handleSelectProduct(sim)}
                               activeOpacity={0.8}
                             >
                               <Text style={{ fontSize: 28 }}>{sim.emoji}</Text>
@@ -394,25 +420,25 @@ export default function BuyerHomeScreen() {
 
                   {/* Actions d'achat au bas de la modale */}
                   <View style={styles.modalFooter}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={async () => {
-                        await handleAddToCart(selectedProduct);
-                      }} 
+                        await handleAddToCart(effectiveSelectedProduct);
+                      }}
                       style={styles.modalAddCartBtn}
                     >
                       <Feather name="shopping-cart" size={18} color="#f3ecd8" />
                       <Text style={styles.modalAddCartText}>Ajouter au panier</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={async () => {
-                        await handleAddToCart(selectedProduct);
-                        setSelectedProduct(null);
+                        await handleAddToCart(effectiveSelectedProduct);
+                        handleCloseProductModal();
                         router.replace('/(buyer)/checkout');
-                      }} 
+                      }}
                       style={styles.modalBuyNowBtn}
                     >
-                      <Text style={styles.modalBuyNowText}>Acheter / MoMo</Text>
+                      <Text style={styles.modalBuyNowText}>Commander</Text>
                     </TouchableOpacity>
                   </View>
                 </>
@@ -422,12 +448,12 @@ export default function BuyerHomeScreen() {
         </Modal>
 
         {/* Modal de Filtres Avancés */}
-        <Modal visible={showFilterModal} animationType="slide" transparent>
+        <Modal visible={effectiveShowFilterModal} animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Filtres Avancés</Text>
-                <TouchableOpacity onPress={() => setShowFilterModal(false)}>
+                <TouchableOpacity onPress={handleCloseFilterModal}>
                   <Feather name="x" size={22} color="#101e0f" />
                 </TouchableOpacity>
               </View>
@@ -473,7 +499,7 @@ export default function BuyerHomeScreen() {
                   <Text style={styles.modalResetText}>Réinitialiser</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => setShowFilterModal(false)} style={styles.modalApplyBtn}>
+                <TouchableOpacity onPress={handleCloseFilterModal} style={styles.modalApplyBtn}>
                   <Text style={styles.modalApplyText}>Appliquer ({filteredProducts.length})</Text>
                 </TouchableOpacity>
               </View>
@@ -481,7 +507,7 @@ export default function BuyerHomeScreen() {
           </View>
         </Modal>
 
-        <BottomNavBar role="buyer" cartCount={cartCount} alertCount={alertCount} />
+        <BottomNavBar role="buyer" cartCount={effectiveCartCount} alertCount={displayAlertCount} />
       </View>
     </SafeAreaView>
   );
@@ -604,7 +630,22 @@ const styles = StyleSheet.create({
   },
   activeChipText: { fontSize: 10, fontWeight: '800', color: '#d97834' },
   resetText: { fontSize: 10, fontWeight: '700', color: '#889e87', textDecorationLine: 'underline' },
-  productsSection: { flex: 1, paddingHorizontal: Spacing.four, paddingTop: 6 },
+  b2bPromoCard: {
+    marginHorizontal: Spacing.four,
+    marginTop: 10,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#ffedd5',
+    borderRadius: 16,
+    padding: Spacing.three,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  b2bPromoLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  b2bPromoTitle: { fontSize: 14, fontWeight: '900', color: '#101e0f' },
+  b2bPromoSub: { fontSize: 11, fontWeight: '600', color: '#5a6258' },
+  productsSection: { flex: 1, paddingHorizontal: Spacing.four, paddingTop: 10 },
   productsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   productsTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   productsCount: { fontSize: 11, fontWeight: '600', color: '#5a6258' },
@@ -734,7 +775,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalApplyText: { fontSize: 13, fontWeight: '900', color: '#ffffff' },
-  
+
   /* STYLES FICHE PRODUIT DÉTAILLÉE */
   detailHeroBox: {
     height: 140,

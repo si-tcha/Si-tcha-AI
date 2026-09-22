@@ -1,26 +1,48 @@
-import { Dimensions, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import React from 'react';
-
-
+import { Dimensions, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
+import { canAccessSeller, resolveSessionRoute } from '@/auth/sessionRouting';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-
 
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 export default function ActivationSuccessScreen() {
   const router = useRouter();
+  const { user, authenticated, loading } = useAuth();
+  const [isResolving, setIsResolving] = useState(true);
+
+  useEffect(() => {
+    if (loading) return;
+
+    if (!authenticated || !canAccessSeller(user)) {
+      router.replace(resolveSessionRoute(user) as any);
+      return;
+    }
+
+    setIsResolving(false);
+  }, [loading, authenticated, user, router]);
 
   const handleGoToDashboard = () => {
-    // Redirige vers le dashboard du GIC vendeur (Simulation)
-    router.replace('/(seller)/home');
+    if (canAccessSeller(user)) {
+      router.replace('/(seller)/home');
+    } else {
+      router.replace(resolveSessionRoute(user) as any);
+    }
   };
+
+  if (loading || isResolving || !canAccessSeller(user)) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#064e3b', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#10b981" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.outerContainer}>

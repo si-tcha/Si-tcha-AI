@@ -1,18 +1,27 @@
 import { Request, Response } from 'express';
 import * as gicService from '../../services/gic.service.js';
 
+import prisma from '../../lib/prisma.js';
+
 export const listGics = async (req: Request, res: Response) => {
     const gics = await gicService.findAllGics();
     res.status(200).json(gics);
 };
 
 export const listPendingMembers = async (req: Request, res: Response) => {
-    // The user object is attached by the 'protect' middleware
-    const leader = req.user!; 
-    
-    // We need the GIC ID from the authenticated leader
-    if (!leader.gicId) {
-        return res.status(400).json({ message: "Impossible de déterminer le GIC de l'utilisateur." });
+    const leaderId = req.user?.id;
+    if (!leaderId) {
+        return res.status(401).json({ message: "Utilisateur non authentifié." });
+    }
+
+    // Contrôle d'appartenance et de responsabilité refait côté serveur à partir de la base
+    const leader = await prisma.agriculteur.findUnique({
+        where: { id: BigInt(leaderId) },
+        select: { id: true, gicId: true, estLeader: true }
+    });
+
+    if (!leader || !leader.estLeader || !leader.gicId) {
+        return res.status(403).json({ message: "Accès refusé. Seuls les leaders de GIC peuvent effectuer cette action." });
     }
 
     const pendingMembers = await gicService.getPendingMembersForGic(leader.gicId);

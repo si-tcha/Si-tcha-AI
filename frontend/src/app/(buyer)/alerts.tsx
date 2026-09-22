@@ -7,6 +7,8 @@ import { Spacing } from '@/constants/theme';
 import { AlertPreferences, dbService } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { useAuth } from '@/context/AuthContext';
+import { useBuyerAlertsCoordinator } from '@/hooks/useBuyerCoordinators';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -18,27 +20,34 @@ const BASSIN_OPTIONS = ['Ouest', 'Centre', 'Nord', 'Littoral'];
 export default function BuyerAlertsScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const [prefs, setPrefs] = useState<AlertPreferences>({ productNames: [], bassins: [] });
-  const [matchCount, setMatchCount] = useState(0);
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated, sessionSeq } = useAuth();
+
+  const {
+    prefs,
+    setPrefs,
+    matchCount,
+    isLoading,
+    isDataValid,
+    loadAlerts,
+    saveAlerts,
+  } = useBuyerAlertsCoordinator(currentBuyerId, authLoading, authenticated, sessionSeq);
 
   useEffect(() => {
-    const load = async () => {
-      await dbService.initDatabase();
-      const stored = await dbService.getAlertPreferences();
-      setPrefs(stored);
-      setMatchCount(await dbService.getMatchingAlertCount());
-    };
-    load();
-  }, []);
+    loadAlerts();
+  }, [loadAlerts]);
 
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
   const handleSave = async () => {
-    await dbService.saveAlertPreferences(prefs);
-    const updatedCount = await dbService.getMatchingAlertCount();
-    setMatchCount(updatedCount);
-    showToast({ message: 'Préférences d\'alertes sauvegardées !', type: 'success' });
+    await saveAlerts(prefs, {
+      onSuccess: () => {
+        showToast({ message: "Préférences d'alertes sauvegardées !", type: 'success' });
+      },
+      onError: (err: any) => {
+        showToast({ message: err?.message || 'Erreur lors de la sauvegarde des alertes.', type: 'error' });
+      },
+    });
   };
 
   return (
@@ -56,65 +65,73 @@ export default function BuyerAlertsScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.infoCard}>
-            <View style={styles.alertIconBg}>
-              <Feather name="bell" size={20} color="#d97834" />
+          {isLoading || !isDataValid ? (
+            <View style={styles.infoCard}>
+              <Text style={styles.infoTitle}>Chargement des préférences d'alertes...</Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.infoTitle}>Notifications Disponibilité</Text>
-              <Text style={styles.infoText}>
-                {matchCount > 0
-                  ? `${matchCount} récolte(s) correspondent actuellement à vos critères.`
-                  : 'Sélectionnez vos produits et bassins pour recevoir des alertes instantanées.'}
-              </Text>
-            </View>
-          </View>
+          ) : (
+            <>
+              <View style={styles.infoCard}>
+                <View style={styles.alertIconBg}>
+                  <Feather name="bell" size={20} color="#d97834" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.infoTitle}>Notifications Disponibilité</Text>
+                  <Text style={styles.infoText}>
+                    {matchCount > 0
+                      ? `${matchCount} récolte(s) correspondent actuellement à vos critères.`
+                      : 'Sélectionnez vos produits et bassins pour recevoir des alertes instantanées.'}
+                  </Text>
+                </View>
+              </View>
 
-          <Text style={styles.sectionTitle}>Produits & Catégories surveillés</Text>
-          <View style={styles.pills}>
-            {PRODUCT_OPTIONS.map((name) => {
-              const active = prefs.productNames.includes(name);
-              return (
-                <TouchableOpacity
-                  key={name}
-                  style={[styles.pill, active && styles.pillActive]}
-                  onPress={() =>
-                    setPrefs((p: AlertPreferences) => ({ ...p, productNames: toggle(p.productNames, name) }))
-                  }
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.pillText, active && styles.pillTextActive]}>{active ? `✓ ${name}` : name}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+              <Text style={styles.sectionTitle}>Produits & Catégories surveillés</Text>
+              <View style={styles.pills}>
+                {PRODUCT_OPTIONS.map((name) => {
+                  const active = prefs.productNames.includes(name);
+                  return (
+                    <TouchableOpacity
+                      key={name}
+                      style={[styles.pill, active && styles.pillActive]}
+                      onPress={() =>
+                        setPrefs((p: AlertPreferences) => ({ ...p, productNames: toggle(p.productNames, name) }))
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.pillText, active && styles.pillTextActive]}>{active ? `✓ ${name}` : name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-          <Text style={styles.sectionTitle}>Bassins de Production</Text>
-          <View style={styles.pills}>
-            {BASSIN_OPTIONS.map((name) => {
-              const active = prefs.bassins.includes(name);
-              return (
-                <TouchableOpacity
-                  key={name}
-                  style={[styles.pill, active && styles.pillActive]}
-                  onPress={() =>
-                    setPrefs((p: AlertPreferences) => ({ ...p, bassins: toggle(p.bassins, name) }))
-                  }
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.pillText, active && styles.pillTextActive]}>{active ? `✓ ${name}` : name}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+              <Text style={styles.sectionTitle}>Bassins de Production</Text>
+              <View style={styles.pills}>
+                {BASSIN_OPTIONS.map((name) => {
+                  const active = prefs.bassins.includes(name);
+                  return (
+                    <TouchableOpacity
+                      key={name}
+                      style={[styles.pill, active && styles.pillActive]}
+                      onPress={() =>
+                        setPrefs((p: AlertPreferences) => ({ ...p, bassins: toggle(p.bassins, name) }))
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.pillText, active && styles.pillTextActive]}>{active ? `✓ ${name}` : name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave} activeOpacity={0.85}>
-            <Feather name="check" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-            <Text style={styles.saveText}>Enregistrer mes Préférences</Text>
-          </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSave} activeOpacity={0.85}>
+                <Feather name="check" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.saveText}>Enregistrer mes Préférences</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </ScrollView>
 
-        <BottomNavBar role="buyer" alertCount={matchCount} />
+        <BottomNavBar role="buyer" alertCount={isDataValid ? matchCount : 0} />
       </View>
     </SafeAreaView>
   );

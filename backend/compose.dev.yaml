@@ -1,0 +1,72 @@
+# ==============================================================================
+# SI-TCHA AI - Docker Compose Développement Local Uniquement
+# ATTENTION : Ce fichier est strictement réservé au développement local.
+# Il contient des valeurs par défaut non sécurisées et ne doit JAMAIS être
+# utilisé ou présenté comme une validation de production.
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sitcha_dev_user
+      POSTGRES_PASSWORD: sitcha_dev_insecure_password_local_only
+      POSTGRES_DB: sitcha_dev_db
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sitcha_dev_user -d sitcha_dev_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+
+  migration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npx", "prisma", "migrate", "deploy"]
+    healthcheck:
+      disable: true
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://sitcha_dev_user:sitcha_dev_insecure_password_local_only@postgres:5432/sitcha_dev_db?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      NODE_ENV: development
+      PORT: "4000"
+      DATABASE_URL: postgresql://sitcha_dev_user:sitcha_dev_insecure_password_local_only@postgres:5432/sitcha_dev_db?schema=public
+      JWT_SECRET: dev-jwt-secret-placeholder-minimum-32-chars-key
+      CORS_ORIGIN: http://localhost:8081,http://localhost:19006
+      TRUST_PROXY: "1"
+      LOG_LEVEL: debug
+      OTP_PROVIDER: disabled
+      ENABLE_API_DOCS: "true"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_dev_data:

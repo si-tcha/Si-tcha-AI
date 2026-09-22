@@ -1,0 +1,827 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  apiClient,
+  ApiError,
+  getApiBaseUrl,
+  resolveApiBaseUrl,
+  isNetworkError,
+  saveSession,
+  readStoredSession,
+  clearSession,
+  setUnauthorizedHandler,
+  isValidStoredSession,
+  computeNativePhysicalDevice,
+  _resetMemorySessionForTesting,
+  UserProfile,
+} from '../src/services/api';
+
+describe('Production API Client, Networking & Configuration Tests', () => {
+  const originalEnv = process.env.EXPO_PUBLIC_API_URL;
+
+  const mockUser: UserProfile = {
+    id: 'user-1',
+    role: 'buyer',
+    name: 'Entreprise Test',
+    phone: '+237699112233',
+    status: 'active',
+    phoneVerified: true,
+  };
+
+  beforeEach(async () => {
+    await clearSession();
+    localStorage.clear();
+    _resetMemorySessionForTesting();
+    vi.restoreAllMocks();
+    delete process.env.EXPO_PUBLIC_API_URL;
+  });
+
+  afterEach(() => {
+    if (originalEnv !== undefined) {
+      process.env.EXPO_PUBLIC_API_URL = originalEnv;
+    } else {
+      delete process.env.EXPO_PUBLIC_API_URL;
+    }
+  });
+
+  describe('Centralized Base URL Resolution & Physical Device Detection', () => {
+    it('1. Web local en développement avec isDevice: true doit pointer sur http://localhost:4000/api', () => {
+      // Sur le web, expo-device renvoie toujours isDevice: true
+      const url = resolveApiBaseUrl({
+        platform: 'web',
+        isDevice: true,
+        envUrl: undefined,
+        isDev: true,
+      });
+      expect(url).toBe('http://localhost:4000/api');
+    });
+
+    it('2. Simulateur iOS en développement doit pointer sur http://localhost:4000/api', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'ios',
+        isDevice: false,
+        envUrl: undefined,
+        isDev: true,
+      });
+      expect(url).toBe('http://localhost:4000/api');
+    });
+
+    it('3. Émulateur Android en développement doit pointer sur http://10.0.2.2:4000/api', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'android',
+        isDevice: false,
+        envUrl: undefined,
+        isDev: true,
+      });
+      expect(url).toBe('http://10.0.2.2:4000/api');
+    });
+
+    it('4. Android physique avec URL explicite doit utiliser cette URL', () => {
+      const url = resolveApiBaseUrl({
+        platform: 'android',
+        isDevice: true,
+        envUrl: 'http://192.168.1.50:4000/api/',
+        isDev: true,
+      });
+      expect(url).toBe('http://192.168.1.50:4000/api');
+    });
+
+    it('5. Android ou iOS physique sans EXPO_PUBLIC_API_URL doit lever une erreur explicite sans tenter 10.0.2.2', () => {
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: undefined,
+          isDev: true,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'ios',
+          isDevice: true,
+          envUrl: undefined,
+          isDev: true,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL est obligatoire sur un appareil physique/);
+    });
+
+    it('6. Mode production sans EXPO_PUBLIC_API_URL doit lever une erreur de configuration sur toute plateforme', () => {
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: undefined,
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: false,
+          envUrl: undefined,
+          isDev: false,
+        })
+      ).toThrowError(/EXPO_PUBLIC_API_URL doit être définie en environnement de production/);
+    });
+
+    it('7. Mode production avec validation stricte de l’URL API (HTTPS, non-local, credentials, etc.)', () => {
+      // Refus de HTTP au lieu de HTTPS
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: 'http://api.example.com/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      // Refus de 192.168.0.0/16
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://192.168.1.20:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://192.168.1.20:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/réseau privé 192\.168\.0\.0\/16/);
+
+      // Refus de 172.16.0.0/12
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://172.16.0.5/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://172.16.0.5/api',
+          isDev: false,
+        })
+      ).toThrowError(/réseau privé 172\.16\.0\.0\/12/);
+
+      // Refus de 10.0.0.0/8
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: false,
+          envUrl: 'http://10.1.2.3/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: false,
+          envUrl: 'https://10.1.2.3/api',
+          isDev: false,
+        })
+      ).toThrowError(/réseau privé 10\.0\.0\.0\/8/);
+
+      // Refus de localhost et loopback 127.0.0.0/8
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://127.0.0.1:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/boucle locale 127\.0\.0\.0\/8/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: 'https://localhost:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/localhost/);
+
+      // Refus de 0.0.0.0
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'web',
+          isDevice: true,
+          envUrl: 'https://0.0.0.0:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/0\.0\.0\.0/);
+
+      // Refus de link-local 169.254.0.0/16
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://169.254.1.1/api',
+          isDev: false,
+        })
+      ).toThrowError(/link-local/);
+
+      // Refus IPv6 localhost [::1]
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'http://[::1]:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/doit impérativement utiliser le protocole HTTPS/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::1]:4000/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 loopback ou non-spécifiée/);
+
+      // Refus IPv6 link-local fe80::/10
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[fe80::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 link-local/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[febf::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 link-local/);
+
+      // Refus IPv6 unique-local fc00::/7
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[fc00::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 locale unique/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[fdff::1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv6 locale unique/);
+
+      // Refus IPv4-mapped IPv6 ::ffff:x.x.x.x (forme pointée et normalisée)
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::ffff:127.0.0.1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv4-mapped IPv6/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::ffff:192.168.1.1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv4-mapped IPv6/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://[::ffff:7f00:1]/api',
+          isDev: false,
+        })
+      ).toThrowError(/adresse IPv4-mapped IPv6/);
+
+      // Refus de username/password dans l'URL
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://user:password@api.example.com/api',
+          isDev: false,
+        })
+      ).toThrowError(/ne doit pas contenir d'identifiants/);
+
+      // Refus d'URL malformée
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'not-an-url',
+          isDev: false,
+        })
+      ).toThrowError(/n'est pas une URL valide/);
+
+      // Refus de pathname absent ou vide
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Refus de mauvais pathname
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/foo',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api/auth',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Refus de sous-chemin (/api/v1)
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api/v1',
+          isDev: false,
+        })
+      ).toThrowError(/doit avoir exactement le chemin '\/api'/);
+
+      // Refus de query string
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api?token=x',
+          isDev: false,
+        })
+      ).toThrowError(/ne doit pas contenir de query string/);
+
+      // Refus de fragment
+      expect(() =>
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api#fragment',
+          isDev: false,
+        })
+      ).toThrowError(/ne doit pas contenir de query string \('\?'\) ou de fragment \('#'\)/);
+
+      // Acceptation d'une URL HTTPS publique valide avec normalisation des slashs finaux
+      expect(
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api',
+          isDev: false,
+        })
+      ).toBe('https://api.example.com/api');
+
+      expect(
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api/',
+          isDev: false,
+        })
+      ).toBe('https://api.example.com/api');
+
+      expect(
+        resolveApiBaseUrl({
+          platform: 'android',
+          isDevice: true,
+          envUrl: 'https://api.example.com/api///',
+          isDev: false,
+        })
+      ).toBe('https://api.example.com/api');
+    });
+
+    it('8. computeNativePhysicalDevice et getApiBaseUrl doivent normaliser le Web comme non physique natif', () => {
+      // computeNativePhysicalDevice
+      expect(computeNativePhysicalDevice('web', true)).toBe(false);
+      expect(computeNativePhysicalDevice('android', true)).toBe(true);
+      expect(computeNativePhysicalDevice('ios', true)).toBe(true);
+      expect(computeNativePhysicalDevice('android', false)).toBe(false);
+
+      // getApiBaseUrl en dev sans envUrl doit retourner port 4000 valide
+      delete process.env.EXPO_PUBLIC_API_URL;
+      const baseUrl = getApiBaseUrl();
+      expect(baseUrl).toMatch(/http:\/\/(localhost|10\.0\.2\.2):4000\/api/);
+    });
+  });
+
+  describe('Session Validation & Storage Hardening', () => {
+    it('isValidStoredSession should accept valid v1 session', () => {
+      const valid = {
+        version: 1,
+        token: 'token-123',
+        user: mockUser,
+      };
+      expect(isValidStoredSession(valid)).toBe(true);
+    });
+
+    it('isValidStoredSession should reject session with invalid version or empty token', () => {
+      expect(isValidStoredSession({ version: 2, token: 'token', user: mockUser })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: '', user: mockUser })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: '   ', user: mockUser })).toBe(false);
+    });
+
+    it('isValidStoredSession should reject invalid or missing user fields', () => {
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, role: 'invalid' } })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, status: 'unknown' } })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, phoneVerified: 'yes' } })).toBe(false);
+      expect(isValidStoredSession({ version: 1, token: 'token', user: { ...mockUser, id: '' } })).toBe(false);
+    });
+
+    it('saveSession should throw and NOT update memory if storage write throws', async () => {
+      vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+        throw new Error('QuotaExceededError');
+      });
+
+      _resetMemorySessionForTesting();
+      await expect(saveSession('token-abc', mockUser)).rejects.toThrow('QuotaExceededError');
+
+      // memorySession ne doit PAS être mis à jour
+      _resetMemorySessionForTesting();
+      // Lecture via localStorage (qui est vide)
+      const session = await readStoredSession();
+      expect(session).toBeNull();
+    });
+
+    it('readStoredSession should clean up corrupted JSON and return null', async () => {
+      localStorage.setItem('sitcha_session_v1', '{ invalid json syntax');
+      _resetMemorySessionForTesting();
+
+      const session = await readStoredSession();
+      expect(session).toBeNull();
+      expect(localStorage.getItem('sitcha_session_v1')).toBeNull();
+    });
+
+    it('readStoredSession should propagate real storage access failures', async () => {
+      vi.spyOn(localStorage, 'getItem').mockImplementationOnce(() => {
+        throw new Error('SecurityError: Access denied to storage');
+      });
+      _resetMemorySessionForTesting();
+
+      await expect(readStoredSession()).rejects.toThrow('SecurityError: Access denied to storage');
+    });
+
+    it('should NEVER grant active or phoneVerified authorization to legacy profile lacking these fields', async () => {
+      // Profil legacy sans status ni phoneVerified
+      const insecureLegacyUser = {
+        id: 'legacy-999',
+        name: 'Utilisateur Ancien',
+        phone: '+237699000000',
+        role: 'buyer',
+        // status et phoneVerified manquent volontairement
+      };
+
+      localStorage.setItem('sitcha_api_token', 'legacy-tok-999');
+      localStorage.setItem('sitcha_user_profile', JSON.stringify(insecureLegacyUser));
+
+      _resetMemorySessionForTesting();
+      const session = await readStoredSession();
+
+      // Ne doit JAMAIS créer une session v1 active ou vérifiée de manière artificielle
+      expect(session).toBeNull();
+      expect(localStorage.getItem('sitcha_session_v1')).toBeNull();
+      // Les clés legacy invalides doivent être supprimées pour exiger une reconnexion
+      expect(localStorage.getItem('sitcha_api_token')).toBeNull();
+      expect(localStorage.getItem('sitcha_user_profile')).toBeNull();
+    });
+  });
+
+  describe('Centralized Health Check', () => {
+    it('apiClient.health() should return true when GET /api/health responds ok', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'ok' }),
+      } as any);
+
+      const isHealthy = await apiClient.health();
+      expect(isHealthy).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/health$/),
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('apiClient.health() should return false when endpoint fails or network is down', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network offline'));
+
+      const isHealthy = await apiClient.health();
+      expect(isHealthy).toBe(false);
+    });
+  });
+
+  describe('HTTP Request & Security Lifecycle', () => {
+    it('should automatically attach Authorization header when session token exists', async () => {
+      await saveSession('jwt-token-alpha', mockUser);
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: mockUser }),
+      } as any);
+
+      await apiClient.getMe();
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer jwt-token-alpha',
+          }),
+        })
+      );
+    });
+
+    it('should evict session on HTTP 401 Unauthorized', async () => {
+      await saveSession('expired-token', mockUser);
+
+      let unauthorizedCallbackCalled = false;
+      setUnauthorizedHandler(async (token, ticket) => {
+        unauthorizedCallbackCalled = true;
+        await clearSession();
+        return true;
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ message: 'Session expirée' }),
+      } as any);
+
+      await expect(apiClient.getMe()).rejects.toThrow('Session expirée');
+
+      // Le stockage de session doit être purgé
+      const session = await readStoredSession();
+      expect(session).toBeNull();
+      expect(unauthorizedCallbackCalled).toBe(true);
+
+      setUnauthorizedHandler(null);
+    });
+
+    it('should NOT evict session on HTTP 403 Forbidden', async () => {
+      await saveSession('valid-token-forbidden-action', mockUser);
+
+      let unauthorizedCallbackCalled = false;
+      setUnauthorizedHandler(async () => {
+        unauthorizedCallbackCalled = true;
+        return true;
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ message: 'Accès refusé' }),
+      } as any);
+
+      await expect(apiClient.getMe()).rejects.toThrow('Accès refusé');
+
+      // Le stockage de session NE DOIT PAS être purgé sur un 403
+      const session = await readStoredSession();
+      expect(session).not.toBeNull();
+      expect(session?.token).toBe('valid-token-forbidden-action');
+      expect(unauthorizedCallbackCalled).toBe(false);
+
+      setUnauthorizedHandler(null);
+    });
+
+    it('should throw ApiError with status 0 on network request failure', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+      let caughtError: any;
+      try {
+        await apiClient.getMe();
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(ApiError);
+      expect(caughtError.status).toBe(0);
+      expect(isNetworkError(caughtError)).toBe(true);
+    });
+  });
+
+  describe('isNetworkError Utility', () => {
+    it('should identify network errors correctly', () => {
+      expect(isNetworkError(new ApiError('Offline', 0))).toBe(true);
+      expect(isNetworkError(new TypeError('Failed to fetch'))).toBe(true);
+      expect(isNetworkError(new Error('Network request failed'))).toBe(true);
+      expect(isNetworkError(new Error('connect ECONNREFUSED 127.0.0.1:4000'))).toBe(true);
+      expect(isNetworkError(new ApiError('Not found', 404))).toBe(false);
+      expect(isNetworkError(new ApiError('Server error', 500))).toBe(false);
+    });
+  });
+
+  describe('Stand-alone CI Script validate-api-url.mjs Coherence', () => {
+    it('valide de manière strictement identique à validateProductionApiUrl', async () => {
+      const { validateApiUrl } = await import('../../scripts/validate-api-url.mjs');
+      const { validateProductionApiUrl } = await import('../src/services/api');
+
+      // URLs valides (avec pathname /api exact, slashs finaux normalisés)
+      const validUrls = [
+        'https://api.example.com/api',
+        'https://api.example.com/api/',
+        'https://api.example.com/api///',
+        'https://api-staging.example.com/api',
+        'https://sub.domain.cm/api',
+        'https://sub.domain.cm/api/',
+      ];
+
+      for (const url of validUrls) {
+        const expected = 'https://' + new URL(url).host + '/api';
+        expect(validateApiUrl(url)).toBe(expected);
+        expect(validateProductionApiUrl(url)).toBe(expected);
+        expect(validateApiUrl(url)).toBe(validateProductionApiUrl(url));
+      }
+
+      // URLs invalides : toutes doivent lever une erreur strictement identique dans les 2 validateurs
+      const invalidUrls = [
+        '',
+        '   ',
+        'http://api.example.com/api',
+        'https://api.example.com',
+        'https://api.example.com/',
+        'https://api.example.com/foo',
+        'https://api.example.com/api/v1',
+        'https://api.example.com/api?token=x',
+        'https://api.example.com/api#fragment',
+        'https://api.example.com/api/auth',
+        'https://localhost:4000/api',
+        'https://dev.localhost/api',
+        'https://127.0.0.1:4000/api',
+        'https://10.0.2.2:4000/api',
+        'https://192.168.1.50:4000/api',
+        'https://172.20.0.2:4000/api',
+        'https://169.254.1.1:4000/api',
+        'https://0.0.0.0:4000/api',
+        'https://user:pass@api.example.com/api',
+        'https://[::1]:4000/api',
+        'https://[fe80::1]/api',
+        'https://[fe90::1]/api',
+        'https://[fea0::1]/api',
+        'https://[febf::1]/api',
+        'https://[fc00::1]/api',
+        'https://[fc12::1]/api',
+        'https://[fd00::1]/api',
+        'https://[fdab::1]/api',
+        'https://[::ffff:127.0.0.1]/api',
+        'https://[::ffff:10.0.2.2]/api',
+        'https://[::ffff:192.168.1.1]/api',
+        'https://[::ffff:7f00:1]/api',
+        'https://[::ffff:a00:202]/api',
+        'https://[::ffff:c0a8:101]/api',
+      ];
+
+      for (const url of invalidUrls) {
+        let cliError: string | null = null;
+        let appError: string | null = null;
+
+        try {
+          validateApiUrl(url);
+        } catch (e: any) {
+          cliError = e.message;
+        }
+
+        try {
+          validateProductionApiUrl(url);
+        } catch (e: any) {
+          appError = e.message;
+        }
+
+        expect(cliError).not.toBeNull();
+        expect(appError).not.toBeNull();
+        expect(cliError).toBe(appError);
+      }
+    });
+  });
+
+  describe('Internal APK local API URL validation', () => {
+    it('accepte une API LAN explicite et conserve les garde-fous de structure', async () => {
+      const { validateLocalTestApiUrl } = await import('../../scripts/validate-local-test-api-url.mjs');
+
+      expect(validateLocalTestApiUrl('http://172.20.10.3:4000/api')).toBe(
+        'http://172.20.10.3:4000/api'
+      );
+      expect(validateLocalTestApiUrl('https://staging.example.com/api///')).toBe(
+        'https://staging.example.com/api'
+      );
+
+      for (const invalidUrl of [
+        '',
+        'ftp://172.20.10.3/api',
+        'http://localhost:4000/api',
+        'http://127.0.0.1:4000/api',
+        'http://0.0.0.0:4000/api',
+        'http://user:pass@172.20.10.3:4000/api',
+        'http://172.20.10.3:4000/',
+        'http://172.20.10.3:4000/api?token=x',
+      ]) {
+        expect(() => validateLocalTestApiUrl(invalidUrl)).toThrow();
+      }
+    });
+
+    it('configure le workflow manuel sans affaiblir la validation automatique', async () => {
+      const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
+      const workflow = readProjectFile('.github/workflows/build-apk.yml');
+
+      expect(workflow).toContain('api_url:');
+      expect(workflow).toContain('validate-local-test-api-url.mjs');
+      expect(workflow).toContain('node scripts/validate-api-url.mjs');
+      expect(workflow).toContain("github.event_name == 'workflow_dispatch'");
+    });
+  });
+
+  describe('EAS Build Profiles & Environment Separation', () => {
+    it('eas.json ne contient aucun endpoint inventé en dur et configure les environnements preview et production', async () => {
+      const easConfig = (await import('../eas.json')).default;
+      const content = JSON.stringify(easConfig);
+
+      expect(content).not.toContain('api.sitcha.org');
+      expect(content).not.toContain('api-staging.sitcha.org');
+      expect(content).not.toContain('si-tcha.org');
+
+      expect(easConfig.build.preview.environment).toBe('preview');
+      expect(easConfig.build.production.environment).toBe('production');
+      expect('env' in easConfig.build.preview).toBe(false);
+      expect('env' in easConfig.build.production).toBe(false);
+    });
+
+    it('.env.example utilise le placeholder https://<API_HOST>/api sans domaine inventé', async () => {
+      const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
+      const content = readProjectFile('frontend/.env.example');
+
+      expect(content).toContain('EXPO_PUBLIC_API_URL=https://<API_HOST>/api');
+      expect(content).toContain('EXPO_PUBLIC_API_URL=http://localhost:4000/api');
+      expect(content).not.toContain('si-tcha.org');
+      expect(content).not.toContain('sitcha.org');
+    });
+
+    it('docs/EXPLOITATION.md documente eas env:set pour preview et production et bannit eas secret:create', async () => {
+      const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
+      const doc = readProjectFile('docs/EXPLOITATION.md');
+
+      // Commandes eas env:set pour preview et production avec visibilité plaintext
+      expect(doc).toContain('eas env:set --name EXPO_PUBLIC_API_URL');
+      expect(doc).toContain('--environment preview');
+      expect(doc).toContain('--environment production');
+      expect(doc).toContain('--visibility plaintext');
+
+      // Commandes de vérification
+      expect(doc).toContain('eas env:list --environment preview');
+      expect(doc).toContain('eas env:list --environment production');
+
+      // Absence totale de commandes obsolètes eas secret:create
+      expect(doc).not.toContain('eas secret:create');
+
+      // Mention explicite que EXPO_PUBLIC_API_URL n'est pas un secret
+      expect(doc).toMatch(/ne constitue donc pas un secret/i);
+
+      // Absence de domaines de production inventés
+      expect(doc).not.toContain('api.sitcha.org');
+      expect(doc).not.toContain('api-staging.sitcha.org');
+      expect(doc).not.toContain('si-tcha.org');
+    });
+  });
+});

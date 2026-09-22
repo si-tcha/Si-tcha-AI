@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { protect, isAdmin } from '../middlewares/auth.middleware.js';
+import { protect, requireActive, requireRole, isAdmin } from '../middlewares/auth.middleware.js';
 import { createGic, listGicsWithStats } from '../controllers/admin.controller.js';
 import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
 
@@ -74,8 +74,8 @@ const router = Router();
  *           description: ID du bassin de production concerné.
  */
 
-// Toutes les routes dans ce fichier sont protégées et nécessitent le rôle ADMIN
-router.use(protect, isAdmin);
+// Toutes les routes dans ce fichier sont protégées et nécessitent le rôle admin
+router.use(protect, requireActive, requireRole('admin'));
 
 // @route   POST /api/admin/gics
 // @desc    Créer un nouveau GIC et son leader
