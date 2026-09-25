@@ -1,6 +1,7 @@
 import {
   ActivityIndicator,
   Dimensions,
+  Keyboard,
   Modal,
   Platform,
   ScrollView,
@@ -80,6 +81,11 @@ export default function GrowthLogScreen() {
   // Modale d'ajout
   const [modalVisible, setModalVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // `disabled` n'est appliqué qu'après le prochain rendu React. Ce verrou est
+  // synchrone afin qu'un second événement tactile Android ne puisse pas créer
+  // une deuxième parcelle pendant cet intervalle.
+  const isSubmittingRef = useRef(false);
+  const submitGenerationRef = useRef(0);
 
   // Formulaire d'ajout
   const [parcelName, setParcelName] = useState('');
@@ -102,6 +108,8 @@ export default function GrowthLogScreen() {
     setParcelState({ contextKey: null, value: [] });
     setModalVisible(false);
     setEditingParcel(null);
+    submitGenerationRef.current += 1;
+    isSubmittingRef.current = false;
     setIsSubmitting(false);
     setIsUpdating(false);
     setLoadError(null);
@@ -147,6 +155,11 @@ export default function GrowthLogScreen() {
   }, [loadParcels]);
 
   const handleAddParcel = async () => {
+    // TouchableOpacity peut remettre plusieurs événements onPress avant que
+    // setIsSubmitting() rende le bouton désactivé, surtout avec le clavier
+    // Android ouvert. Ne jamais envoyer deux POST pour la même action.
+    if (isSubmittingRef.current || isSubmitting) return;
+
     // 1. Validations côté client
     if (!parcelName.trim()) {
       showToast({ message: 'Veuillez saisir le nom de la parcelle.', type: 'warning' });
@@ -219,6 +232,12 @@ export default function GrowthLogScreen() {
       return;
     }
 
+    const submitGeneration = ++submitGenerationRef.current;
+    isSubmittingRef.current = true;
+    // La modale utilise déjà le redimensionnement natif Android. Fermer
+    // explicitement le clavier évite l'oscillation Modal/KAV/ScrollView au
+    // moment où le bouton passe à l'état de chargement.
+    Keyboard.dismiss();
     setIsSubmitting(true);
     const ticket = requestGuard.begin(contextKey!, 'parcels');
     try {
@@ -264,7 +283,12 @@ export default function GrowthLogScreen() {
         type: 'error',
       });
     } finally {
-      if (requestGuard.isCurrent(ticket)) setIsSubmitting(false);
+      // Une requête tardive d'un ancien compte ne doit pas déverrouiller un
+      // nouvel envoi lancé après un changement de contexte.
+      if (submitGenerationRef.current === submitGeneration) {
+        isSubmittingRef.current = false;
+        if (requestGuard.isCurrent(ticket)) setIsSubmitting(false);
+      }
     }
   };
 
@@ -564,7 +588,10 @@ export default function GrowthLogScreen() {
         {/* Modale d'ajout de parcelle */}
         <Modal visible={contextKey !== null && modalVisible} animationType="slide" transparent>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            // Sur Android, `height` dans une Modal transparente oscillait avec
+            // le ScrollView lors de la fermeture du clavier. Android gère déjà
+            // le redimensionnement de la fenêtre : on ne l'applique qu'iOS.
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
           >
             <View style={styles.modalOverlay}>
@@ -576,7 +603,10 @@ export default function GrowthLogScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <ScrollView showsVerticalScrollIndicator={false}>
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
                   <Text style={styles.inputLabel}>Nom de la parcelle / Champ *</Text>
                   <TextInput
                     style={styles.textInput}
