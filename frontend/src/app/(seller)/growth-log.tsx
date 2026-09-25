@@ -724,7 +724,7 @@ export default function GrowthLogScreen() {
         {/* Modale de mise à jour (étape et récolte) */}
         <Modal visible={contextKey !== null && !!editingParcel} animationType="slide" transparent>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
           >
             <View style={styles.modalOverlay}>
@@ -737,7 +737,7 @@ export default function GrowthLogScreen() {
                 </View>
 
                 {editingParcel && (
-                  <ScrollView showsVerticalScrollIndicator={false}>
+                  <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                     <Text style={{ fontSize: 14, fontWeight: '700', color: '#101e0f', marginBottom: 12 }}>
                       {editingParcel.parcelName} ({editingParcel.crop})
                     </Text>
