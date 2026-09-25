@@ -218,7 +218,7 @@ export default function OtpVerificationScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#f3ecd8" />
       <View style={styles.container}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.keyboardView}
         >
           <View style={styles.content}>

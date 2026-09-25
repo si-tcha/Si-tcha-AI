@@ -224,7 +224,7 @@ export default function PrefinancingScreen() {
 
         {/* Modale de proposition de préfinancement */}
         <Modal visible={modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={{ paddingHorizontal: Spacing.five, paddingTop: Spacing.three, paddingBottom: Spacing.two }}>
@@ -240,7 +240,7 @@ export default function PrefinancingScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 <Text style={styles.inputLabel}>GIC bénéficiaire</Text>
                 <TextInput
                   style={styles.textInput}
@@ -298,7 +298,7 @@ export default function PrefinancingScreen() {
 
         {/* Modale de Trust Score (Évaluation) */}
         <Modal visible={ratingModalVisible} animationType="fade" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
                 <View style={styles.modalHeader}>

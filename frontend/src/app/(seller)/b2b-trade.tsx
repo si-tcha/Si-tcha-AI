@@ -1,5 +1,5 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Linking } from 'react-native';
-import React, { useEffect, useState } from 'react';
+import { Dimensions, Keyboard, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Linking } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
@@ -28,6 +28,8 @@ export default function B2bTradeScreen() {
   const [formGicName, setFormGicName] = useState('GIC Agro-Vallée');
   const [formLocation, setFormLocation] = useState('Bafoussam (Ouest)');
   const [formContact, setFormContact] = useState('+237 699 00 00 00');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
 
   useEffect(() => {
     loadOffers();
@@ -44,10 +46,15 @@ export default function B2bTradeScreen() {
   };
 
   const handleCreateOffer = async () => {
+    if (submitLockRef.current || isSubmitting) return;
     if (!formTitle.trim() || !formPriceOrExchange.trim()) {
       showToast({ message: 'Veuillez remplir le titre et le tarif/échange.', type: 'warning' });
       return;
     }
+
+    submitLockRef.current = true;
+    Keyboard.dismiss();
+    setIsSubmitting(true);
     try {
       await dbService.addB2BOffer(
         formTitle.trim(),
@@ -65,6 +72,9 @@ export default function B2bTradeScreen() {
       showToast({ message: 'Offre B2B publiée avec succès !', type: 'success' });
     } catch (err) {
       showToast({ message: 'Erreur lors de la création de l\'offre.', type: 'error' });
+    } finally {
+      submitLockRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -178,17 +188,17 @@ export default function B2bTradeScreen() {
 
         {/* Modale de publication B2B */}
         <Modal visible={modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Publier une offre B2B</Text>
-                <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <TouchableOpacity disabled={isSubmitting} onPress={() => setModalVisible(false)}>
                   <Feather name="x" size={24} color="#101e0f" />
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 <Text style={styles.inputLabel}>Type d'offre</Text>
                 <View style={styles.typeSelector}>
                   <TouchableOpacity
@@ -225,6 +235,7 @@ export default function B2bTradeScreen() {
                   placeholderTextColor="#889e87"
                   value={formTitle}
                   onChangeText={setFormTitle}
+                  editable={!isSubmitting}
                 />
 
                 <Text style={styles.inputLabel}>Tarif ou Condition d'échange</Text>
@@ -234,6 +245,7 @@ export default function B2bTradeScreen() {
                   placeholderTextColor="#889e87"
                   value={formPriceOrExchange}
                   onChangeText={setFormPriceOrExchange}
+                  editable={!isSubmitting}
                 />
 
                 <Text style={styles.inputLabel}>Nom du GIC ou Planteur</Text>
@@ -243,6 +255,7 @@ export default function B2bTradeScreen() {
                   placeholderTextColor="#889e87"
                   value={formGicName}
                   onChangeText={setFormGicName}
+                  editable={!isSubmitting}
                 />
 
                 <Text style={styles.inputLabel}>Localisation</Text>
@@ -252,6 +265,7 @@ export default function B2bTradeScreen() {
                   placeholderTextColor="#889e87"
                   value={formLocation}
                   onChangeText={setFormLocation}
+                  editable={!isSubmitting}
                 />
 
                 <Text style={styles.inputLabel}>Téléphone de contact</Text>
@@ -262,10 +276,16 @@ export default function B2bTradeScreen() {
                   keyboardType="phone-pad"
                   value={formContact}
                   onChangeText={setFormContact}
+                  editable={!isSubmitting}
                 />
 
-                <TouchableOpacity style={styles.modalSubmitButton} onPress={handleCreateOffer} activeOpacity={0.85}>
-                  <Text style={styles.modalSubmitText}>Publier l'offre B2B</Text>
+                <TouchableOpacity
+                  style={[styles.modalSubmitButton, isSubmitting && { opacity: 0.7 }]}
+                  onPress={handleCreateOffer}
+                  disabled={isSubmitting}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.modalSubmitText}>{isSubmitting ? 'Publication…' : "Publier l'offre B2B"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>

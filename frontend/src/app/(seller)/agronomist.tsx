@@ -364,7 +364,7 @@ export default function AgronomistScreen() {
         {/* Modale de saisie de question */}
         <Modal visible={contextKey !== null && modalVisible} animationType="slide" transparent>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
           >
             <View style={styles.modalOverlay}>
@@ -376,7 +376,7 @@ export default function AgronomistScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <ScrollView showsVerticalScrollIndicator={false}>
+                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                   <Text style={styles.inputLabel}>Culture concernée</Text>
                   <ScrollView
                     horizontal
