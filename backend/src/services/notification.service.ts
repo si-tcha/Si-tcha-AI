@@ -1,17 +1,79 @@
 import prisma from '../lib/prisma.js';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 
-interface SendSmsOptions {
+export interface SendSmsOptions {
   to: string | string[]; // Un numéro isolé ou un tableau de numéros
   message: string;
 }
 
+export interface SmsCampaignOptions {
+  recipients: string[];
+  message: string;
+  label?: string;
+  scheduledAt?: Date | string;
+  customData?: Record<string, string>[];
+}
+
+export interface LeTextoResponse {
+  status?: string;
+  id?: string | number;
+  [key: string]: unknown;
+}
+
+const LETEXTO_BASE_URL = process.env.LETEXTO_API_URL || 'https://apis.letexto.com';
+const REQUEST_TIMEOUT_MS = 10000;
+
+function getLeTextoConfig(): { apiKey: string; sender: string } | null {
+  const apiKey = process.env.LETEXTO_API_KEY;
+  const sender = process.env.LETEXTO_SENDER_ID || 'SI-TCHA AI';
+
+  if (!apiKey) {
+    console.error('Configuration LeTexto SMS manquante (LETEXTO_API_KEY).');
+    return null;
+  }
+
+  return { apiKey, sender };
+}
+
+function getLeTextoHeaders(apiKey: string) {
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+}
+
+function getApiErrorMessage(error: unknown): string {
+  if (error instanceof AxiosError) {
+    const responseData = error.response?.data as { message?: string | string[]; error?: string } | undefined;
+    const message = responseData?.message;
+    return Array.isArray(message) ? message.join('; ') : message || responseData?.error || error.message;
+  }
+
+  return error instanceof Error ? error.message : 'Erreur inconnue';
+}
+
 /**
- * Nettoie et formate les numéros de téléphone au format attendu par Nexah.
+ * Nettoie et formate les numéros de téléphone au format attendu par LeTexto.
  * Exemples acceptés : "+237697158087" -> "237697158087", "697158087" -> "697158087"
  */
 function formatPhoneNumber(phone: string): string {
   return phone.replace(/[\s+()-]/g, '');
+}
+
+function validatePhoneNumber(phone: string): string {
+  const formattedPhone = formatPhoneNumber(phone);
+  if (!/^\d{8,15}$/.test(formattedPhone)) {
+    throw new Error(`Numéro de téléphone invalide : ${phone}`);
+  }
+
+  return formattedPhone;
+}
+
+function validateMessage(message: string): void {
+  if (!message.trim()) {
+    throw new Error('Le contenu du SMS est obligatoire.');
+  }
 }
 
 
@@ -24,95 +86,121 @@ const generateVerificationCode = (): string => {
 };
 
 /**
- * Envoie un SMS en utilisant l'API Nexah.
+ * Envoie un SMS en utilisant l'API LeTexto.
  * @param to - Le numéro de téléphone du destinataire (format international, ex: 2376...).
  * @param message - Le contenu du message à envoyer.
  */
 
 export async function sendSms({ to, message }: SendSmsOptions): Promise<boolean> {
   try {
-    const user = process.env.NEXAH_USER;
-    const password = process.env.NEXAH_PASSWORD;
-    const senderid = process.env.NEXAH_SENDER_ID || 'SI-TCHA';
-    const apiUrl = process.env.NEXAH_API_URL || 'https://smsvas.com/bulk/public/index.php/api/v1/sendsms';
+    if (Array.isArray(to)) {
+      return Boolean(await createSmsCampaign({ recipients: to, message }));
+    }
 
-    if (!user || !password) {
-      console.error('❌ Configuration Nexah SMS manquante dans le fichier .env (NEXAH_USER, NEXAH_PASSWORD)');
+    const config = getLeTextoConfig();
+    if (!config) {
       return false;
     }
 
-    // Préparation de la chaîne de numéros séparés par des virgules
-    const mobiles = Array.isArray(to)
-      ? to.map(formatPhoneNumber).join(',')
-      : formatPhoneNumber(to);
-
-    // Corps de la requête tel qu'attendu par l'API Nexah
-    const payload = {
-      user,
-      password,
-      senderid,
-      sms: message,
-      mobiles
-    };
-
-    console.log(`📱 Envoi SMS Nexah à : ${mobiles}...`);
-
-    const response = await axios.post(apiUrl, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    validateMessage(message);
+    const recipient = validatePhoneNumber(to);
+    const response = await axios.post<LeTextoResponse>(
+      `${LETEXTO_BASE_URL}/v1/messages/send`,
+      { from: config.sender, to: recipient, content: message },
+      {
+        headers: getLeTextoHeaders(config.apiKey),
+        timeout: REQUEST_TIMEOUT_MS,
       },
-      timeout: 10000 // Timeout de 10s pour éviter de bloquer l'Auth
-    });
+    );
 
-    console.log('✅ Réponse API Nexah SMS :', response.data);
+    console.log('Réponse API LeTexto SMS :', response.data);
+    return response.status >= 200 && response.status < 300 && Boolean(response.data);
+  } catch (error: unknown) {
+    console.error('Erreur lors de l’envoi du SMS via LeTexto :', getApiErrorMessage(error));
+    return false;
+  }
+}
 
-    // Vérification du statut de la réponse (Gestion dynamique des formats d'API Nexah)
-    if (response.data) {
-      // Cas 1 : Réponse sous forme de tableau d'objets statutaires (ex: Postman)
-      if (Array.isArray(response.data)) {
-        return response.data.some((item: any) => item.status === 'success');
-      }
+/** Alias public avec la casse utilisée dans la documentation métier. */
+export const sendSMS = sendSms;
 
-      // Cas 2 : Réponse sous forme d'objet principal avec responsecode (ex: Documentation PDF)
-      if (response.data.responsecode === 1 || response.data.status === 'success') {
-        return true;
-      }
+/** Crée une campagne SMS LeTexto pour plusieurs destinataires. */
+export async function createSmsCampaign(options: SmsCampaignOptions): Promise<LeTextoResponse | null> {
+  try {
+    const config = getLeTextoConfig();
+    if (!config) {
+      return null;
     }
 
-    console.warn('⚠️ Le SMS a été envoyé mais Nexah a renvoyé un statut d\'erreur :', response.data);
-    return false;
-  } catch (error: any) {
-    console.error('❌ Erreur lors de l\'envoi du SMS via Nexah :', error?.response?.data || error.message);
-    return false;
+    if (!Array.isArray(options.recipients) || options.recipients.length === 0) {
+      throw new Error('La campagne doit contenir au moins un destinataire.');
+    }
+    validateMessage(options.message);
+
+    const contacts = options.recipients.map((recipient, index) => {
+      const customData = options.customData?.[index] || {};
+      return { numero: validatePhoneNumber(recipient), ...customData };
+    });
+
+    const payload: Record<string, unknown> = {
+      label: options.label || `SI-TCHA-${new Date().toISOString()}`,
+      sender: config.sender,
+      contacts,
+      content: options.message,
+    };
+
+    if (options.scheduledAt) {
+      const scheduledAt = new Date(options.scheduledAt);
+      if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
+        throw new Error('La date de programmation doit être une date future valide.');
+      }
+      payload.sendAt = scheduledAt.toISOString();
+    }
+
+    const response = await axios.post<LeTextoResponse>(
+      `${LETEXTO_BASE_URL}/v1/campaigns/sms`,
+      payload,
+      { headers: getLeTextoHeaders(config.apiKey), timeout: REQUEST_TIMEOUT_MS },
+    );
+
+    console.log('Réponse API LeTexto campagne SMS :', response.data);
+    return response.status >= 200 && response.status < 300 ? response.data : null;
+  } catch (error: unknown) {
+    console.error('Erreur lors de la création de la campagne SMS LeTexto :', getApiErrorMessage(error));
+    return null;
   }
 }
 
 /**
- * Fonction optionnelle pour consulter le solde de crédits SMS restants
+ * Consulte le solde de crédits SMS LeTexto.
  */
-export async function getNexahSmsBalance(): Promise<number | null> {
+export async function getLeTextoSmsBalance(): Promise<number | null> {
   try {
-    const user = process.env.NEXAH_USER;
-    const password = process.env.NEXAH_PASSWORD;
+    const config = getLeTextoConfig();
+    if (!config) {
+      return null;
+    }
 
-    const response = await axios.post(
-      'https://smsvas.com/bulk/public/index.php/api/v1/smscredit',
-      { user, password },
-      { headers: { 'Content-Type': 'application/json' } }
+    const response = await axios.get<{ balance?: number; credit?: number }>(
+      `${LETEXTO_BASE_URL}/v1/users/balance`,
+      { params: { token: config.apiKey }, timeout: REQUEST_TIMEOUT_MS },
     );
 
-    if (response.data && response.data.credit !== undefined) {
-      console.log(`📊 Solde SMS Nexah restant : ${response.data.credit} crédits`);
-      return response.data.credit;
+    const balance = response.data.balance ?? response.data.credit;
+    if (balance !== undefined) {
+      console.log(`Solde SMS LeTexto restant : ${balance} crédits`);
+      return balance;
     }
 
     return null;
-  } catch (error: any) {
-    console.error('❌ Erreur consultation solde Nexah :', error?.response?.data || error.message);
+  } catch (error: unknown) {
+    console.error('Erreur consultation solde LeTexto :', getApiErrorMessage(error));
     return null;
   }
 }
+
+/** Alias conservé pour les éventuels appelants historiques. */
+export const getNexahSmsBalance = getLeTextoSmsBalance;
 
 /**
  * Crée et "envoie" un code de vérification par SMS.

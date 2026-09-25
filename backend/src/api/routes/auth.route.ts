@@ -51,7 +51,7 @@ const router = Router();
  *         nomEntreprise: "Agro-Business SARL"
  *         nui: "M123456789"
  *         secteur_activite: "Achat de Cacao"
- *         contact: "+237699887766"
+ *         contact: "237699887766"
  *         pin: "1234"
  *     AgriculteurRegister:
  *       type: object
@@ -77,7 +77,7 @@ const router = Router();
  *           example: "5678"
  *       example:
  *         nom: "Moussa Bello"
- *         contact: "+237677665544"
+ *         contact: "237677665544"
  *         pin: "5678"
  *         gicId: "c2f9e3c8-691a-4f3b-9b8e-5d7c6a4b3f2d"
  *     VerifyAccount:
@@ -93,7 +93,7 @@ const router = Router();
  *           type: string
  *           description: Code de vérification à 6 chiffres reçu par SMS.
  *       example:
- *         contact: "+237699887766"
+ *         contact: "237699887766"
  *         code: "123456"
  *     Login:
  *       type: object
@@ -109,7 +109,7 @@ const router = Router();
  *           description: Code PIN de sécurité de l'utilisateur.
  *           format: password
  *       example:
- *         contact: "+237699887766"
+ *         contact: "237699887766"
  *         pin: "1234"
  *     AdminLogin:
  *       type: object

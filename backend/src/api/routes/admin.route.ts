@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { protect, isAdmin } from '../middlewares/auth.middleware.js';
-import { createGic, listGicsWithStats } from '../controllers/admin.controller.js';
+import { createGic, listGicsWithStats, updateGic } from '../controllers/admin.controller.js';
 import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
 
 const router = Router();
@@ -41,6 +41,11 @@ const router = Router();
  *           type: string
  *         contact:
  *           type: string
+ *         pin:
+ *           type: string
+ *           pattern: '^\\d{4,}$'
+ *           default: '1234'
+ *           description: PIN numérique du leader. Si absent, le PIN par défaut est 1234.
  *     CreateGicPayload:
  *       type: object
  *       properties:
@@ -107,6 +112,41 @@ router.post(
     '/gics',
     asyncHandler(createGic)
 );
+
+/**
+ * @swagger
+ * /admin/gics/{gicId}:
+ *   put:
+ *     summary: Modifier un GIC et son leader
+ *     description: Met à jour les informations envoyées du GIC et de son leader. Le PIN est haché avant stockage.
+ *     tags: [Administration]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: gicId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               gicData:
+ *                 $ref: '#/components/schemas/GicCreation'
+ *               leaderData:
+ *                 $ref: '#/components/schemas/LeaderCreation'
+ *     responses:
+ *       200:
+ *         description: GIC et leader mis à jour avec succès.
+ *       404:
+ *         description: GIC ou leader introuvable.
+ */
+router.put('/gics/:gicId', asyncHandler(updateGic));
 
 // @route   GET /api/admin/gics
 // @desc    Lister tous les GICs avec les statistiques de leurs membres
