@@ -24,7 +24,7 @@ export interface AppConfig {
   BODY_LIMIT: string;
   TRUST_PROXY: boolean | number | string;
   LOG_LEVEL: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
-  OTP_PROVIDER: 'disabled' | 'development' | 'test' | 'nexah' | 'africastalking';
+  OTP_PROVIDER: 'disabled' | 'development' | 'test' | 'nexah' | 'africastalking' | 'letexto';
   ENABLE_API_DOCS: boolean;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX: number;
@@ -39,6 +39,9 @@ export interface AppConfig {
   NEXAH_API_URL?: string;
   AFRICASTALKING_USERNAME?: string;
   AFRICASTALKING_API_KEY?: string;
+  LETEXTO_API_KEY?: string;
+  LETEXTO_SENDER_ID?: string;
+  LETEXTO_API_URL?: string;
 }
 
 export function parseTrustProxy(val?: string): boolean | number | string {
@@ -178,7 +181,7 @@ export function validateConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConf
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default(defaultLogLevel),
     OTP_PROVIDER: z
-      .enum(['disabled', 'development', 'test', 'nexah', 'africastalking'])
+      .enum(['disabled', 'development', 'test', 'nexah', 'africastalking', 'letexto'])
       .default('disabled'),
     ENABLE_API_DOCS: z
       .string()
@@ -200,6 +203,9 @@ export function validateConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConf
     NEXAH_API_URL: z.string().optional(),
     AFRICASTALKING_USERNAME: z.string().optional(),
     AFRICASTALKING_API_KEY: z.string().optional(),
+    LETEXTO_API_KEY: z.string().optional(),
+    LETEXTO_SENDER_ID: z.string().optional(),
+    LETEXTO_API_URL: z.string().url().optional(),
   });
 
   const parsed = schema.safeParse(effectiveEnv);
@@ -251,8 +257,11 @@ export function validateConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConf
     // 4. OTP_PROVIDER en production : interdiction de 'development' et 'test'
     if (data.OTP_PROVIDER === 'development' || data.OTP_PROVIDER === 'test') {
       throw new Error(
-        `[CONFIG ERROR] OTP_PROVIDER='${data.OTP_PROVIDER}' est strictement interdit en production. Seul 'disabled' est autorisé dans cette version.`
+        `[CONFIG ERROR] OTP_PROVIDER='${data.OTP_PROVIDER}' est strictement interdit en production. Utilisez un fournisseur réel configuré ou 'disabled'.`
       );
+    }
+    if (data.OTP_PROVIDER === 'letexto' && !data.LETEXTO_API_KEY?.trim()) {
+      throw new Error("[CONFIG ERROR] LETEXTO_API_KEY est obligatoire lorsque OTP_PROVIDER='letexto' en production.");
     }
   }
 

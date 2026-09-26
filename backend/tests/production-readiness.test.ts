@@ -116,6 +116,23 @@ describe('Bloc 5 — Tests de Préparation Production Backend', () => {
       }).toThrowError(/est strictement interdit en production/);
     });
 
+    it('exige une clé LeTexto en production et accepte une configuration complète', () => {
+      expect(() => {
+        validateConfig({
+          ...baseValidProdEnv,
+          OTP_PROVIDER: 'letexto',
+        });
+      }).toThrowError(/LETEXTO_API_KEY est obligatoire/);
+
+      expect(validateConfig({
+        ...baseValidProdEnv,
+        OTP_PROVIDER: 'letexto',
+        LETEXTO_API_KEY: 'test-letexto-production-key',
+        LETEXTO_SENDER_ID: 'SI-TCHA',
+        LETEXTO_API_URL: 'https://apis.letexto.com',
+      }).OTP_PROVIDER).toBe('letexto');
+    });
+
     it('Refuse de démarrer en production si CORS_ORIGIN contient des URLs HTTP non chiffrées ou null', () => {
       expect(() => {
         validateConfig({

@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { generateSecureOtp, AppOtpProvider, defaultOtpProvider } from '../src/services/otpProvider.js';
 import { registerBuyer, registerSeller, verifyOtp } from '../src/controllers/auth.controller.js';
 import prisma from '../src/lib/prisma.js';
+import axios from 'axios';
 
 vi.mock('../src/lib/prisma', () => {
   return {
@@ -82,6 +83,57 @@ describe('OTP Provider and SMS Resilience Tests', () => {
       expect(result.error).toBeDefined();
 
       process.env.OTP_PROVIDER = originalEnv;
+    });
+  });
+
+  describe('AppOtpProvider with OTP_PROVIDER=letexto', () => {
+    it('sends the normalized recipient through the documented LeTexto endpoint', async () => {
+      const original = {
+        OTP_PROVIDER: process.env.OTP_PROVIDER,
+        LETEXTO_API_KEY: process.env.LETEXTO_API_KEY,
+        LETEXTO_SENDER_ID: process.env.LETEXTO_SENDER_ID,
+        LETEXTO_API_URL: process.env.LETEXTO_API_URL,
+      };
+      process.env.OTP_PROVIDER = 'letexto';
+      process.env.LETEXTO_API_KEY = 'test-letexto-key';
+      process.env.LETEXTO_SENDER_ID = 'SI-TCHA';
+      process.env.LETEXTO_API_URL = 'https://apis.letexto.com';
+      const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 201 } as any);
+
+      const result = await new AppOtpProvider().sendSms('+237 699 001 122', 'Votre code est 123456');
+
+      expect(result).toMatchObject({ success: true, provider: 'letexto' });
+      expect(post).toHaveBeenCalledWith(
+        'https://apis.letexto.com/v1/messages/send',
+        { from: 'SI-TCHA', to: '237699001122', content: 'Votre code est 123456' },
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer test-letexto-key' }),
+          timeout: 10_000,
+        }),
+      );
+
+      post.mockRestore();
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    it('fails safely without a LeTexto key and does not make a request', async () => {
+      const originalProvider = process.env.OTP_PROVIDER;
+      const originalKey = process.env.LETEXTO_API_KEY;
+      process.env.OTP_PROVIDER = 'letexto';
+      delete process.env.LETEXTO_API_KEY;
+      const post = vi.spyOn(axios, 'post');
+
+      const result = await new AppOtpProvider().sendSms('+237699001122', 'Test');
+
+      expect(result).toMatchObject({ success: false, provider: 'letexto' });
+      expect(post).not.toHaveBeenCalled();
+      post.mockRestore();
+      process.env.OTP_PROVIDER = originalProvider;
+      if (originalKey === undefined) delete process.env.LETEXTO_API_KEY;
+      else process.env.LETEXTO_API_KEY = originalKey;
     });
   });
 
