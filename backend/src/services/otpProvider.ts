@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import axios from 'axios';
 
-export type OtpProviderMode = 'disabled' | 'development' | 'test' | 'nexah';
+export type OtpProviderMode = 'disabled' | 'development' | 'test' | 'nexah' | 'letexto';
 
 export interface SendSmsResult {
   success: boolean;
@@ -28,6 +28,17 @@ function formatPhoneNumber(phone: string): string {
   return phone.replace(/[\s+()-]/g, '');
 }
 
+function getLeTextoConfig(): { apiKey: string; sender: string; apiUrl: string } | null {
+  const apiKey = process.env.LETEXTO_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  return {
+    apiKey,
+    sender: process.env.LETEXTO_SENDER_ID?.trim() || 'SI-TCHA',
+    apiUrl: (process.env.LETEXTO_API_URL?.trim() || 'https://apis.letexto.com').replace(/\/$/, ''),
+  };
+}
+
 export class AppOtpProvider implements OtpProvider {
   private explicitMode?: OtpProviderMode;
 
@@ -46,6 +57,8 @@ export class AppOtpProvider implements OtpProvider {
       return 'development';
     } else if (envProvider === 'nexah') {
       return 'nexah';
+    } else if (envProvider === 'letexto') {
+      return 'letexto';
     } else if (envProvider === 'test' || process.env.NODE_ENV === 'test') {
       return 'test';
     } else {
@@ -160,6 +173,54 @@ export class AppOtpProvider implements OtpProvider {
             provider: 'nexah',
             error: error?.message,
           };
+        }
+      }
+
+      case 'letexto': {
+        const config = getLeTextoConfig();
+        if (!config) {
+          const err = 'Configuration LeTexto SMS manquante (LETEXTO_API_KEY).';
+          console.error(`❌ [LeTexto Provider]: ${err}`);
+          return { success: false, message: err, provider: 'letexto', error: err };
+        }
+
+        const recipients = (Array.isArray(to) ? to : [to]).map(formatPhoneNumber);
+        if (recipients.some((recipient) => !/^\d{8,15}$/.test(recipient))) {
+          const err = 'Numéro de téléphone invalide pour LeTexto.';
+          return { success: false, message: err, provider: 'letexto', error: err };
+        }
+        if (!message.trim()) {
+          const err = 'Le contenu du SMS est obligatoire.';
+          return { success: false, message: err, provider: 'letexto', error: err };
+        }
+
+        try {
+          const responses = await Promise.all(
+            recipients.map((recipient) => axios.post(
+              `${config.apiUrl}/v1/messages/send`,
+              { from: config.sender, to: recipient, content: message },
+              {
+                headers: {
+                  Authorization: `Bearer ${config.apiKey}`,
+                  'Content-Type': 'application/json',
+                  Accept: 'application/json',
+                },
+                timeout: 10_000,
+              },
+            )),
+          );
+          const success = responses.every((response) => response.status >= 200 && response.status < 300);
+          return {
+            success,
+            message: success ? 'SMS envoyé avec succès via LeTexto.' : 'LeTexto a renvoyé un statut d’échec.',
+            provider: 'letexto',
+            ...(success ? {} : { error: 'Le fournisseur SMS a rejeté la demande.' }),
+          };
+        } catch (error: any) {
+          // Ne jamais faire remonter la réponse brute du fournisseur au client.
+          console.error('❌ Erreur LeTexto SMS :', error?.message);
+          const err = 'Erreur réseau ou fournisseur lors de l’envoi SMS.';
+          return { success: false, message: err, provider: 'letexto', error: err };
         }
       }
     }
