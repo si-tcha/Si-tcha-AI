@@ -1,119 +1,122 @@
-# Passation SI-TCHA AI
+# Passation opérationnelle — SI-TCHA AI
 
-Dernière mise à jour : 16 septembre 2026 (Africa/Douala).
+Dernière mise à jour : 28 septembre 2026 (Africa/Douala).
 
-Ce fichier est la source de reprise rapide pour une nouvelle discussion Codex. Lire aussi `docs/EXPLOITATION.md` uniquement lorsqu'un déploiement ou une configuration de production est demandé.
+Ce document permet de reprendre le projet sans dépendre d'une discussion antérieure. Vérifier l'état Git avant toute action et ne jamais considérer un compte, une clé API ou une base distante comme acquis.
 
-## 1. Référence du projet
+## 1. Référence officielle
 
 | Élément | Valeur |
 |---|---|
-| Dépôt officiel | `https://github.com/si-tcha/Si-tcha-AI.git` |
-| Branche livrable de Jimmy | `elsonkjimmy` |
-| HEAD opératoire avant mise à jour documentaire | `bece5fd` |
-| Workspace | `/home/qwerty/PROJETS/si-tcha-ai-mobile` |
+| Dépôt | `https://github.com/si-tcha/Si-tcha-AI.git` |
+| Branche officielle livrable | `main` |
+| HEAD officiel à cette date | `7c1c0e8` — fusion de la PR SMS #9 |
+| Ancienne branche locale Jimmy | `elsonkjimmy`, en retard de 19 commits sur `main` le 28/09/2026 ; ne pas l'utiliser pour livrer |
 | Application Android | `com.sitcha.sitchamobile` |
-| Téléphone de test | TECNO KM5, Android 15, ADB `14413155CP015543` |
-| Stratégie fonctionnelle actuelle | Paiement en espèces à la remise/livraison ; aucun paiement en ligne simulé |
+| API publique attendue | `https://si-tcha-ai.onrender.com/api` |
+| Paiement | Commande et règlement en espèces à la remise/livraison ; pas de paiement en ligne |
 
-La branche `elsonkjimmy` est la branche de référence. Ne pas prendre une autre branche comme vérité sans audit et décision explicite de Jimmy.
+Ne pas committer de secrets, de sauvegardes de base, de PIN ou de numéros de téléphone personnels. Les fichiers locaux non suivis `failed_log.txt`, `full_log.txt`, `gh_log.txt` et `test-prisma.js` appartiennent au workspace historique et doivent être préservés.
 
-## 2. État des livrables
+## 2. Ce qui est livré et vérifié
 
-| Domaine | État | Preuve / remarque |
+| Domaine | État | Notes |
 |---|---:|---|
-| Parcours acheteur | Validé | Catalogue réel, recherche, panier persistant, commande cash idempotente, commandes et bordereau |
-| QR de commande | Corrigé | Génération locale/offline, vérifiée sur téléphone |
-| Authentification vendeur | Corrigée | Jeton vendeur persisté et envoyé sur les routes privées ; persiste après `force-stop` |
-| Profil GIC | Validé | Identité et informations serveur affichées |
-| Journal de croissance | Validé | Création, modification et persistance d'une parcelle |
-| Accès au journal | Corrigé | Bouton « Journal de croissance » ajouté dans Terrain SIG |
-| B2B | Validé | Création et persistance d'une offre après relance |
-| Agronome IA réel | En attente externe | Gestion d'erreur validée, mais aucune réponse Gemini réelle sans `GEMINI_API_KEY` |
-| OTP par SMS réel | En attente externe | Fournisseur et identifiants commerciaux non fournis |
-| Paiement en ligne | Hors périmètre actuel | Le produit utilise explicitement le cash à la livraison |
-| Base distante Prisma Postgres | Réconciliée | Script one-shot exécuté, diff Prisma vide, 17 migrations standard résolues, readiness et authentification validées |
-| Catalogue acheteur distant | Validé | 4 cartes, prix serveur validés, volume total 11 050 kg, recherche et filtres contrôlés |
-| Compte vendeur distant de test | Validé | `Mlk`, `+237695715021`, GIC 21, vérifié et `APPROUVE`; migré car le fournisseur SMS est indisponible |
-| Smoke APK vendeur | Validé avec Metro | Profil GIC, Terrain, Journal, B2B et persistance après `force-stop` validés sur TECNO ; l'APK fournie est un Expo Development Build et n'est pas autonome |
-| Nouveau backend Heroku | À faire | Déployer le backend actuel ; ne pas réutiliser aveuglément l'ancien déploiement |
+| Acheteur | Validé sur appareil | Catalogue distant consolidé, recherche/filtres, panier persistant, commande cash idempotente, historique et bordereau QR. L'évaluation nécessite encore une commande livrée/terminée. |
+| Vendeur/GIC | Validé sur appareil | Session persistante, profil GIC, Terrain SIG, journal de croissance et B2B accessibles. |
+| Parcelles | Validé sur appareil | Création, modification de stade et persistance contrôlées. |
+| Formulaires Android | Corrigé | PR #8 : stabilisation du clavier/modales et protection contre les doubles soumissions ; APK autonome de contrôle réussie au run 36092714794. |
+| APK Android autonome | Disponible | Workflow GitHub Actions construit une APK `assembleRelease` avec bundle JS embarqué. Elle dépend d'Internet pour joindre l'API Render, mais jamais de Metro, du PC ou du même Wi-Fi. |
+| Base distante | Réconciliée | Réconciliation et consolidation déjà exécutées ; les migrations Prisma standard sont cohérentes. Ne pas relancer un script de réconciliation ni `db push` contre cette base. |
+| Backend CI | Vert | PR #9 / commit 2ff3688 : deux contrôles Backend CI réussis avant fusion. |
+| OTP LeTexto | Intégré, non activé | Adaptateur et tests présents dans `main`, mais aucune clé LeTexto ne doit être ajoutée dans Git. |
+| Agronome IA Gemini | Limite externe | L'interface gère l'échec ; une réponse réelle attend `GEMINI_API_KEY` et des crédits valides. |
 
-## 3. Derniers commits importants
+## 3. Déploiement et APK
 
-| Commit | Objet |
-|---|---|
-| `bece5fd` | Stabiliser l'empreinte métier des transactions du script catalogue |
-| `b404920` | Ajouter le script gardé de consolidation des offres et prix |
-| `52afd74` | Ajouter le script gardé de réconciliation legacy et son rapport staging |
-| `5aa8ef6` | Exposer la navigation vers le Journal de croissance |
-| `e903d6e` | Persister les sessions vendeur pour les requêtes protégées |
-| `77acaf2` | Générer les QR acheteur hors ligne |
-| `5042c27` | Débloquer la commande acheteur sur installations mises à niveau |
-| `56c6875` | Permettre les APK de test LAN via GitHub Actions |
-| `493cc81` | Aligner la migration Bloc 4 sur le schéma BigInt canonique |
+### Backend Render
 
-## 4. Validation obtenue au HEAD `5aa8ef6`
+Le service Render doit employer le code de `main`, Node 22 et la commande de démarrage fondée sur les migrations Prisma suivies. Ne pas utiliser `prisma db push` en production : cette commande a déjà bloqué un déploiement à cause d'un avertissement de contrainte unique.
 
-| Contrôle | Résultat |
-|---|---:|
-| Tests frontend | 254 réussis sur 254 |
-| TypeScript frontend | Réussi |
-| Tests backend standards | 188 réussis, 1 test PostgreSQL facultatif ignoré |
-| TypeScript backend | Réussi |
-| `git diff --check` | Réussi |
-| Frontend CI GitHub | Réussi — run `34775905761` |
-| Backend CI GitHub | Réussi — run `34775905810` |
-| Build Android APK | Réussi — run `34775961195` |
+Avant tout déploiement, vérifier en lecture seule :
 
-APK : <https://github.com/si-tcha/Si-tcha-AI/actions/runs/34775961195>
+```bash
+cd backend
+npx prisma migrate status
+```
 
-Le build APK embarque l'URL de test LAN `http://172.20.10.3:4000/api`. Il ne fonctionnera contre ce backend local que si le téléphone peut joindre cette adresse et si le backend y est lancé.
+Puis appliquer seulement la procédure de déploiement documentée dans `docs/EXPLOITATION.md`. Toute écriture dans la base distante, tout changement de `DATABASE_URL` ou toute migration nécessite une sauvegarde et une autorisation explicite.
 
-## 5. Données de test locales créées
+### APK autonome
 
-| Type | Valeur |
-|---|---|
-| GIC local | `GIC Agro-Vallée Bafoussam` |
-| Leader local | `Mlk`, téléphone `+237695715021` |
-| Statut | Activé manuellement dans PostgreSQL local uniquement |
-| Parcelle | `ParcelleTest1309`, Tomates, stade `Levée`, 2 500 kg |
-| Offre B2B | `MotopompeTest1309`, location, 5 000 FCFA/jour |
+Dans GitHub Actions, lancer **Build Android APK** manuellement et saisir exactement l'URL HTTPS publique incluant `/api` :
 
-Le PIN n'est pas connu de Codex. Ne jamais déconnecter le compte de test sans accord de Jimmy ou sans disposer de ses identifiants.
+```text
+https://si-tcha-ai.onrender.com/api
+```
 
-## 6. Prochaine roadmap
+Télécharger l'artefact `SI-TCHA-AI-Standalone-Release-APK`, extraire l'APK, puis installer :
 
-| Priorité | Action | Critère de fin |
+```bash
+adb devices
+adb -s <DEVICE_ID> install -r /chemin/vers/app-release.apk
+```
+
+Le workflow valide l'URL et refuse une URL locale ou privée. L'APK est autonome ; elle a néanmoins besoin d'une connexion Internet normale pour appeler Render.
+
+## 4. Activation SMS LeTexto (P0)
+
+La PR #9 a ajouté `OTP_PROVIDER=letexto` et l'adaptateur LeTexto sans clé versionnée. Pour l'activer dans Render, le propriétaire du compte LeTexto doit renseigner uniquement dans les variables d'environnement privées :
+
+```text
+OTP_PROVIDER=letexto
+LETEXTO_API_KEY=<clé secrète fournie par LeTexto>
+LETEXTO_SENDER_ID=<expéditeur réellement approuvé par LeTexto>
+# LETEXTO_API_URL=https://apis.letexto.com   (facultatif : valeur par défaut)
+```
+
+Ne jamais partager `LETEXTO_API_KEY` dans un chat, un commit, une capture ou un fichier `.env.example`.
+
+Après redéploiement :
+
+1. Vérifier `GET /api/health/ready`.
+2. Inscrire un numéro de test volontaire.
+3. Vérifier la réception, l'expiration et la validation de l'OTP.
+4. Supprimer le compte de test seulement si la politique produit le permet.
+
+L'OTP existe pour l'inscription et le renvoi de code. La connexion des comptes déjà vérifiés ne nécessite pas un nouvel OTP.
+
+## 5. Travail encore en attente
+
+| Priorité | Responsable / dépendance | Critère de fin |
 |---:|---|---|
-| P0 | Produire puis tester une vraie APK autonome | Le build ne présente pas l'écran Expo Development Build ; connexion/session, acheteur, profil GIC, journal, B2B et QR fonctionnent sans Metro |
-| P0 | Préparer et déployer le backend actuel sur Heroku | Health/readiness verts, migrations appliquées, application mobile connectée à l'URL publique |
-| P1 | Configurer le fournisseur SMS OTP réel | Un vrai téléphone reçoit et valide l'OTP ; aucun OTP n'est exposé dans les logs de production |
-| P1 | Configurer `GEMINI_API_KEY` | Une consultation agronomique réelle réussit et persiste |
-| P1 | Refaire un APK avec l'URL Heroku HTTPS | L'APK fonctionne hors réseau LAN |
-| P2 | Tester l'évaluation acheteur | Disposer d'une commande `livré/terminé`, noter de 1 à 5 et vérifier les validations |
-| P2 | Décider si un paiement numérique est réellement requis | Conserver le cash ou intégrer un prestataire après décision produit |
+| P0 | Render + titulaire LeTexto | Un vrai OTP est reçu et validé en production, sans exposition de la clé. |
+| P1 | Collaboratrice, branche `service-sms` | Livraison de son bloc météo/AgroMonitoring/marché. Ne pas fusionner directement : cette branche doit être auditée et portée sélectivement dans `main`. |
+| P1 | Équipe produit | Définir consentement SMS, préférences agriculteur, ciblage par GIC/culture, anti-doublon, limite quotidienne et historique de livraison avant toute alerte météo ou marché en masse. |
+| P1 | Clé/solde Gemini | Réponse agronome réelle et persistance contrôlée. |
+| P2 | Test métier | Mettre une commande en état livré/terminé puis tester la notation 1–5 et le commentaire. |
+| P2 | Décision produit | Décider ultérieurement si un paiement numérique est exigé ; le cash est le comportement actuel validé. |
 
-## 7. Reprise opérationnelle
+Les fichiers `backend/src/jobs/marketSms.cron.ts` et `backend/src/jobs/agroMonitoring.cron.ts` constituent seulement une ébauche. Ne pas les activer en production sans le P1 ci-dessus : sinon ils peuvent envoyer des SMS non désirés ou en double.
+
+## 6. Reprise sûre
 
 ```bash
 cd /home/qwerty/PROJETS/si-tcha-ai-mobile
-git branch --show-current
+git fetch origin --prune
+git switch main
+git pull --ff-only
 git status --short
 git log -5 --oneline
 ```
 
-Avant tout changement, vérifier que la branche est `elsonkjimmy`. Préserver les fichiers non suivis préexistants : `failed_log.txt`, `full_log.txt`, `gh_log.txt` et `test-prisma.js`.
+Avant un changement :
 
-Pour installer une APK téléchargée :
+- consulter les tests ciblés et lancer ceux concernés ;
+- créer une branche dédiée depuis `main` ;
+- ouvrir une PR, attendre les CI, puis fusionner ;
+- ne jamais faire `git reset --hard`, `prisma db push`, `migrate dev`, ou une opération SQL distante sans validation explicite.
 
-```bash
-adb devices
-unzip -l /chemin/vers/SI-TCHA-AI-Internal-Test-Debug-APK.zip
-adb -s 14413155CP015543 install -r /chemin/vers/app-debug.apk
-```
+## 7. Prompt de reprise minimal
 
-Ne pas pousser, déployer, modifier une base distante ou supprimer des fichiers sans demande explicite de Jimmy.
-
-## 8. Prompt minimal pour une nouvelle discussion
-
-> Nous continuons le projet SI-TCHA AI dans `/home/qwerty/PROJETS/si-tcha-ai-mobile`. Lis intégralement `docs/HANDOFF.md`, vérifie l'état Git sans modifier les fichiers, puis reprends à la première action P0 non terminée. La branche livrable est `elsonkjimmy`. Signale toute divergence entre le fichier et l'état réel avant d'agir.
+> Nous reprenons SI-TCHA AI dans `/home/qwerty/PROJETS/si-tcha-ai-mobile`. Lis intégralement `docs/HANDOFF.md`. La référence de livraison est `origin/main`, pas l'ancienne branche locale `elsonkjimmy`. Vérifie l'état Git en lecture seule, préserve les fichiers non suivis, puis propose la prochaine action P0 sans jamais afficher de secret ni modifier Render, GitHub ou PostgreSQL sans accord explicite.
