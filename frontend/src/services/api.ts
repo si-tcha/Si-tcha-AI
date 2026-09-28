@@ -22,7 +22,7 @@ try {
   // Non disponible dans cet environnement
 }
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type CanonicalRole = 'seller' | 'buyer' | 'admin';
 export type CanonicalStatus = 'active' | 'pending' | 'rejected';
