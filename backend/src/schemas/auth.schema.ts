@@ -23,7 +23,9 @@ export const registerSellerSchema = z.object({
     fullName: z.string().min(2, 'Le nom complet doit contenir au moins 2 caractères'),
     phone: phoneSchema,
     pin: pinSchema,
-    gicName: z.string().min(2, 'Le nom du GIC doit contenir au moins 2 caractères'),
+    // L'inscription ne crée jamais de GIC : l'utilisateur doit choisir un
+    // groupement existant et déjà doté d'un leader approuvé.
+    gicId: z.string().regex(/^[1-9]\d*$/, 'Identifiant de GIC invalide'),
   }),
 });
 

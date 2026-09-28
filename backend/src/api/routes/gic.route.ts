@@ -35,7 +35,7 @@ const router = Router();
  *                 properties:
  *                   id:
  *                     type: string
- *                     format: uuid
+ *                     example: "42"
  *                   nom:
  *                     type: string
  *                 example:
@@ -90,7 +90,7 @@ router.get(
  *         name: memberId
  *         schema:
  *           type: string
- *           format: uuid
+ *           example: "42"
  *         required: true
  *         description: ID de l'agriculteur à approuver ou rejeter.
  *     requestBody:

@@ -1,5 +1,5 @@
 import { Dimensions, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Spacing } from '@/constants/theme';
@@ -8,20 +8,7 @@ import { apiClient } from '@/services/api';
 import { useToast } from '@/components/ui/toast';
 import { isValidCameroonPhone } from './login';
 
-const GIC_LIST = [
-  "GIC Agro-Vallée Bafoussam",
-  "GIC Champs Verts Yaoundé",
-  "GIC Producteurs du Centre",
-  "GIC Coopérative Maraîchère Douala",
-  "GIC Terres Fertiles Ouest",
-  "GIC Semences du Littoral",
-  "GIC Agri-Sud Cameroun",
-  "GIC Coopérative des Exploitants",
-  "GIC Récoltes du Nord",
-  "GIC Fermes Associées CEMAC",
-  "GIC Maraîchers de l'Adamaoua",
-  "GIC Cultures Vivrières Bangangté"
-];
+type RegistrationGic = { id: string; nom: string };
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -39,15 +26,35 @@ export default function RegisterSellerScreen() {
 
   // Step 2
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedGIC, setSelectedGIC] = useState('');
+  const [selectedGicId, setSelectedGicId] = useState('');
+  const [gics, setGics] = useState<RegistrationGic[]>([]);
+  const [gicsLoading, setGicsLoading] = useState(true);
+  const [gicsError, setGicsError] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'name' | 'phone' | 'pin' | 'confirm' | 'search' | null>(null);
 
   const router = useRouter();
   const { showToast } = useToast();
+  const submitLock = useRef(false);
 
-  const effectiveGIC = selectedGIC || searchQuery.trim();
+  const loadGics = useCallback(async () => {
+    setGicsLoading(true);
+    setGicsError(null);
+    try {
+      const response = await apiClient.getRegistrationGics();
+      setGics(Array.isArray(response) ? response : []);
+    } catch (error: any) {
+      setGics([]);
+      setGicsError(error?.message || 'Impossible de charger les GIC disponibles.');
+    } finally {
+      setGicsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadGics();
+  }, [loadGics]);
 
   const handleBack = () => {
     if (step === 2) {
@@ -82,17 +89,21 @@ export default function RegisterSellerScreen() {
   };
 
   const handleConfirm = async () => {
-    if (!effectiveGIC) {
-      showToast({ message: 'Veuillez choisir ou saisir le nom de votre GIC.', type: 'warning' });
+    if (!selectedGicId) {
+      showToast({ message: 'Veuillez sélectionner votre GIC dans la liste.', type: 'warning' });
       return;
     }
+
+    if (submitLock.current) return;
+    submitLock.current = true;
+    Keyboard.dismiss();
 
     setIsLoading(true);
     try {
       const res = await apiClient.registerSeller({
         fullName: fullName.trim(),
         phone: phone.trim(),
-        gicName: effectiveGIC,
+        gicId: selectedGicId,
         pin: pin.trim(),
       });
 
@@ -118,12 +129,13 @@ export default function RegisterSellerScreen() {
       }
     } finally {
       setIsLoading(false);
+      submitLock.current = false;
     }
   };
 
   const filteredGICs = searchQuery.trim() === ''
-    ? GIC_LIST
-    : GIC_LIST.filter(gic => gic.toLowerCase().includes(searchQuery.toLowerCase()));
+    ? gics
+    : gics.filter(gic => gic.nom.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <SafeAreaView style={styles.outerContainer} edges={['top', 'bottom']}>
@@ -154,7 +166,7 @@ export default function RegisterSellerScreen() {
                 <View style={styles.heroSection}>
                   <Text style={styles.heroTitle}>Compte Agriculteur</Text>
                   <Text style={styles.heroSubtitle}>
-                    {step === 1 ? "Commençons par vos informations personnelles." : "Rattachez-vous à votre groupement agricole (GIC)."}
+                    {step === 1 ? "Commençons par vos informations personnelles." : "Choisissez votre groupement agricole existant (GIC)."}
                   </Text>
                 </View>
               </View>
@@ -253,18 +265,18 @@ export default function RegisterSellerScreen() {
                           <Feather name="search" size={20} color={focusedField === 'search' ? '#101e0f' : '#8a9488'} style={styles.inputIcon} />
                           <TextInput
                             style={styles.textInput}
-                            placeholder="Tapez le nom de votre GIC..."
+                            placeholder="Rechercher un GIC existant..."
                             placeholderTextColor="#a0a89e"
                             value={searchQuery}
                             onChangeText={(text) => {
                               setSearchQuery(text);
-                              setSelectedGIC(text);
+                              setSelectedGicId('');
                             }}
                             onFocus={() => setFocusedField('search')}
                             onBlur={() => setFocusedField(null)}
                           />
                           {searchQuery.length > 0 && (
-                            <TouchableOpacity onPress={() => { setSearchQuery(''); setSelectedGIC(''); }} style={{ padding: 4 }}>
+                            <TouchableOpacity onPress={() => { setSearchQuery(''); setSelectedGicId(''); }} style={{ padding: 4 }}>
                               <Feather name="x" size={20} color="#8a9488" />
                             </TouchableOpacity>
                           )}
@@ -273,14 +285,25 @@ export default function RegisterSellerScreen() {
 
                       <View style={styles.listWrapper}>
                         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                          {filteredGICs.map((gic, index) => {
-                            const isSelected = effectiveGIC.toLowerCase() === gic.toLowerCase();
+                          {gicsLoading ? (
+                            <View style={styles.emptyGicState}><Text style={styles.itemSub}>Chargement des GIC disponibles…</Text></View>
+                          ) : gicsError ? (
+                            <View style={styles.emptyGicState}>
+                              <Text style={styles.itemSub}>{gicsError}</Text>
+                              <TouchableOpacity onPress={() => void loadGics()} style={styles.retryButton}>
+                                <Text style={styles.retryButtonText}>Réessayer</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : filteredGICs.length === 0 ? (
+                            <View style={styles.emptyGicState}><Text style={styles.itemSub}>Aucun GIC disponible. Contactez un agent de l'entreprise.</Text></View>
+                          ) : filteredGICs.map((gic) => {
+                            const isSelected = selectedGicId === gic.id;
                             return (
                               <TouchableOpacity
-                                key={index}
+                                key={gic.id}
                                 onPress={() => {
-                                  setSelectedGIC(gic);
-                                  setSearchQuery(gic);
+                                  setSelectedGicId(gic.id);
+                                  setSearchQuery(gic.nom);
                                   Keyboard.dismiss();
                                 }}
                                 style={[styles.gicListItem, isSelected && styles.gicListItemSelected]}
@@ -288,7 +311,7 @@ export default function RegisterSellerScreen() {
                                 <View style={[styles.listIconBg, isSelected && styles.listIconBgSelected]}>
                                   <Feather name="home" size={16} color={isSelected ? '#f3ecd8' : '#2a3b29'} />
                                 </View>
-                                <Text style={[styles.gicListText, isSelected && styles.gicListTextSelected]}>{gic}</Text>
+                                <Text style={[styles.gicListText, isSelected && styles.gicListTextSelected]}>{gic.nom}</Text>
                                 {isSelected && <Feather name="check-circle" size={20} color="#101e0f" />}
                               </TouchableOpacity>
                             );
@@ -506,6 +529,29 @@ const styles = StyleSheet.create({
     color: '#5a6258',
   },
   gicListTextSelected: {
+    color: '#101e0f',
+    fontWeight: '800',
+  },
+  emptyGicState: {
+    minHeight: 120,
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  itemSub: {
+    color: '#5a6258',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#e6dfcc',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  retryButtonText: {
     color: '#101e0f',
     fontWeight: '800',
   },

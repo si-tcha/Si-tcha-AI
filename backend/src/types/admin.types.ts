@@ -10,4 +10,6 @@ export type GicCreationData = {
 export type LeaderCreationData = {
     nom: string;
     contact: string;
+    /** PIN temporaire ou choisi en présence de l'agent ; jamais stocké en clair. */
+    pin: string;
 };

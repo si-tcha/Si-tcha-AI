@@ -49,7 +49,7 @@ describe('GIC Controller Unit Tests', () => {
         activitesPrincipales: 'Agri',
         timestampMaj: new Date(),
         bassinProduction: { nom: 'Ouest' },
-        agriculteurs: [{ id: BigInt(1), nom: 'Seller', contact: '123', estLeader: true, timestampMaj: new Date() }],
+        agriculteurs: [{ id: BigInt(1), nom: 'Seller', contact: '123', estLeader: true, statut: 'APPROUVE', timestampMaj: new Date() }],
         besoins: []
       };
 
@@ -59,7 +59,7 @@ describe('GIC Controller Unit Tests', () => {
 
       expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({
         profile: expect.objectContaining({ name: 'GIC Test', bassin: 'Ouest' }),
-        members: expect.any(Array),
+        members: [expect.objectContaining({ name: 'Seller' })],
         needs: expect.any(Array)
       }));
     });

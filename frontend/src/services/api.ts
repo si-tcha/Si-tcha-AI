@@ -799,9 +799,15 @@ export const apiClient = {
     return request<SessionResponse>('/auth/register/buyer', 'POST', input);
   },
 
-  async registerSeller(input: { fullName: string; phone: string; pin: string; gicName: string }): Promise<SessionResponse> {
+  async registerSeller(input: { fullName: string; phone: string; pin: string; gicId: string }): Promise<SessionResponse> {
     return request<SessionResponse>('/auth/register/seller', 'POST', input);
   },
+
+  // Endpoint public d'inscription : ne renvoie que les GIC ayant un leader approuvé.
+  getRegistrationGics: () => request<Array<{ id: string; nom: string }>>('/gics'),
+  getPendingGicMembers: () => request<Array<{ id: string; nom: string; contact: string; timestampMaj: string }>>('/gics/members/pending'),
+  updateGicMemberStatus: (memberId: string, status: 'APPROUVE' | 'REJETE') =>
+    request<{ message: string; member: unknown }>(`/gics/members/${memberId}/status`, 'PATCH', { status }),
 
   async getMe(): Promise<{ user: UserProfile }> {
     return request<{ user: UserProfile }>('/auth/me', 'GET');

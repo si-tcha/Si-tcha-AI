@@ -3,6 +3,8 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import { defaultOtpProvider, generateSecureOtp } from '../services/otpProvider.js';
+import { notifyGicLeaderForApproval } from '../services/notification.service.js';
+import { findJoinableGicById } from '../services/gic.service.js';
 import { AuthenticatedUser, CanonicalRole } from '../types/user.types.js';
 import { getJwtSecret, protect, requireAuth, requireActive, requireRole, isAdmin, isGicLeader } from '../middlewares/auth.js';
 import { maskPhone } from '../middlewares/logger.js';
@@ -165,17 +167,17 @@ export async function registerBuyer(req: Request, res: Response) {
 // ─── Register Seller ────────────────────────────────────────────────────────
 
 export async function registerSeller(req: Request, res: Response) {
-  const { fullName, phone, pin, gicName } = req.body as {
+  const { fullName, phone, pin, gicId } = req.body as {
     fullName?: string;
     phone?: string;
     pin?: string;
-    gicName?: string;
+    gicId?: string;
   };
 
   // Validation
-  if (!fullName?.trim() || !phone?.trim() || !pin || !gicName?.trim()) {
+  if (!fullName?.trim() || !phone?.trim() || !pin || !gicId) {
     return res.status(400).json({
-      message: 'Nom complet, téléphone, code PIN et nom du GIC sont requis.',
+      message: 'Nom complet, téléphone, code PIN et GIC sont requis.',
     });
   }
 
@@ -219,29 +221,12 @@ export async function registerSeller(req: Request, res: Response) {
     });
   }
 
-  // Trouver ou créer le GIC
-  let gic = await prisma.gIC.findFirst({
-    where: { nom: gicName.trim() },
-  });
-
+  // Un GIC et son leader sont créés exclusivement par un agent administrateur.
+  // Une inscription publique choisit un GIC existant, jamais un nom libre.
+  const gic = await findJoinableGicById(gicId);
   if (!gic) {
-    const defaultBassin = await prisma.bassinProduction.findFirst();
-    if (!defaultBassin) {
-      return res.status(500).json({
-        message: 'Aucun bassin de production configuré dans la base.',
-      });
-    }
-    gic = await prisma.gIC.create({
-      data: {
-        nom: gicName.trim(),
-        identifiantREF: `GIC-${Date.now().toString(36).toUpperCase()}`,
-        logoURL: '',
-        reglementInterieur: '',
-        activitesPrincipales: '',
-        statutLegalisation: 'En cours',
-        timestampMaj: new Date(),
-        bassinProductionId: defaultBassin.id,
-      },
+    return res.status(404).json({
+      message: 'GIC introuvable ou indisponible pour les nouvelles adhésions.',
     });
   }
 
@@ -256,22 +241,26 @@ export async function registerSeller(req: Request, res: Response) {
         pin: pinHash,
         phoneVerified: false,
         isVerified: false,
+        estLeader: false,
+        statut: 'EN_ATTENTE',
         gicId: gic.id,
         timestampMaj: new Date(),
       },
     });
   } else {
-    const isFirstMember = (await prisma.agriculteur.count({ where: { gicId: gic.id } })) === 0;
     await prisma.agriculteur.create({
       data: {
         nom: fullName.trim(),
         prenom: '',
         contact: normalizedPhone,
-        estLeader: isFirstMember,
+        // Le premier responsable est créé et approuvé par l'administration,
+        // jamais par l'inscription publique.
+        estLeader: false,
         pinHash,
         pin: pinHash,
         phoneVerified: false,
         isVerified: false,
+        statut: 'EN_ATTENTE',
         timestampMaj: new Date(),
         gicId: gic.id,
       },
@@ -493,6 +482,18 @@ export async function verifyOtp(req: Request, res: Response) {
 
   // 4. Supprimer l'OTP
   await prisma.otpCode.delete({ where: { phone: normalizedPhone } });
+
+  // Une demande est visible au leader uniquement après la vérification du
+  // téléphone. L'échec de cette notification ne doit jamais annuler une
+  // vérification OTP déjà réussie ; le leader peut toujours voir la demande
+  // dans son espace GIC.
+  if (role === 'seller') {
+    try {
+      await notifyGicLeaderForApproval(existingSeller!.gicId, existingSeller!.nom);
+    } catch (error: any) {
+      console.warn('Notification du leader GIC non envoyée :', error?.message);
+    }
+  }
 
   const token = signToken(user);
   return res.json({ message: 'Vérification réussie.', token, user });

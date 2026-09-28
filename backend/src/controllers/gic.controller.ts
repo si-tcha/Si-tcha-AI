@@ -35,7 +35,9 @@ export async function getGicProfile(req: AuthRequest, res: Response) {
       authorRole: req.user.gicRole ?? 'leader',
     };
 
-    const members = gic.agriculteurs.map((a) => ({
+    // Les demandes EN_ATTENTE ne sont pas des membres actifs. Elles sont
+    // exposées séparément au leader via /api/gics/members/pending.
+    const members = gic.agriculteurs.filter((a) => a.statut === 'APPROUVE').map((a) => ({
       id: a.id.toString(),
       name: a.nom,
       phone: a.contact,
