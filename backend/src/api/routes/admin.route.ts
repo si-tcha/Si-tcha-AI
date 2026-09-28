@@ -34,13 +34,17 @@ const router = Router();
  *         logoURL:
  *           type: string
  *           format: uri
- *     LeaderCreation:
- *       type: object
- *       properties:
+     *     LeaderCreation:
+     *       type: object
+     *       required: [nom, contact, pin]
+     *       properties:
  *         nom:
  *           type: string
- *         contact:
- *           type: string
+     *         contact:
+     *           type: string
+     *         pin:
+     *           type: string
+     *           description: PIN remis par l'agent au leader ; il est haché et n'est jamais renvoyé.
  *     CreateGicPayload:
  *       type: object
  *       properties:

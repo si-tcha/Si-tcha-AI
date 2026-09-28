@@ -1,7 +1,9 @@
 import prisma from '../lib/prisma.js';
+import bcrypt from 'bcrypt';
 import { GicCreationData, LeaderCreationData } from '../types/admin.types.js';
 
 export const createGicAndLeader = async (gicData: GicCreationData, leaderData: LeaderCreationData) => {
+    const pinHash = await bcrypt.hash(leaderData.pin, 12);
     return prisma.$transaction(async (tx) => {
         // 1. Create the GIC
         const { bassinProductionId, ...restGicData } = gicData;
@@ -16,11 +18,18 @@ export const createGicAndLeader = async (gicData: GicCreationData, leaderData: L
         // 2. Create the Agriculteur who will be the leader
         const newLeader = await tx.agriculteur.create({
             data: {
-                ...leaderData,
+                nom: leaderData.nom.trim(),
+                contact: leaderData.contact,
+                pin: pinHash,
+                pinHash,
                 gicId: newGic.id,
                 estLeader: true,
-                isVerified: true, // Admin-created leader is verified by default
-                statut: 'APPROUVE', // Admin-created leader is approved by default
+                // L'agent de l'entreprise a contrôlé l'identité et remet le
+                // PIN de façon sûre : ce responsable peut donc se connecter
+                // immédiatement pour approuver les futurs membres.
+                phoneVerified: true,
+                isVerified: true,
+                statut: 'APPROUVE',
                 timestampMaj: new Date(),
             },
         });

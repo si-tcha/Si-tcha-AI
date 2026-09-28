@@ -3,12 +3,51 @@ import { GicListData } from '../types/gic.types.js';
 
 export const findAllGics = async (): Promise<GicListData[]> => {
     const gics = await prisma.gIC.findMany({
+        // Ne proposer à l'inscription que les GIC où un responsable actif
+        // existe réellement. Un GIC sans leader ne peut pas valider de membre.
+        where: {
+            agriculteurs: {
+                some: {
+                    estLeader: true,
+                    statut: 'APPROUVE',
+                    OR: [{ phoneVerified: true }, { isVerified: true }],
+                },
+            },
+        },
         select: {
             id: true,
             nom: true,
         },
+        orderBy: { nom: 'asc' },
     });
     return gics.map((g) => ({ id: g.id.toString(), nom: g.nom }));
+};
+
+/** Retourne uniquement un GIC auquel un nouvel agriculteur peut adhérer. */
+export const findJoinableGicById = async (gicId: string | bigint) => {
+    let id: bigint;
+    try {
+        id = BigInt(gicId);
+    } catch {
+        return null;
+    }
+    if (id <= 0n) {
+        return null;
+    }
+
+    return prisma.gIC.findFirst({
+        where: {
+            id,
+            agriculteurs: {
+                some: {
+                    estLeader: true,
+                    statut: 'APPROUVE',
+                    OR: [{ phoneVerified: true }, { isVerified: true }],
+                },
+            },
+        },
+        select: { id: true, nom: true },
+    });
 };
 
 export const getPendingMembersForGic = async (gicId: string | bigint) => {

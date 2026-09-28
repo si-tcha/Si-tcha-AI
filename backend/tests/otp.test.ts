@@ -15,9 +15,9 @@ vi.mock('../src/lib/prisma', () => {
       },
       agriculteur: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
-        count: vi.fn(),
       },
       gIC: {
         findFirst: vi.fn(),
@@ -191,7 +191,7 @@ describe('OTP Provider and SMS Resilience Tests', () => {
 
     it('should allow seller re-registration if previously created account is not verified', async () => {
       req = {
-        body: { fullName: 'Fermier Paul', phone: '677223344', pin: '5678', gicName: 'GIC Espoir' },
+        body: { fullName: 'Fermier Paul', phone: '677223344', pin: '5678', gicId: '10' },
       };
 
       vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
@@ -209,6 +209,9 @@ describe('OTP Provider and SMS Resilience Tests', () => {
 
       expect(statusMock).toHaveBeenCalledWith(201);
       expect(prisma.agriculteur.update).toHaveBeenCalled();
+      expect(prisma.agriculteur.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ estLeader: false, statut: 'EN_ATTENTE', gicId: BigInt(10) }),
+      }));
       expect(jsonMock).toHaveBeenCalledWith(
         expect.objectContaining({
           requireOtp: true,
@@ -219,7 +222,7 @@ describe('OTP Provider and SMS Resilience Tests', () => {
 
     it('should block seller registration with 409 if account is already verified', async () => {
       req = {
-        body: { fullName: 'Fermier Paul', phone: '677223344', pin: '5678', gicName: 'GIC Espoir' },
+        body: { fullName: 'Fermier Paul', phone: '677223344', pin: '5678', gicId: '10' },
       };
 
       vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
@@ -237,6 +240,22 @@ describe('OTP Provider and SMS Resilience Tests', () => {
           message: expect.stringMatching(/déjà associé à un compte producteur vérifié/i),
         })
       );
+    });
+
+    it('should reject an unknown or leaderless GIC and never create it from public registration', async () => {
+      req = {
+        body: { fullName: 'Fermier Sans GIC', phone: '677223344', pin: '5678', gicId: '999' },
+      };
+      vi.mocked(prisma.gIC.findFirst).mockResolvedValue(null);
+
+      await registerSeller(req as Request, res as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(404);
+      expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({
+        message: expect.stringMatching(/GIC introuvable|indisponible/i),
+      }));
+      expect(prisma.agriculteur.create).not.toHaveBeenCalled();
+      expect(prisma.otpCode.upsert).not.toHaveBeenCalled();
     });
   });
 
@@ -268,7 +287,7 @@ describe('OTP Provider and SMS Resilience Tests', () => {
       process.env.OTP_PROVIDER = 'disabled';
 
       req = {
-        body: { fullName: 'Producteur Disabled', phone: '677223344', pin: '5678', gicName: 'GIC Disabled' },
+        body: { fullName: 'Producteur Disabled', phone: '677223344', pin: '5678', gicId: '10' },
       };
 
       await registerSeller(req as Request, res as Response);
@@ -280,7 +299,6 @@ describe('OTP Provider and SMS Resilience Tests', () => {
         })
       );
       expect(prisma.agriculteur.create).not.toHaveBeenCalled();
-      expect(prisma.gIC.create).not.toHaveBeenCalled();
       expect(prisma.otpCode.upsert).not.toHaveBeenCalled();
 
       process.env.OTP_PROVIDER = originalOtpProvider;
@@ -311,7 +329,7 @@ describe('OTP Provider and SMS Resilience Tests', () => {
 
     it('should reject seller registration if phone is already registered as buyer', async () => {
       req = {
-        body: { fullName: 'Fermier Y', phone: '677223344', pin: '1234', gicName: 'Mon GIC' },
+        body: { fullName: 'Fermier Y', phone: '677223344', pin: '1234', gicId: '10' },
       };
 
       vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
@@ -631,13 +649,12 @@ describe('OTP Provider and SMS Resilience Tests', () => {
       });
 
       req = {
-        body: { fullName: 'Fermier Retryable', phone: '677665544', pin: '1234', gicName: 'GIC Test' },
+        body: { fullName: 'Fermier Retryable', phone: '677665544', pin: '1234', gicId: '1' },
       };
 
       vi.mocked(prisma.acheteur.findUnique).mockResolvedValue(null);
       vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue(null);
       vi.mocked(prisma.gIC.findFirst).mockResolvedValue({ id: BigInt(1) } as any);
-      vi.mocked(prisma.agriculteur.count).mockResolvedValue(1);
       vi.mocked(prisma.agriculteur.create).mockResolvedValue({ id: BigInt(88) } as any);
       vi.mocked(prisma.otpCode.upsert).mockResolvedValue({} as any);
 

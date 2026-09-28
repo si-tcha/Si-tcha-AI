@@ -8,17 +8,19 @@ import { dbService, GicMember, GicNeed, GicProfile, TrustRating } from '@/servic
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from '@/services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 
 const NEED_CATEGORIES = ['Intrants', 'Terres', 'Matériel', 'Financement', 'Transformation'];
+type PendingMember = { id: string; nom: string; contact: string; timestampMaj: string };
 
 export default function SellerProfileScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const [profile, setProfile] = useState<GicProfile | null>(null);
   const [members, setMembers] = useState<GicMember[]>([]);
   const [needs, setNeeds] = useState<GicNeed[]>([]);
@@ -28,15 +30,24 @@ export default function SellerProfileScreen() {
   const [needCategory, setNeedCategory] = useState('Intrants');
   const [needDescription, setNeedDescription] = useState('');
   const [surfaceDraft, setSurfaceDraft] = useState('');
+  const [pendingMembers, setPendingMembers] = useState<PendingMember[]>([]);
+  const [membershipActionId, setMembershipActionId] = useState<string | null>(null);
+  const isLeader = user?.role === 'seller' && user.status === 'active' && (user.gicRole === 'leader' || user.estLeader === true);
 
   const loadData = async () => {
     await dbService.initDatabase();
-    const [p, m, n, r] = await Promise.all([
+    const [remoteProfile, r] = await Promise.all([
+      apiClient.getGicProfile().catch(() => null),
+      dbService.getTrustRatings(),
+    ]);
+    const [fallbackProfile, fallbackMembers, fallbackNeeds] = await Promise.all([
       dbService.getGicProfile(),
       dbService.getGicMembers(),
       dbService.getGicNeeds(),
-      dbService.getTrustRatings(),
     ]);
+    const p = (remoteProfile?.profile as GicProfile | undefined) ?? fallbackProfile;
+    const m = (remoteProfile?.members as GicMember[] | undefined) ?? fallbackMembers;
+    const n = (remoteProfile?.needs as GicNeed[] | undefined) ?? fallbackNeeds;
     setProfile(p);
     setMembers(m);
     setNeeds(n);
@@ -45,8 +56,42 @@ export default function SellerProfileScreen() {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    void loadData();
+    if (isLeader) {
+      apiClient.getPendingGicMembers()
+        .then((items) => setPendingMembers(items))
+        .catch(() => setPendingMembers([]));
+    } else {
+      setPendingMembers([]);
+    }
+  }, [isLeader]);
+
+  const handleMembershipDecision = async (member: PendingMember, status: 'APPROUVE' | 'REJETE') => {
+    if (membershipActionId) return;
+    setMembershipActionId(member.id);
+    try {
+      await apiClient.updateGicMemberStatus(member.id, status);
+      setPendingMembers((current) => current.filter((item) => item.id !== member.id));
+      if (status === 'APPROUVE') {
+        // Le profil distant inclut déjà les membres en attente. Ne jamais
+        // dupliquer la carte locale après l'approbation.
+        setMembers((current) => current.some((item) => item.id === member.id)
+          ? current
+          : [...current, {
+              id: member.id,
+              name: member.nom,
+              phone: member.contact,
+              isLeader: false,
+              updatedAt: new Date().toISOString(),
+            }]);
+      }
+      showToast({ message: status === 'APPROUVE' ? `${member.nom} a été approuvé.` : `${member.nom} a été rejeté.`, type: 'success' });
+    } catch (error: any) {
+      showToast({ message: error?.message || 'Impossible de mettre à jour cette demande.', type: 'error' });
+    } finally {
+      setMembershipActionId(null);
+    }
+  };
 
   const handleSaveSurface = async () => {
     const value = parseFloat(surfaceDraft);
@@ -181,6 +226,48 @@ export default function SellerProfileScreen() {
               </View>
             ))}
           </View>
+
+          {isLeader && (
+            <>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Demandes d'adhésion ({pendingMembers.length})</Text>
+                <Feather name="user-plus" size={16} color="#d97834" />
+              </View>
+              <View style={styles.listCard}>
+                {pendingMembers.length === 0 ? (
+                  <View style={styles.listItem}>
+                    <Text style={styles.itemSub}>Aucune demande d'adhésion en attente.</Text>
+                  </View>
+                ) : pendingMembers.map((member) => {
+                  const isProcessing = membershipActionId === member.id;
+                  return (
+                    <View key={member.id} style={styles.pendingMemberItem}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.itemTitle}>{member.nom}</Text>
+                        <Text style={styles.itemSub}>{member.contact}</Text>
+                      </View>
+                      <View style={styles.membershipActions}>
+                        <TouchableOpacity
+                          disabled={Boolean(membershipActionId)}
+                          onPress={() => void handleMembershipDecision(member, 'REJETE')}
+                          style={[styles.membershipReject, isProcessing && styles.actionDisabled]}
+                        >
+                          <Text style={styles.membershipRejectText}>Rejeter</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          disabled={Boolean(membershipActionId)}
+                          onPress={() => void handleMembershipDecision(member, 'APPROUVE')}
+                          style={[styles.membershipApprove, isProcessing && styles.actionDisabled]}
+                        >
+                          <Text style={styles.membershipApproveText}>{isProcessing ? '…' : 'Approuver'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Besoins Recensés ({needs.length})</Text>
@@ -383,6 +470,28 @@ const styles = StyleSheet.create({
   },
   itemTitle: { fontSize: 14, fontWeight: '700', color: '#101e0f' },
   itemSub: { fontSize: 11, color: '#5a6258', marginTop: 2 },
+  pendingMemberItem: {
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3ecd8',
+    gap: 10,
+  },
+  membershipActions: { flexDirection: 'row', gap: 8 },
+  membershipApprove: {
+    backgroundColor: '#15803d',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  membershipApproveText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
+  membershipReject: {
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  membershipRejectText: { color: '#b91c1c', fontSize: 12, fontWeight: '800' },
+  actionDisabled: { opacity: 0.55 },
   badge: { backgroundColor: '#d9783420', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 10, fontWeight: '800', color: '#d97834' },
   ratingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
