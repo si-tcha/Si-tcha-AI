@@ -57,6 +57,48 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
+export interface AdminBasin {
+  id: string;
+  nom: string;
+  region: string;
+}
+
+export interface AdminGicMember {
+  id: string;
+  nom: string;
+  statut: 'EN_ATTENTE' | 'APPROUVE' | 'REJETE';
+}
+
+export interface AdminGicSummary {
+  id: string;
+  nom: string;
+  identifiantREF: string;
+  bassinProductionId: string;
+  activitesPrincipales: string;
+  statutLegalisation: string;
+  members: {
+    pending: AdminGicMember[];
+    approved: AdminGicMember[];
+    rejected: AdminGicMember[];
+  };
+}
+
+export interface CreateAdminGicInput {
+  gicData: {
+    nom: string;
+    identifiantREF: string;
+    bassinProductionId: string;
+    activitesPrincipales: string;
+    statutLegalisation: string;
+    logoURL?: string;
+  };
+  leaderData: {
+    nom: string;
+    contact: string;
+    pin: string;
+  };
+}
+
 export class ApiError extends Error {
   status: number;
   payload?: any;
@@ -744,7 +786,7 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
     // Les routes qui pilotent elles-mêmes le cycle de session ne délèguent jamais
     // leur 401 au handler global. En particulier, signOut() reste l'unique
     // propriétaire du nettoyage local lorsqu'un /auth/logout retourne 401.
-    const isSessionAuthEndpoint = /^\/?auth\/(login|verify-otp|resend-otp|register|logout)(\/|\?|$)/.test(path);
+    const isSessionAuthEndpoint = /^\/?auth\/(login|admin\/login|verify-otp|resend-otp|register|logout)(\/|\?|$)/.test(path);
 
     // Sur 401 sur route protégée :
     // Déléguer entièrement au handler AuthContext lorsqu'il est enregistré (un seul propriétaire, un seul ticket).
@@ -786,6 +828,10 @@ export const apiClient = {
     return request<SessionResponse>('/auth/login', 'POST', { phone, pin, role });
   },
 
+  async loginAdmin(account: string, password: string): Promise<SessionResponse> {
+    return request<SessionResponse>('/auth/admin/login', 'POST', { username: account, password });
+  },
+
   // Verify OTP : rôle obligatoire (mutation de session gérée par la coordination latest-wins)
   async verifyOtp(phone: string, code: string, role: 'buyer' | 'seller'): Promise<SessionResponse> {
     return request<SessionResponse>('/auth/verify-otp', 'POST', { phone, code, role });
@@ -808,6 +854,15 @@ export const apiClient = {
   getPendingGicMembers: () => request<Array<{ id: string; nom: string; contact: string; timestampMaj: string }>>('/gics/members/pending'),
   updateGicMemberStatus: (memberId: string, status: 'APPROUVE' | 'REJETE') =>
     request<{ message: string; member: unknown }>(`/gics/members/${memberId}/status`, 'PATCH', { status }),
+
+  getAdminBootstrap: () => request<{ bassins: AdminBasin[] }>('/admin/bootstrap'),
+  getAdminGics: () => request<AdminGicSummary[]>('/admin/gics'),
+  createAdminGic: (input: CreateAdminGicInput) =>
+    request<{ message: string; gic: { id: string; nom: string; identifiantREF: string }; leader: { id: string; nom: string; contact: string; statut: string } }>(
+      '/admin/gics',
+      'POST',
+      input
+    ),
 
   async getMe(): Promise<{ user: UserProfile }> {
     return request<{ user: UserProfile }>('/auth/me', 'GET');

@@ -43,6 +43,7 @@ export interface AuthContextType {
   restoreSession: () => Promise<void>;
   refreshUser: () => Promise<RefreshUserResult>;
   signIn: (phone: string, pin: string, role?: 'buyer' | 'seller') => Promise<SessionResponse>;
+  signInAdmin: (account: string, password: string) => Promise<SessionResponse>;
   completeOtp: (phone: string, code: string, role: 'buyer' | 'seller') => Promise<SessionResponse>;
   signOut: () => Promise<void>;
 }
@@ -207,6 +208,28 @@ export class AuthSessionCoordinator {
       if (!committed) {
         return { message: 'Opération de session obsolète', obsolete: true };
       }
+    }
+    return res;
+  };
+
+  public signInAdmin = async (account: string, password: string): Promise<SessionResponse> => {
+    const ticket = allocateSessionMutationTicket();
+    this.activeTicket = ticket;
+    const res = await apiClient.loginAdmin(account, password);
+    if (this.activeTicket !== ticket) {
+      return { message: 'Opération de session obsolète', obsolete: true };
+    }
+    if (!res.token || !res.user || res.user.role !== 'admin') {
+      throw new ApiError('Réponse administrateur invalide.', 500);
+    }
+    const committed = await this.commitSession(
+      ticket,
+      { status: 'authenticated', user: res.user, token: res.token, error: null },
+      res.user,
+      { saveToken: res.token }
+    );
+    if (!committed) {
+      return { message: 'Opération de session obsolète', obsolete: true };
     }
     return res;
   };
@@ -439,6 +462,7 @@ export function useAuthProviderState(): AuthContextType {
     restoreSession: coordinator.restoreSession,
     refreshUser: coordinator.refreshUser,
     signIn: coordinator.signIn,
+    signInAdmin: coordinator.signInAdmin,
     completeOtp: coordinator.completeOtp,
     signOut: coordinator.signOut,
   };
