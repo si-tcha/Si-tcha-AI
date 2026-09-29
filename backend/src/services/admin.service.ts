@@ -34,8 +34,36 @@ export const createGicAndLeader = async (gicData: GicCreationData, leaderData: L
             },
         });
 
-        return { gic: newGic, leader: newLeader };
+        // Ne jamais renvoyer `pin` / `pinHash`, même si ce sont des hashes :
+        // l'agent n'a besoin que de l'identité et de l'état du leader créé.
+        return {
+            gic: newGic,
+            leader: {
+                id: newLeader.id,
+                nom: newLeader.nom,
+                contact: newLeader.contact,
+                estLeader: newLeader.estLeader,
+                phoneVerified: newLeader.phoneVerified,
+                statut: newLeader.statut,
+                gicId: newLeader.gicId,
+            },
+        };
     });
+};
+
+export const getAdminBootstrap = async () => {
+    const bassins = await prisma.bassinProduction.findMany({
+        select: { id: true, nom: true, region: true },
+        orderBy: { nom: 'asc' },
+    });
+
+    return {
+        bassins: bassins.map((bassin) => ({
+            id: bassin.id.toString(),
+            nom: bassin.nom,
+            region: bassin.region,
+        })),
+    };
 };
 
 export const getAllGicsWithMemberStats = async () => {

@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { protect, requireActive, requireRole, isAdmin } from '../middlewares/auth.middleware.js';
-import { createGic, listGicsWithStats } from '../controllers/admin.controller.js';
+import { protect, requireActive, requireRole } from '../middlewares/auth.middleware.js';
+import { createGic, getAdminBootstrap, listGicsWithStats } from '../controllers/admin.controller.js';
 import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
+import { validate } from '../../middlewares/validate.js';
+import { createGicSchema } from '../../schemas/admin.schema.js';
 
 const router = Router();
 
@@ -109,8 +111,14 @@ router.use(protect, requireActive, requireRole('admin'));
  */
 router.post(
     '/gics',
+    validate(createGicSchema),
     asyncHandler(createGic)
 );
+
+// @route   GET /api/admin/bootstrap
+// @desc    Charger les référentiels nécessaires à la création d'un GIC
+// @access  Private (Admin)
+router.get('/bootstrap', asyncHandler(getAdminBootstrap));
 
 // @route   GET /api/admin/gics
 // @desc    Lister tous les GICs avec les statistiques de leurs membres
