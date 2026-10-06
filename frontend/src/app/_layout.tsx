@@ -90,6 +90,7 @@ function NavigationRoot() {
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(buyer)" />
       <Stack.Screen name="(seller)" />
+      <Stack.Screen name="admin" />
     </Stack>
   );
 }

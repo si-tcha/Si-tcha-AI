@@ -69,5 +69,9 @@ export function resolveSessionRoute(user: UserProfile | null): string {
     return '/(auth)/login';
   }
 
+  if (user.role === 'admin') {
+    return user.status === 'active' ? '/admin' : '/admin/login';
+  }
+
   return '/(auth)/welcome';
 }

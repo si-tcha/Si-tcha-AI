@@ -30,3 +30,8 @@ export const listGicsWithStats = async (req: Request, res: Response) => {
     const gics = await adminService.getAllGicsWithMemberStats();
     res.status(200).json(gics);
 };
+
+export const getAdminBootstrap = async (req: Request, res: Response) => {
+    const bootstrap = await adminService.getAdminBootstrap();
+    res.status(200).json(bootstrap);
+};
