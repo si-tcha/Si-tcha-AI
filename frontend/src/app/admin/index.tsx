@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Redirect, useRouter } from 'expo-router';
+import { Redirect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/toast';
@@ -18,7 +18,6 @@ function CountBadge({ value, tone }: { value: number; tone: 'pending' | 'approve
 }
 
 export default function AdminDashboardScreen() {
-  const router = useRouter();
   const { user, authenticated, signOut } = useAuth();
   const { showToast } = useToast();
   const [bassins, setBassins] = useState<AdminBasin[]>([]);
@@ -32,7 +31,11 @@ export default function AdminDashboardScreen() {
 
   const load = useCallback(async (refresh = false) => {
     const id = ++requestId.current;
-    refresh ? setRefreshing(true) : setLoading(true);
+    if (refresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const [bootstrap, gicList] = await Promise.all([apiClient.getAdminBootstrap(), apiClient.getAdminGics()]);
       if (id !== requestId.current) return;
