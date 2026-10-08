@@ -3,13 +3,24 @@ import axios from 'axios';
 import prisma from '../lib/prisma.js';
 import { sendSms } from '../services/notification.service.js';
 
-const AGRO_API_KEY = process.env.AGROMONITORING_API_KEY;
 const BASE_URL = 'http://api.agromonitoring.com/agro/1.0';
+
+/** A missing provider key must disable the job, never produce unauthenticated calls. */
+export function getAgroMonitoringApiKey(rawKey = process.env.AGROMONITORING_API_KEY): string | null {
+  const key = rawKey?.trim();
+  return key ? key : null;
+}
 
 export const startAgroCronJobs = () => {
   // S'exécute toutes les 4 heures (ex: 0h, 4h, 8h, 12h...)
   cron.schedule('0 */4 * * *', async () => {
     console.log('⏳ [CRON] Démarrage de la synchronisation AgroMonitoring...');
+
+    const apiKey = getAgroMonitoringApiKey();
+    if (!apiKey) {
+      console.warn('⚠️ [CRON] Synchronisation AgroMonitoring ignorée : AGROMONITORING_API_KEY absente.');
+      return;
+    }
 
     try {
       // 1. Récupérer tous les GICs qui ont un polygone défini
@@ -21,8 +32,8 @@ export const startAgroCronJobs = () => {
         const polyId = gic.polygonId;
         
         // --- A. CURRENT WEATHER & FORECAST ---
-        const weatherRes = await axios.get(`${BASE_URL}/weather?polyid=${polyId}&appid=${AGRO_API_KEY}&units=metric`);
-        const forecastRes = await axios.get(`${BASE_URL}/weather/forecast?polyid=${polyId}&appid=${AGRO_API_KEY}&units=metric`);
+        const weatherRes = await axios.get(`${BASE_URL}/weather?polyid=${polyId}&appid=${apiKey}&units=metric`);
+        const forecastRes = await axios.get(`${BASE_URL}/weather/forecast?polyid=${polyId}&appid=${apiKey}&units=metric`);
         
         // 1. Sauvegarde Météo Actuelle
         await prisma.donneesMeteo.create({
@@ -74,7 +85,7 @@ export const startAgroCronJobs = () => {
         }
 
         // --- B. CURRENT SOIL DATA ---
-        const soilRes = await axios.get(`${BASE_URL}/soil?polyid=${polyId}&appid=${AGRO_API_KEY}`);
+        const soilRes = await axios.get(`${BASE_URL}/soil?polyid=${polyId}&appid=${apiKey}`);
         
         // Convertir les Kelvin en Celsius (AgroMonitoring renvoie la température du sol en Kelvin par défaut)
         const tempSolSurfaceCelsius = soilRes.data.t0 - 273.15;

@@ -437,6 +437,9 @@ describe('Authorization and RBAC Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data).toBeDefined();
+      expect(res.body.data.recommandations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'NO_MAJOR_SIGNAL', level: 'INFO' }),
+      ]));
     });
 
     it('should return 403 when buyer tries to access weather dashboard', async () => {

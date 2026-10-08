@@ -99,6 +99,16 @@ export interface CreateAdminGicInput {
   };
 }
 
+export interface AgronomicRecommendation {
+  code: string;
+  level: 'INFO' | 'ATTENTION' | 'URGENT';
+  title: string;
+  message: string;
+  reason: string;
+  actions: string[];
+  requiresAgronomist: boolean;
+}
+
 export class ApiError extends Error {
   status: number;
   payload?: any;
@@ -879,6 +889,7 @@ export const apiClient = {
   getProducts: (page = 1, limit = 20) => request<{ products: unknown[]; meta: PaginationMeta }>(`/catalog/products?page=${page}&limit=${limit}`),
   getPublicGics: (page = 1, limit = 20) => request<{ gics: unknown[]; meta: PaginationMeta }>(`/gics/public?page=${page}&limit=${limit}`),
   getTerrain: () => request<{ weather: unknown[]; market: unknown[]; phytoAlerts: unknown[]; programs: unknown[] }>('/terrain'),
+  getWeatherDashboard: () => request<{ data: { recommandations: AgronomicRecommendation[] } }>('/weather/dashboard'),
   getGicProfile: () => request<{ profile: unknown; members: unknown[]; needs: unknown[] }>('/gic/profile'),
   getHarvests: (page = 1, limit = 20) => request<{ harvests: unknown[]; meta: PaginationMeta }>(`/gic/harvests?page=${page}&limit=${limit}`),
   addHarvest: (product: string, volume: number) => request<{ harvest: unknown }>('/gic/harvests', 'POST', { product, volume }),
