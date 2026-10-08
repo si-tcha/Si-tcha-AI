@@ -15,6 +15,8 @@ import {
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useAuth } from '@/context/AuthContext';
 import { growthService } from '@/services/growthService';
+import { apiClient } from '@/services/api';
+import type { AgronomicRecommendation } from '@/services/api';
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
 import {
   ContextBoundValue,
@@ -78,6 +80,11 @@ export default function SellerTerrainScreen() {
     value: [],
   });
   const parcels = valueForContext(parcelState, contextKey, []);
+  const [recommendationState, setRecommendationState] = useState<ContextBoundValue<AgronomicRecommendation[]>>({
+    contextKey: null,
+    value: [],
+  });
+  const recommendations = valueForContext(recommendationState, contextKey, []);
 
   const loadTerrainData = useCallback(async () => {
     try {
@@ -97,10 +104,12 @@ export default function SellerTerrainScreen() {
 
       // 2. Données privées de parcelles : chargement exclusif via growthService avec contexte valide
       if (authLoading) {
+        setRecommendationState({ contextKey: null, value: [] });
         return;
       }
       if (!sellerCtx) {
         setParcelState({ contextKey: null, value: [] });
+        setRecommendationState({ contextKey: null, value: [] });
         return;
       }
       const ticket = requestGuard.begin(contextKey!, 'parcels-load');
@@ -108,6 +117,24 @@ export default function SellerTerrainScreen() {
       const growthRes = await growthService.loadParcels(sellerCtx);
       if (requestGuard.isCurrent(ticket)) {
         setParcelState({ contextKey: ticket.contextKey, value: growthRes.parcels });
+      }
+
+      const weatherTicket = requestGuard.begin(contextKey!, 'weather-recommendations');
+      try {
+        const dashboard = await apiClient.getWeatherDashboard();
+        if (requestGuard.isCurrent(weatherTicket)) {
+          setRecommendationState({
+            contextKey: weatherTicket.contextKey,
+            value: dashboard.data.recommandations ?? [],
+          });
+        }
+      } catch (error) {
+        // Les relevés locaux restent utilisables hors ligne. Ne jamais montrer
+        // les recommandations du GIC précédent après un changement de session.
+        if (requestGuard.isCurrent(weatherTicket)) {
+          setRecommendationState({ contextKey: weatherTicket.contextKey, value: [] });
+        }
+        console.warn('Recommandations météo indisponibles:', error);
       }
     } catch (err) {
       console.warn('Erreur chargement terrain:', err);
@@ -335,6 +362,21 @@ export default function SellerTerrainScreen() {
                 </View>
                 <Text style={styles.sectionCount}>{weather.length} relevé{weather.length !== 1 ? 's' : ''}</Text>
               </View>
+
+              {recommendations.map((recommendation) => {
+                const urgent = recommendation.level === 'URGENT';
+                const attention = recommendation.level === 'ATTENTION';
+                return (
+                  <View key={recommendation.code} style={[styles.recommendationCard, urgent && styles.recommendationUrgent, attention && styles.recommendationAttention]}>
+                    <Feather name={urgent ? 'alert-triangle' : attention ? 'cloud-rain' : 'check-circle'} size={18} color={urgent ? '#dc2626' : attention ? '#d97834' : '#15803d'} />
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text style={styles.recommendationTitle}>{recommendation.title}</Text>
+                      <Text style={styles.recommendationMessage}>{recommendation.message}</Text>
+                      {recommendation.actions[0] ? <Text style={styles.recommendationAction}>À faire : {recommendation.actions[0]}</Text> : null}
+                    </View>
+                  </View>
+                );
+              })}
 
               {weather.length === 0 ? (
                 <View style={styles.emptyCard}>
@@ -680,6 +722,21 @@ const styles = StyleSheet.create({
   },
   emptyCardTitle: { fontSize: 14, fontWeight: '800', color: '#101e0f' },
   emptyCardSub: { fontSize: 12, color: '#5a6258', textAlign: 'center' },
+
+  recommendationCard: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 14,
+    padding: 12,
+  },
+  recommendationAttention: { backgroundColor: '#fff7ed', borderColor: '#fed7aa' },
+  recommendationUrgent: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  recommendationTitle: { fontSize: 13, fontWeight: '800', color: '#101e0f' },
+  recommendationMessage: { fontSize: 11, color: '#374151', lineHeight: 16 },
+  recommendationAction: { fontSize: 11, color: '#15803d', fontWeight: '700', lineHeight: 16 },
 
   /* ── Map Card (SIG) ── */
   mapCard: {
