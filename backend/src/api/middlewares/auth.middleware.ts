@@ -4,6 +4,11 @@ import prisma from '../../lib/prisma.js';
 import { AuthenticatedUser } from '../../types/user.types.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
+function unauthorized(message: string): Error & { statusCode: number } {
+    // Le gestionnaire Express lit statusCode sur l'erreur; res.status() seul était perdu après le throw.
+    return Object.assign(new Error(message), { statusCode: 401 });
+}
+
 export const protect = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     let token;
 
@@ -15,42 +20,35 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
 
     // 2. Si aucun token n'est présent (ou si la chaîne était juste "Bearer ")
     if (!token) {
-        res.status(401);
-        throw new Error('Non autorisé, aucun token fourni');
+        throw unauthorized('Non autorisé, aucun token fourni');
     }
 
-    // 3. On protège la lecture du token avec un try...catch
+    // 3. Vérifier le JWT avant de charger le compte.
+    let decoded: { id: string; role: string };
     try {
-        // Si le token est invalide ou malformé, cette ligne déclenchera une erreur capturée par le 'catch'
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string; role: string; };
-
-        // 4. On récupère l'utilisateur en base de données
-        let userPayload: AuthenticatedUser | null = null;
-        if (decoded.role === 'ACHETEUR') {
-            const user = await prisma.acheteur.findUnique({ where: { id: decoded.id }, select: { id: true } });
-            if (user) userPayload = { id: user.id, role: 'ACHETEUR' };
-        } else if (decoded.role === 'AGRICULTEUR') {
-            const user = await prisma.agriculteur.findUnique({ where: { id: decoded.id }, select: { id: true, gicId: true, estLeader: true } });
-            if (user) userPayload = { id: user.id, role: 'AGRICULTEUR', gicId: user.gicId, estLeader: user.estLeader };
-        } else if (decoded.role === 'ADMIN') {
-            const user = await prisma.admin.findUnique({ where: { id: decoded.id }, select: { id: true } });
-            if (user) userPayload = { id: user.id, role: 'ADMIN' };
-        }
-        
-        if (!userPayload) {
-            res.status(401);
-            throw new Error('Non autorisé, compte utilisateur introuvable');
-        }
-
-        // 5. On attache l'utilisateur à la requête et on passe au middleware suivant
-        req.user = userPayload;
-        return next();
-
-    } catch (error) {
-        // L'erreur "JsonWebTokenError: jwt malformed" atterrira ici proprement.
-        res.status(401);
-        throw new Error('Non autorisé, token invalide ou expiré');
+        decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string; role: string };
+    } catch {
+        throw unauthorized('Non autorisé, token invalide ou expiré');
     }
+
+    // 4. Charger le compte depuis la base de données.
+    let userPayload: AuthenticatedUser | null = null;
+    if (decoded.role === 'ACHETEUR') {
+        const user = await prisma.acheteur.findUnique({ where: { id: decoded.id }, select: { id: true } });
+        if (user) userPayload = { id: user.id, role: 'ACHETEUR' };
+    } else if (decoded.role === 'AGRICULTEUR') {
+        const user = await prisma.agriculteur.findUnique({ where: { id: decoded.id }, select: { id: true, gicId: true, estLeader: true } });
+        if (user) userPayload = { id: user.id, role: 'AGRICULTEUR', gicId: user.gicId, estLeader: user.estLeader };
+    } else if (decoded.role === 'ADMIN') {
+        const user = await prisma.admin.findUnique({ where: { id: decoded.id }, select: { id: true } });
+        if (user) userPayload = { id: user.id, role: 'ADMIN' };
+    }
+
+    if (!userPayload) throw unauthorized('Non autorisé, compte utilisateur introuvable');
+
+    // 5. Attacher l'utilisateur à la requête puis continuer.
+    req.user = userPayload;
+    return next();
 });
 
 // Middleware to check for GIC Leader role

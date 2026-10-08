@@ -14,6 +14,50 @@ enum StatutAgriculteur {
   REJETE
 }
 
+enum LangueAgriculteur {
+  FR
+  EN
+}
+
+enum PhaseCulture {
+  PREPARATION
+  IMPLANTATION
+  CROISSANCE
+  ENTRETIEN
+  RECOLTE
+  STOCKAGE
+}
+
+enum StatutEtapeCulture {
+  A_VENIR
+  EN_COURS
+  TERMINEE
+  ANNULEE
+}
+
+enum StatutCycleCulture {
+  EN_COURS
+  TERMINE
+  ANNULE
+}
+
+enum NiveauAlerte {
+  INFO
+  ATTENTION
+  URGENT
+}
+
+enum StatutNotificationSMS {
+  EN_ATTENTE
+  ENVOYE
+  ECHEC
+}
+
+enum StatutParcelle {
+  ACTIVE
+  ARCHIVEE
+}
+
 model Acheteur {
   id                   String                 @id @default(uuid())
   nom                  String    
@@ -65,17 +109,27 @@ model DonneesMeteo {
   
   gicId              String
   gic                GIC      @relation(fields: [gicId], references: [id])
+  parcelleId         String?
+  parcelle           Parcelle? @relation(fields: [parcelleId], references: [id], onDelete: SetNull)
+
+  @@index([gicId, timestampMesure])
+  @@index([parcelleId, timestampMesure])
 }
 
 model DonneesSol {
   id                 String   @id @default(uuid())
   temperatureSurface Decimal  @db.Decimal(5, 2) // En Celsius (t0)
   temperature10cm    Decimal  @db.Decimal(5, 2) // En Celsius (t10)
-  humidite           Decimal  @db.Decimal(5, 2) // Volumetric Soil Water (moisture)
+  humidite           Decimal  @db.Decimal(5, 4) // Volumetric Soil Water (moisture)
   timestampMesure    DateTime @db.Timestamptz
   
   gicId              String
   gic                GIC      @relation(fields: [gicId], references: [id])
+  parcelleId         String?
+  parcelle           Parcelle? @relation(fields: [parcelleId], references: [id], onDelete: SetNull)
+
+  @@index([gicId, timestampMesure])
+  @@index([parcelleId, timestampMesure])
 }
 
 // Nouvelle entité : AlerteMeteo (Générée par le CRON pour le Front-end)
@@ -84,10 +138,19 @@ model AlerteMeteo {
   messageCourt       String   // "Risque de pluie dans 2h, reportez l'épandage."
   detailsTechniques  Json     // Les données brutes pour l'agronome
   type               String   // "PLUIE", "SECHERESSE", "GEL"
+  cleDeduplication   String?  @unique
+  messageCourtEn     String?
+  niveau             NiveauAlerte @default(ATTENTION)
   timestampCreation  DateTime @default(now()) @db.Timestamptz
   
   gicId              String
   gic                GIC      @relation(fields: [gicId], references: [id])
+  parcelleId         String?
+  parcelle           Parcelle? @relation(fields: [parcelleId], references: [id], onDelete: SetNull)
+  notifications      NotificationSMS[]
+
+  @@index([gicId, timestampCreation])
+  @@index([parcelleId, timestampCreation])
 }
 
 model DonneeMarche {
@@ -118,6 +181,7 @@ model AgronomeInterne {
   specialite          String                 
   nom                 String                 
   questionsAgronomiques QuestionAgronomique[]
+  gics                GIC[]
 }
 
 model ProgrammeAgricole {
@@ -154,8 +218,10 @@ model GIC {
   timestampMaj          DateTime               @db.Date
   bassinProductionId    String
   bassinProduction      BassinProduction       @relation(fields: [bassinProductionId], references: [id])
-  polygonId             String?                @unique // ID fourni par AgroMonitoring lors de la création du GIC
+  polygonId             String?                @unique // Legacy: migré vers Parcelle.agroMonitoringPolygonId
   previsionsMeteo       Json?    // <-- C'est ici que le CRON va stocker le tableau des 8 jours
+  agronomeInterneId     String?
+  agronomeInterne       AgronomeInterne?       @relation(fields: [agronomeInterneId], references: [id], onDelete: SetNull)
 
   // Relations
 
@@ -169,6 +235,9 @@ model GIC {
   donneesMeteo          DonneesMeteo[]
   donneesSol            DonneesSol[]
   alertesMeteo          AlerteMeteo[]
+  parcelles             Parcelle[]
+
+  @@index([agronomeInterneId])
 }
 
 model RecolteOffre {
@@ -282,9 +351,138 @@ model Agriculteur {
   isVerified   Boolean           @default(false)
   estLeader    Boolean           @default(false)
   statut       StatutAgriculteur @default(EN_ATTENTE)
+  langue       LangueAgriculteur @default(FR)
   timestampMaj DateTime @db.Date
   gicId        String
   gic          GIC      @relation(fields: [gicId], references: [id])
+  parcelles    AgriculteurParcelle[]
+  notificationsSMS NotificationSMS[]
+
+  @@unique([gicId, id])
+}
+
+model Parcelle {
+  id                      String   @id @default(uuid())
+  nom                     String
+  zone                    String?
+  localisation            String?
+  surfaceHa               Decimal? @db.Decimal(12, 4)
+  latitude                Decimal? @db.Decimal(10, 7)
+  longitude               Decimal? @db.Decimal(10, 7)
+  geoJson                 Json?    @db.JsonB
+  agroMonitoringPolygonId String?  @unique
+  statut                  StatutParcelle @default(ACTIVE)
+  dateCreation            DateTime @default(now()) @db.Timestamptz
+  dateMaj                 DateTime @default(now()) @updatedAt @db.Timestamptz
+  gicId                   String
+  gic                     GIC      @relation(fields: [gicId], references: [id], onDelete: Cascade)
+  agriculteurs            AgriculteurParcelle[]
+  cyclesCulture           CycleCulture[]
+  donneesMeteo             DonneesMeteo[]
+  donneesSol               DonneesSol[]
+  previsionsMeteo         PrevisionMeteo[]
+  observationsSatellite   ObservationSatellite[]
+  alertesMeteo             AlerteMeteo[]
+
+  @@index([gicId, statut])
+  @@unique([gicId, id])
+}
+
+model AgriculteurParcelle {
+  agriculteurId  String
+  parcelleId     String
+  gicId          String
+  fonction       String?
+  dateAffectation DateTime @default(now()) @db.Timestamptz
+  agriculteur    Agriculteur @relation(fields: [gicId, agriculteurId], references: [gicId, id], onDelete: Cascade)
+  parcelle       Parcelle    @relation(fields: [gicId, parcelleId], references: [gicId, id], onDelete: Cascade)
+
+  @@id([agriculteurId, parcelleId])
+  @@index([parcelleId])
+}
+
+model CycleCulture {
+  id           String             @id @default(uuid())
+  culture      String
+  variete      String?
+  surfaceHa    Decimal?           @db.Decimal(12, 4)
+  dateSemis    DateTime?          @db.Date
+  dateDebut    DateTime?          @db.Date
+  dateFin      DateTime?          @db.Date
+  statut       StatutCycleCulture @default(EN_COURS)
+  dateCreation DateTime           @default(now()) @db.Timestamptz
+  parcelleId   String
+  parcelle     Parcelle           @relation(fields: [parcelleId], references: [id], onDelete: Cascade)
+  etapes       EtapeCycleCulture[]
+
+  @@index([parcelleId, statut])
+}
+
+model EtapeCycleCulture {
+  id             String             @id @default(uuid())
+  ordre          Int
+  phase          PhaseCulture
+  statut         StatutEtapeCulture @default(A_VENIR)
+  dateDebut      DateTime?          @db.Date
+  dateFin        DateTime?          @db.Date
+  note           String?
+  cycleCultureId String
+  cycleCulture   CycleCulture       @relation(fields: [cycleCultureId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleCultureId, ordre])
+}
+
+model PrevisionMeteo {
+  id                 String   @id @default(uuid())
+  timestampPrevision DateTime @db.Timestamptz
+  temperature        Decimal? @db.Decimal(5, 2)
+  humidite           Decimal? @db.Decimal(5, 2)
+  pluviometrie       Decimal? @db.Decimal(7, 2)
+  probabilitePluie   Decimal? @db.Decimal(5, 4)
+  vitesseVent        Decimal? @db.Decimal(5, 2)
+  description        String?
+  donneesBrutes      Json     @db.JsonB
+  dateReception      DateTime @default(now()) @db.Timestamptz
+  parcelleId         String
+  parcelle           Parcelle @relation(fields: [parcelleId], references: [id], onDelete: Cascade)
+
+  @@unique([parcelleId, timestampPrevision])
+}
+
+model ObservationSatellite {
+  id                 String   @id @default(uuid())
+  dateObservation    DateTime @db.Timestamptz
+  satellite          String
+  couvertureNuageuse Decimal? @db.Decimal(5, 2)
+  ndviMoyen          Decimal? @db.Decimal(7, 5)
+  statistiques       Json?    @db.JsonB
+  imageNDVIUrl       String?
+  imageCouleurUrl    String?
+  tuileNDVIUrl       String?
+  geoTiffNDVIUrl     String?
+  dateReception      DateTime @default(now()) @db.Timestamptz
+  parcelleId         String
+  parcelle           Parcelle @relation(fields: [parcelleId], references: [id], onDelete: Cascade)
+
+  @@unique([parcelleId, dateObservation, satellite])
+}
+
+model NotificationSMS {
+  id                    String                @id @default(uuid())
+  statut                StatutNotificationSMS @default(EN_ATTENTE)
+  identifiantFournisseur String?
+  contenu               String
+  langue                LangueAgriculteur
+  erreur                String?
+  dateCreation          DateTime              @default(now()) @db.Timestamptz
+  dateEnvoi             DateTime?             @db.Timestamptz
+  alerteMeteoId         String?
+  alerteMeteo           AlerteMeteo?           @relation(fields: [alerteMeteoId], references: [id], onDelete: SetNull)
+  agriculteurId         String
+  agriculteur           Agriculteur            @relation(fields: [agriculteurId], references: [id], onDelete: Cascade)
+
+  @@unique([alerteMeteoId, agriculteurId])
+  @@index([agriculteurId, dateCreation])
 }
 
 model VerificationCode {
