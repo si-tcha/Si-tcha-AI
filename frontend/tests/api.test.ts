@@ -762,18 +762,19 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       }
     });
 
-    it('configure le workflow manuel pour une APK release autonome avec validation HTTPS stricte', async () => {
+    it('configure le workflow manuel pour une APK debug autonome avec validation HTTPS stricte', async () => {
       const { readProjectFile } = await import('../../scripts/validate-api-url.mjs');
       const workflow = readProjectFile('.github/workflows/build-apk.yml');
 
       expect(workflow).toContain('api_url:');
       expect(workflow).toContain('node scripts/validate-api-url.mjs');
       expect(workflow).toContain("github.event_name == 'workflow_dispatch'");
-      expect(workflow).toContain('./gradlew assembleRelease --no-daemon');
+      expect(workflow).toContain('./gradlew assembleDebug --no-daemon');
+      expect(workflow).toContain('debuggableVariants = []');
       expect(workflow).toContain('assets/index.android.bundle');
-      expect(workflow).toContain('SI-TCHA-AI-Standalone-Release-APK');
+      expect(workflow).toContain('SI-TCHA-AI-Standalone-Debug-APK');
       expect(workflow).toContain('packages: platform-tools');
-      expect(workflow).not.toContain('./gradlew assembleDebug');
+      expect(workflow).not.toContain('./gradlew assembleRelease');
       expect(workflow).not.toContain('validate-local-test-api-url.mjs');
     });
   });
