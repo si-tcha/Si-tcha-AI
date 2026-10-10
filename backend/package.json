@@ -8,6 +8,7 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "seed": "tsx ./scripts/seed.ts",
+    "admin:create": "tsx ./scripts/create-admin.ts",
     "test": "vitest run --exclude 'tests/buyer-orders-concurrent.test.ts'",
     "test:unit": "vitest run --exclude 'tests/buyer-orders-concurrent.test.ts'",
     "test:integration": "vitest run tests/buyer-orders-concurrent.test.ts",
