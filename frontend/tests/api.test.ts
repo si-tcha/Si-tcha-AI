@@ -11,6 +11,7 @@ import {
   setUnauthorizedHandler,
   isValidStoredSession,
   computeNativePhysicalDevice,
+  resolveConfiguredApiUrl,
   _resetMemorySessionForTesting,
   UserProfile,
 } from '../src/services/api';
@@ -44,6 +45,15 @@ describe('Production API Client, Networking & Configuration Tests', () => {
   });
 
   describe('Centralized Base URL Resolution & Physical Device Detection', () => {
+    it('0. Utilise l’URL compilée dans le manifest Expo lorsque la variable web n’est plus disponible', () => {
+      expect(resolveConfiguredApiUrl(undefined, 'https://si-tcha-ai.onrender.com/api')).toBe(
+        'https://si-tcha-ai.onrender.com/api',
+      );
+      expect(resolveConfiguredApiUrl('https://override.example/api', 'https://si-tcha-ai.onrender.com/api')).toBe(
+        'https://override.example/api',
+      );
+    });
+
     it('1. Web local en développement avec isDevice: true doit pointer sur http://localhost:4000/api', () => {
       // Sur le web, expo-device renvoie toujours isDevice: true
       const url = resolveApiBaseUrl({

@@ -321,6 +321,30 @@ export function resolveApiBaseUrl(options: ApiUrlResolutionOptions): string {
   return 'http://localhost:4000/api';
 }
 
+/**
+ * Les variables EXPO_PUBLIC_* sont remplacées au build. Sur un export web
+ * statique, on lit aussi le manifest Expo pour garantir que l'URL injectée par
+ * app.config.js reste disponible dans le navigateur.
+ */
+export function resolveConfiguredApiUrl(
+  envUrl: string | undefined,
+  manifestUrl: unknown,
+): string | undefined {
+  if (typeof envUrl === 'string' && envUrl.trim().length > 0) return envUrl.trim();
+  if (typeof manifestUrl === 'string' && manifestUrl.trim().length > 0) return manifestUrl.trim();
+  return undefined;
+}
+
+function getManifestApiUrl(): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Constants = require('expo-constants').default;
+    return Constants?.expoConfig?.extra?.apiUrl;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getApiBaseUrl(): string {
   const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
   const nativePhysicalDevice = computeNativePhysicalDevice(Platform.OS, isPhysicalDevice);
@@ -328,7 +352,7 @@ export function getApiBaseUrl(): string {
   return resolveApiBaseUrl({
     platform: Platform.OS,
     isDevice: nativePhysicalDevice,
-    envUrl: process.env.EXPO_PUBLIC_API_URL,
+    envUrl: resolveConfiguredApiUrl(process.env.EXPO_PUBLIC_API_URL, getManifestApiUrl()),
     isDev,
   });
 }
