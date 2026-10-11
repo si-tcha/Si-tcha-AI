@@ -782,6 +782,31 @@ export async function clearSessionIfTokenMatches(
 export const clearToken = clearSession;
 export const clearRole = clearSession;
 
+/**
+ * Les en-têtes de contournement de tunnel ne doivent jamais partir vers une
+ * API publique : ils déclenchent sinon un prévol CORS inutile. Ils restent
+ * limités aux URL loca.lt utilisées pendant les tests locaux.
+ */
+export function buildRequestHeaders(baseUrl: string, token: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    if (hostname.endsWith('.loca.lt')) {
+      headers['Bypass-Tunnel-Reminder'] = 'true';
+      headers['localtunnel-warning'] = 'ignore';
+    }
+  } catch {
+    // L'URL est validée dans getApiBaseUrl(); ce fallback garde cette fonction
+    // sûre et déterministe pour les appels de test isolés.
+  }
+
+  return headers;
+}
+
 export async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
   // Capturer la génération AVANT toute lecture asynchrone du stockage. Une mutation
   // de session qui démarre pendant readStoredSession() ne doit jamais attribuer son
@@ -795,13 +820,7 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
   try {
     response = await fetch(`${baseUrl}${path}`, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Bypass-Tunnel-Reminder': 'true',
-        'localtunnel-warning': 'ignore',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: buildRequestHeaders(baseUrl, token),
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
