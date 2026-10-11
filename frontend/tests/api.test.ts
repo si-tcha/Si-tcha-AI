@@ -11,6 +11,7 @@ import {
   setUnauthorizedHandler,
   isValidStoredSession,
   computeNativePhysicalDevice,
+  buildRequestHeaders,
   resolveConfiguredApiUrl,
   _resetMemorySessionForTesting,
   UserProfile,
@@ -455,6 +456,23 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       delete process.env.EXPO_PUBLIC_API_URL;
       const baseUrl = getApiBaseUrl();
       expect(baseUrl).toMatch(/http:\/\/(localhost|10\.0\.2\.2):4000\/api/);
+    });
+  });
+
+  describe('Request headers and public CORS', () => {
+    it('n’envoie aucun en-tête de tunnel vers l’API Render publique', () => {
+      expect(buildRequestHeaders('https://si-tcha-ai.onrender.com/api', null)).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
+
+    it('conserve les en-têtes de tunnel uniquement pour loca.lt', () => {
+      expect(buildRequestHeaders('https://test.loca.lt/api', 'jwt')).toEqual({
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer jwt',
+        'Bypass-Tunnel-Reminder': 'true',
+        'localtunnel-warning': 'ignore',
+      });
     });
   });
 
