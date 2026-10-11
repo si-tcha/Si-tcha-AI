@@ -1,4 +1,4 @@
-const appConfig = require('./app.json');
+const { expo } = require('./app.config.base.json');
 
 // Expo injecte `extra` dans le manifest embarqué au moment de l'export web ou
 // natif. Cette passerelle est nécessaire pour les hébergements statiques : une
@@ -6,12 +6,9 @@ const appConfig = require('./app.json');
 const apiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 
 module.exports = {
-  ...appConfig,
-  expo: {
-    ...appConfig.expo,
-    extra: {
-      ...appConfig.expo.extra,
-      ...(apiUrl ? { apiUrl } : {}),
-    },
+  ...expo,
+  extra: {
+    ...expo.extra,
+    ...(apiUrl ? { apiUrl } : {}),
   },
 };
