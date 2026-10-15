@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android Debug APK
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    name: Build Android Standalone Release APK
+    name: Build Android Standalone Debug APK
     if: ${{ github.event_name == 'workflow_dispatch' || vars.EXPO_PUBLIC_API_URL != '' }}
     runs-on: ubuntu-latest
     env:
@@ -60,26 +60,33 @@ jobs:
           cd frontend
           npx expo prebuild --platform android --clean
 
+      # React Native excludes the JavaScript bundle from the normal `debug`
+      # variant, which would make the app depend on Metro and the developer's
+      # local network.  The test APK must instead carry its own bundle.
+      - name: Embed JavaScript bundle in debug APK
+        run: |
+          sed -i '/^react {/a\    debuggableVariants = []' frontend/android/app/build.gradle
+
       - name: Make gradlew executable
         run: |
           chmod +x frontend/android/gradlew
 
-      - name: Build Android Standalone Release APK
+      - name: Build Android Standalone Debug APK
         run: |
           cd frontend/android
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleDebug --no-daemon
         env:
-          NODE_ENV: production
+          NODE_ENV: development
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -XX:+HeapDumpOnOutOfMemoryError"
 
-      - name: Verify Standalone Release APK
+      - name: Verify Standalone Debug APK
         run: |
-          test -s frontend/android/app/build/outputs/apk/release/app-release.apk
-          unzip -l frontend/android/app/build/outputs/apk/release/app-release.apk | grep -q 'assets/index.android.bundle'
+          test -s frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l frontend/android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/index.android.bundle'
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SI-TCHA-AI-Standalone-Release-APK
-          path: frontend/android/app/build/outputs/apk/release/app-release.apk
+          name: SI-TCHA-AI-Standalone-Debug-APK
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
