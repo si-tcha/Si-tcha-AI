@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../../generated/prisma/index.js';
 import { Request, Response } from 'express';
 import prisma from '../../lib/prisma.js';
 import {

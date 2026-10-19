@@ -1,6 +1,11 @@
 import { Request, Response } from 'express';
 import * as adminService from '../../services/admin.service.js';
 
+export const getAdminBootstrap = async (_req: Request, res: Response) => {
+    const bootstrap = await adminService.getAdminBootstrap();
+    res.status(200).json(bootstrap);
+};
+
 export const createGic = async (req: Request, res: Response) => {
     const { gicData, leaderData } = req.body;
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { protect, isAdmin } from '../middlewares/auth.middleware.js';
-import { createGic, listGicsWithStats, updateGic } from '../controllers/admin.controller.js';
+import { createGic, getAdminBootstrap, listGicsWithStats, updateGic } from '../controllers/admin.controller.js';
 import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
 
 const router = Router();
@@ -81,6 +81,57 @@ const router = Router();
 
 // Toutes les routes dans ce fichier sont protégées et nécessitent le rôle ADMIN
 router.use(protect, isAdmin);
+
+/**
+ * @swagger
+ * /admin/bassins:
+ *   get:
+ *     summary: Lister les bassins de production triés par nom
+ *     tags: [Administration]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Liste des bassins disponibles (tableau vide si aucun bassin).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [bassins]
+ *               properties:
+ *                 bassins:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     required: [id, nom, region]
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       nom:
+ *                         type: string
+ *                       region:
+ *                         type: string
+ *       401:
+ *         description: Token manquant ou invalide.
+ *       403:
+ *         description: Droits administrateur requis.
+ * /admin/bootstrap:
+ *   get:
+ *     summary: Charger les bassins pour le formulaire du dashboard admin
+ *     tags: [Administration]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Objet contenant bassins, avec id, nom et region pour chaque bassin.
+ *       401:
+ *         description: Token manquant ou invalide.
+ *       403:
+ *         description: Droits administrateur requis.
+ */
+router.get('/bassins', asyncHandler(getAdminBootstrap));
+router.get('/bootstrap', asyncHandler(getAdminBootstrap));
 
 // @route   POST /api/admin/gics
 // @desc    Créer un nouveau GIC et son leader

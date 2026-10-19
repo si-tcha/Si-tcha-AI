@@ -4,6 +4,15 @@ import { GicCreationData, GicUpdateData, LeaderCreationData, LeaderUpdateData } 
 
 const DEFAULT_LEADER_PIN = '1234';
 
+export const getAdminBootstrap = async () => {
+    const bassins = await prisma.bassinProduction.findMany({
+        select: { id: true, nom: true, region: true },
+        orderBy: { nom: 'asc' },
+    });
+
+    return { bassins };
+};
+
 const validatePin = (pin: string) => {
     if (!/^\d{4,}$/.test(pin)) {
         throw Object.assign(new Error('Un code PIN numérique de 4 chiffres minimum est requis.'), { statusCode: 400 });

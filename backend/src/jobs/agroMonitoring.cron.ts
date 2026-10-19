@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import axios from 'axios';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../generated/prisma/index.js';
 import prisma from '../lib/prisma.js';
 import { sendSms } from '../services/notification.service.js';
 import {
