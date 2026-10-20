@@ -46,6 +46,25 @@ export const STAGES: ParcelStage[] = [
   'Récolté',
 ];
 
+/**
+ * Une Modal Android transparente gère déjà le redimensionnement lié au
+ * clavier. Laisser un KeyboardAvoidingView monté, même sans `behavior`,
+ * pouvait faire recalculer la hauteur de la modale en boucle sur certains
+ * appareils (notamment après la touche « OK »). Il ne doit exister que sur
+ * iOS, où son ajustement est réellement nécessaire.
+ */
+function ModalKeyboardContainer({ children }: { children: React.ReactNode }) {
+  if (Platform.OS === 'ios') {
+    return (
+      <KeyboardAvoidingView behavior="padding" style={styles.modalKeyboardContainer}>
+        {children}
+      </KeyboardAvoidingView>
+    );
+  }
+
+  return <View style={styles.modalKeyboardContainer}>{children}</View>;
+}
+
 export default function GrowthLogScreen() {
   const router = useRouter();
   const { showToast } = useToast();
@@ -587,13 +606,7 @@ export default function GrowthLogScreen() {
 
         {/* Modale d'ajout de parcelle */}
         <Modal visible={contextKey !== null && modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView
-            // Sur Android, `height` dans une Modal transparente oscillait avec
-            // le ScrollView lors de la fermeture du clavier. Android gère déjà
-            // le redimensionnement de la fenêtre : on ne l'applique qu'iOS.
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1 }}
-          >
+          <ModalKeyboardContainer>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
                 <View style={styles.modalHeader}>
@@ -605,7 +618,8 @@ export default function GrowthLogScreen() {
 
                 <ScrollView
                   showsVerticalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
+                  keyboardShouldPersistTaps="always"
+                  keyboardDismissMode="on-drag"
                 >
                   <Text style={styles.inputLabel}>Nom de la parcelle / Champ *</Text>
                   <TextInput
@@ -615,6 +629,8 @@ export default function GrowthLogScreen() {
                     value={parcelName}
                     onChangeText={setParcelName}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <Text style={styles.inputLabel}>Culture *</Text>
@@ -625,6 +641,8 @@ export default function GrowthLogScreen() {
                     value={crop}
                     onChangeText={setCrop}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <Text style={styles.inputLabel}>Date de Semis (AAAA-MM-JJ) *</Text>
@@ -635,6 +653,8 @@ export default function GrowthLogScreen() {
                     value={sowingDate}
                     onChangeText={setSowingDate}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <Text style={styles.inputLabel}>Date de Récolte Estimée (AAAA-MM-JJ) *</Text>
@@ -645,6 +665,8 @@ export default function GrowthLogScreen() {
                     value={estimatedHarvestDate}
                     onChangeText={setEstimatedHarvestDate}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <Text style={styles.inputLabel}>Stade de croissance initial</Text>
@@ -676,6 +698,8 @@ export default function GrowthLogScreen() {
                     value={estimatedVolumeKg}
                     onChangeText={setEstimatedVolumeKg}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <Text style={styles.inputLabel}>
@@ -689,6 +713,8 @@ export default function GrowthLogScreen() {
                     value={actualHarvestVolumeKg}
                     onChangeText={setActualHarvestVolumeKg}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <Text style={styles.inputLabel}>
@@ -701,6 +727,8 @@ export default function GrowthLogScreen() {
                     value={actualHarvestDate}
                     onChangeText={setActualHarvestDate}
                     editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
 
                   <TouchableOpacity
@@ -718,15 +746,12 @@ export default function GrowthLogScreen() {
                 </ScrollView>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         {/* Modale de mise à jour (étape et récolte) */}
         <Modal visible={contextKey !== null && !!editingParcel} animationType="slide" transparent>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1 }}
-          >
+          <ModalKeyboardContainer>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
                 <View style={styles.modalHeader}>
@@ -737,7 +762,11 @@ export default function GrowthLogScreen() {
                 </View>
 
                 {editingParcel && (
-                  <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="always"
+                    keyboardDismissMode="on-drag"
+                  >
                     <Text style={{ fontSize: 14, fontWeight: '700', color: '#101e0f', marginBottom: 12 }}>
                       {editingParcel.parcelName} ({editingParcel.crop})
                     </Text>
@@ -776,6 +805,8 @@ export default function GrowthLogScreen() {
                       value={editActualVolume}
                       onChangeText={setEditActualVolume}
                       editable={!isUpdating}
+                      returnKeyType="done"
+                      onSubmitEditing={Keyboard.dismiss}
                     />
 
                     <Text style={styles.inputLabel}>Date de récolte réelle (AAAA-MM-JJ)</Text>
@@ -786,6 +817,8 @@ export default function GrowthLogScreen() {
                       value={editActualDate}
                       onChangeText={setEditActualDate}
                       editable={!isUpdating}
+                      returnKeyType="done"
+                      onSubmitEditing={Keyboard.dismiss}
                     />
 
                     <TouchableOpacity
@@ -804,7 +837,7 @@ export default function GrowthLogScreen() {
                 )}
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         <BottomNavBar role="seller" />
@@ -981,6 +1014,7 @@ const styles = StyleSheet.create({
   },
   editCardActionText: { fontSize: 11, fontWeight: '700', color: '#d97834' },
   modalOverlay: { flex: 1, backgroundColor: '#101e0f70', justifyContent: 'flex-end' },
+  modalKeyboardContainer: { flex: 1 },
   modalContent: {
     backgroundColor: '#f3ecd8',
     borderTopLeftRadius: 26,
