@@ -44,6 +44,11 @@ export async function createB2BOffer(req: AuthRequest, res: Response) {
     return res.status(400).json({ message: 'Titre, type et tarif/échange sont requis.' });
   }
 
+  const sellerPhone = req.user.phone;
+  if (!sellerPhone) {
+    return res.status(403).json({ message: 'Téléphone de contact indisponible pour la session active.' });
+  }
+
   try {
     const gic = await prisma.gIC.findUnique({
       where: { id: BigInt(req.user.gicId) },
@@ -66,7 +71,7 @@ export async function createB2BOffer(req: AuthRequest, res: Response) {
         // authentifiés, jamais une valeur déclarée par le client.
         gicName: gic.nom,
         location: gic.bassinProduction?.nom ?? '',
-        contact: req.user.phone,
+        contact: sellerPhone,
         gicId: BigInt(req.user.gicId),
       },
     });
