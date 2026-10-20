@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { PrefinancingDeal, TrustRating, dbService } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -224,7 +225,7 @@ export default function PrefinancingScreen() {
 
         {/* Modale de proposition de préfinancement */}
         <Modal visible={modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ModalKeyboardContainer>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={{ paddingHorizontal: Spacing.five, paddingTop: Spacing.three, paddingBottom: Spacing.two }}>
@@ -240,7 +241,7 @@ export default function PrefinancingScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always" keyboardDismissMode="on-drag">
                 <Text style={styles.inputLabel}>GIC bénéficiaire</Text>
                 <TextInput
                   style={styles.textInput}
@@ -293,12 +294,12 @@ export default function PrefinancingScreen() {
               </ScrollView>
             </View>
           </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         {/* Modale de Trust Score (Évaluation) */}
         <Modal visible={ratingModalVisible} animationType="fade" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ModalKeyboardContainer>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
                 <View style={styles.modalHeader}>
@@ -335,7 +336,7 @@ export default function PrefinancingScreen() {
                 </View>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
 

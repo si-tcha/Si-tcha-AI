@@ -10,7 +10,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  KeyboardAvoidingView,
 } from 'react-native';
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'expo-router';
@@ -23,6 +22,7 @@ import { growthService, AgronomistHistoryEntry } from '@/services/growthService'
 import { persistOrKeepAgronomistAnswer } from '@/services/agronomistPersistence';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 import { useAuth } from '@/context/AuthContext';
 
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
@@ -363,10 +363,7 @@ export default function AgronomistScreen() {
 
         {/* Modale de saisie de question */}
         <Modal visible={contextKey !== null && modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1 }}
-          >
+          <ModalKeyboardContainer>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
                 <View style={styles.modalHeader}>
@@ -376,7 +373,7 @@ export default function AgronomistScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always" keyboardDismissMode="on-drag">
                   <Text style={styles.inputLabel}>Culture concernée</Text>
                   <ScrollView
                     horizontal
@@ -466,7 +463,7 @@ export default function AgronomistScreen() {
                 </ScrollView>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         <BottomNavBar role="seller" />

@@ -11,7 +11,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  KeyboardAvoidingView,
 } from 'react-native';
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'expo-router';
@@ -23,6 +22,7 @@ import { growthService, UserCacheContext } from '@/services/growthService';
 import { calculateYieldDrop, isValidIsoDate } from '@/utils/growthUtils';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 import { useAuth } from '@/context/AuthContext';
 
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
@@ -45,25 +45,6 @@ export const STAGES: ParcelStage[] = [
   'Prêt à récolter',
   'Récolté',
 ];
-
-/**
- * Une Modal Android transparente gère déjà le redimensionnement lié au
- * clavier. Laisser un KeyboardAvoidingView monté, même sans `behavior`,
- * pouvait faire recalculer la hauteur de la modale en boucle sur certains
- * appareils (notamment après la touche « OK »). Il ne doit exister que sur
- * iOS, où son ajustement est réellement nécessaire.
- */
-function ModalKeyboardContainer({ children }: { children: React.ReactNode }) {
-  if (Platform.OS === 'ios') {
-    return (
-      <KeyboardAvoidingView behavior="padding" style={styles.modalKeyboardContainer}>
-        {children}
-      </KeyboardAvoidingView>
-    );
-  }
-
-  return <View style={styles.modalKeyboardContainer}>{children}</View>;
-}
 
 export default function GrowthLogScreen() {
   const router = useRouter();
@@ -1014,7 +995,6 @@ const styles = StyleSheet.create({
   },
   editCardActionText: { fontSize: 11, fontWeight: '700', color: '#d97834' },
   modalOverlay: { flex: 1, backgroundColor: '#101e0f70', justifyContent: 'flex-end' },
-  modalKeyboardContainer: { flex: 1 },
   modalContent: {
     backgroundColor: '#f3ecd8',
     borderTopLeftRadius: 26,

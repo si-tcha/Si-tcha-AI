@@ -22,6 +22,7 @@ import { ApiError, isNetworkError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { useBuyerOrdersCoordinator } from '@/hooks/useBuyerCoordinators';
 import { OrderQrCode } from '@/components/ui/order-qr-code';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -364,6 +365,7 @@ export default function BuyerOrdersScreen() {
 
         {/* Modal Évaluation GIC */}
         <Modal visible={Boolean(ratingOrder && isDataValid)} animationType="slide" transparent>
+          <ModalKeyboardContainer>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -428,6 +430,7 @@ export default function BuyerOrdersScreen() {
               )}
             </View>
           </View>
+          </ModalKeyboardContainer>
         </Modal>
 
         <BottomNavBar role="buyer" />
