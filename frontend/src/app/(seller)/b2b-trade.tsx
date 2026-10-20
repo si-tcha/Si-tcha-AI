@@ -1,4 +1,4 @@
-import { Dimensions, Keyboard, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Linking } from 'react-native';
+import { Dimensions, Keyboard, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Linking } from 'react-native';
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { B2BOffer, dbService } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -188,7 +189,7 @@ export default function B2bTradeScreen() {
 
         {/* Modale de publication B2B */}
         <Modal visible={modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ModalKeyboardContainer>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -198,7 +199,7 @@ export default function B2bTradeScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always" keyboardDismissMode="on-drag">
                 <Text style={styles.inputLabel}>Type d'offre</Text>
                 <View style={styles.typeSelector}>
                   <TouchableOpacity
@@ -290,7 +291,7 @@ export default function B2bTradeScreen() {
               </ScrollView>
             </View>
           </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         <BottomNavBar role="seller" />

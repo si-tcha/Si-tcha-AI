@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, ActivityIndicator } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import { ConfidentialGic, dbService, ProductOffer, TrustRating } from '@/service
 import { useCart } from '@/services/cart-store';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -287,7 +288,7 @@ export default function BuyerGicsScreen() {
 
       {/* MODAL ÉVALUATION CONFIANCE */}
       <Modal visible={ratingModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <ModalKeyboardContainer>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
@@ -331,7 +332,7 @@ export default function BuyerGicsScreen() {
             </View>
           </View>
         </View>
-        </KeyboardAvoidingView>
+        </ModalKeyboardContainer>
       </Modal>
     </SafeAreaView>
   );

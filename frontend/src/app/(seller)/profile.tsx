@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { dbService, GicMember, GicNeed, GicProfile, TrustRating } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 import { useAuth } from '@/context/AuthContext';
 import { apiClient } from '@/services/api';
 
@@ -343,7 +344,7 @@ export default function SellerProfileScreen() {
         </ScrollView>
 
         <Modal visible={modalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ModalKeyboardContainer>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -379,7 +380,7 @@ export default function SellerProfileScreen() {
               </TouchableOpacity>
             </View>
           </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         <BottomNavBar role="seller" />
