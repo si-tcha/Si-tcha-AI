@@ -8,6 +8,8 @@ import { B2BOffer, dbService } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
 import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
+import { apiClient } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -16,6 +18,7 @@ const CONTAINER_WIDTH = isWeb ? Math.min(SCREEN_WIDTH, 420) : SCREEN_WIDTH;
 export default function B2bTradeScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { user } = useAuth();
   const [offers, setOffers] = useState<B2BOffer[]>([]);
   const [activeTab, setActiveTab] = useState<'all' | 'rent' | 'barter'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,9 +29,9 @@ export default function B2bTradeScreen() {
   const [formType, setFormType] = useState<'rent' | 'barter'>('rent');
   const [formCategory, setFormCategory] = useState('Matériel Irrigation');
   const [formPriceOrExchange, setFormPriceOrExchange] = useState('');
-  const [formGicName, setFormGicName] = useState('GIC Agro-Vallée');
-  const [formLocation, setFormLocation] = useState('Bafoussam (Ouest)');
-  const [formContact, setFormContact] = useState('+237 699 00 00 00');
+  const [formGicName, setFormGicName] = useState('');
+  const [formLocation, setFormLocation] = useState('');
+  const [formContact, setFormContact] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitLockRef = useRef(false);
 
@@ -43,6 +46,31 @@ export default function B2bTradeScreen() {
       setOffers(list);
     } catch (err) {
       console.warn('Erreur chargement offres B2B:', err);
+    }
+  };
+
+  const handleOpenCreateOffer = async () => {
+    if (user?.role !== 'seller' || !user.gicId || !user.phone) {
+      showToast({ message: 'Votre session vendeur est incomplète. Reconnectez-vous avant de publier.', type: 'error' });
+      return;
+    }
+
+    try {
+      const response = await apiClient.getGicProfile();
+      const profile = response?.profile as { id?: string | number; name?: string; bassin?: string } | undefined;
+      const belongsToCurrentSeller = profile?.id !== undefined && String(profile.id) === String(user.gicId);
+
+      if (!belongsToCurrentSeller || !profile?.name) {
+        throw new Error('Profil GIC non concordant avec la session active.');
+      }
+
+      setFormGicName(profile.name);
+      setFormLocation(profile.bassin?.trim() || 'Localisation non renseignée');
+      setFormContact(user.phone);
+      setModalVisible(true);
+    } catch (error) {
+      console.warn('Impossible de préparer l’offre B2B avec le profil actif:', error);
+      showToast({ message: 'Impossible de vérifier les coordonnées du GIC. Réessayez avec une connexion active.', type: 'error' });
     }
   };
 
@@ -107,7 +135,7 @@ export default function B2bTradeScreen() {
             <Text style={styles.headerTitle}>Commerce B2B & Matériel</Text>
             <Text style={styles.headerSubtitle}>Location Équipements & Troc Intrants</Text>
           </View>
-          <TouchableOpacity style={styles.addNavButton} onPress={() => setModalVisible(true)}>
+          <TouchableOpacity style={styles.addNavButton} onPress={handleOpenCreateOffer}>
             <Feather name="plus" size={20} color="#ffffff" />
           </TouchableOpacity>
         </View>
@@ -148,7 +176,7 @@ export default function B2bTradeScreen() {
           </View>
 
           {/* Bouton Publier */}
-          <TouchableOpacity style={styles.actionButton} onPress={() => setModalVisible(true)} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.actionButton} onPress={handleOpenCreateOffer} activeOpacity={0.85}>
             <Feather name="plus-circle" size={18} color="#ffffff" style={{ marginRight: 8 }} />
             <Text style={styles.actionButtonText}>+ Publier du matériel ou une offre de troc</Text>
           </TouchableOpacity>
@@ -249,35 +277,32 @@ export default function B2bTradeScreen() {
                   editable={!isSubmitting}
                 />
 
-                <Text style={styles.inputLabel}>Nom du GIC ou Planteur</Text>
+                <Text style={styles.inputLabel}>GIC de la session</Text>
                 <TextInput
                   style={styles.textInput}
                   placeholder="Nom de votre GIC"
                   placeholderTextColor="#889e87"
                   value={formGicName}
-                  onChangeText={setFormGicName}
-                  editable={!isSubmitting}
+                  editable={false}
                 />
 
-                <Text style={styles.inputLabel}>Localisation</Text>
+                <Text style={styles.inputLabel}>Bassin du GIC</Text>
                 <TextInput
                   style={styles.textInput}
                   placeholder="ex: Bafoussam (Ouest)"
                   placeholderTextColor="#889e87"
                   value={formLocation}
-                  onChangeText={setFormLocation}
-                  editable={!isSubmitting}
+                  editable={false}
                 />
 
-                <Text style={styles.inputLabel}>Téléphone de contact</Text>
+                <Text style={styles.inputLabel}>Téléphone de la session</Text>
                 <TextInput
                   style={styles.textInput}
                   placeholder="+237 6XX XX XX XX"
                   placeholderTextColor="#889e87"
                   keyboardType="phone-pad"
                   value={formContact}
-                  onChangeText={setFormContact}
-                  editable={!isSubmitting}
+                  editable={false}
                 />
 
                 <TouchableOpacity
