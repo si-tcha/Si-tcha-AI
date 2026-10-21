@@ -935,7 +935,8 @@ export const apiClient = {
   getWeatherDashboard: () => request<{ data: { recommandations: AgronomicRecommendation[] } }>('/weather/dashboard'),
   getGicProfile: () => request<{ profile: unknown; members: unknown[]; needs: unknown[] }>('/gic/profile'),
   getHarvests: (page = 1, limit = 20) => request<{ harvests: unknown[]; meta: PaginationMeta }>(`/gic/harvests?page=${page}&limit=${limit}`),
-  addHarvest: (product: string, volume: number) => request<{ harvest: unknown }>('/gic/harvests', 'POST', { product, volume }),
+  addHarvest: (product: string, volume: number, price: number) =>
+    request<{ harvest: unknown }>('/gic/harvests', 'POST', { product, volume, price }),
   getExpenses: (page = 1, limit = 20) => request<{ expenses: unknown[]; meta: PaginationMeta }>(`/gic/expenses?page=${page}&limit=${limit}`),
   addExpense: (label: string, amount: number, category: string) =>
     request<{ expense: unknown }>('/gic/expenses', 'POST', { label, amount, category }),

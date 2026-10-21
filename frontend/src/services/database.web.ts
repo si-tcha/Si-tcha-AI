@@ -349,7 +349,7 @@ class DatabaseService {
     return readJson(STORAGE_KEYS.HARVESTS, DEFAULT_HARVESTS);
   }
 
-  async addHarvest(product: string, volume: number): Promise<HarvestRecord> {
+  async addHarvest(product: string, volume: number, price: number): Promise<HarvestRecord> {
     const role = await this.getLocalRole();
     const newHarvest: HarvestRecord = {
       id: Date.now().toString(),
@@ -364,7 +364,7 @@ class DatabaseService {
     writeJson(STORAGE_KEYS.HARVESTS, [newHarvest, ...harvests]);
 
     // Push to backend PostgreSQL DB so it appears in the Buyer Market
-    apiClient.addHarvest(product, volume).then(() => {
+    apiClient.addHarvest(product, volume, price).then(() => {
       this.syncRemoteData().catch(() => {});
     }).catch(() => {
       if (syncErrorHandler) syncErrorHandler("Mode hors-ligne : récolte sauvegardée localement.");

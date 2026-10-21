@@ -35,6 +35,7 @@ export default function SellerHomeScreen() {
   // Formulaires récolte
   const [formProduct, setFormProduct] = useState('');
   const [formVolume, setFormVolume] = useState('');
+  const [formPrice, setFormPrice] = useState('');
 
   // Formulaires dépense
   const [formExpenseLabel, setFormExpenseLabel] = useState('');
@@ -98,22 +99,24 @@ export default function SellerHomeScreen() {
     expenses.filter(e => e.category === cat).reduce((sum, e) => sum + e.amount, 0);
 
   const handleAddHarvest = async () => {
-    if (!formProduct.trim() || !formVolume.trim()) {
+    if (!formProduct.trim() || !formVolume.trim() || !formPrice.trim()) {
       showToast({ message: 'Veuillez remplir tous les champs.', type: 'warning' });
       return;
     }
     try {
       const vol = parseFloat(formVolume);
-      if (isNaN(vol) || vol <= 0) {
-        showToast({ message: 'Veuillez saisir un volume valide.', type: 'warning' });
+      const price = parseFloat(formPrice);
+      if (isNaN(vol) || vol <= 0 || isNaN(price) || price <= 0) {
+        showToast({ message: 'Veuillez saisir un volume et un prix valides.', type: 'warning' });
         return;
       }
-      const newHarvest = await dbService.addHarvest(formProduct.trim(), vol);
+      const newHarvest = await dbService.addHarvest(formProduct.trim(), vol, price);
       setHarvests(prev => [newHarvest, ...prev]);
       setFormProduct('');
       setFormVolume('');
+      setFormPrice('');
       setHarvestModalVisible(false);
-      showToast({ message: `Récolte de ${vol} kg enregistrée en local !`, type: 'success' });
+      showToast({ message: `Récolte de ${vol} kg à ${price} FCFA/kg enregistrée.`, type: 'success' });
     } catch (err) {
       console.warn('Erreur sauvegarde récolte:', err);
       showToast({ message: "Impossible d'enregistrer la récolte.", type: 'error' });
@@ -394,6 +397,18 @@ export default function SellerHomeScreen() {
                     keyboardType="numeric"
                     value={formVolume}
                     onChangeText={setFormVolume}
+                  />
+                </View>
+
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.label}>Prix de vente (FCFA / kg)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Ex: 500"
+                    placeholderTextColor="#9ca49a"
+                    keyboardType="numeric"
+                    value={formPrice}
+                    onChangeText={setFormPrice}
                   />
                 </View>
 

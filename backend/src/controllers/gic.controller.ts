@@ -135,8 +135,10 @@ export async function getGicHarvests(req: AuthRequest, res: Response) {
 
 export async function createGicHarvest(req: AuthRequest, res: Response) {
   if (req.user?.role !== 'seller' || !req.user.gicId) return res.status(403).json({ message: 'Accès GIC requis.' });
-  const { product, volume } = req.body as { product?: string; volume?: number };
-  if (!product?.trim() || !Number.isFinite(Number(volume))) return res.status(400).json({ message: 'product et volume sont requis.' });
+  const { product, volume, price } = req.body as { product?: string; volume?: number; price?: number };
+  if (!product?.trim() || !Number.isFinite(Number(volume)) || !Number.isFinite(Number(price))) {
+    return res.status(400).json({ message: 'product, volume et price sont requis.' });
+  }
 
   try {
     const gicId = BigInt(req.user.gicId);
@@ -151,8 +153,16 @@ export async function createGicHarvest(req: AuthRequest, res: Response) {
         data: {
           nom: pName,
           categorie: pCat,
+          prix: Number(price),
           imageURL: getImageUrlForProduct(pName),
         },
+      });
+    } else if (!produit.prix || Number(produit.prix) <= 0) {
+      // Le catalogue ne publie que les produits dotés d'un prix positif. Une
+      // première récolte renseigne donc le prix de référence du produit.
+      produit = await prisma.produitAgricole.update({
+        where: { id: produit.id },
+        data: { prix: Number(price) },
       });
     }
 

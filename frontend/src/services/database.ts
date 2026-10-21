@@ -560,7 +560,7 @@ class DatabaseService {
     return rows.map(r => ({ ...r, synced: !!r.synced }));
   }
 
-  async addHarvest(product: string, volume: number): Promise<HarvestRecord> {
+  async addHarvest(product: string, volume: number, price: number): Promise<HarvestRecord> {
     const role = await this.getLocalRole();
     const id = Date.now().toString();
     const date = 'Aujourd\'hui';
@@ -572,7 +572,7 @@ class DatabaseService {
       [id, product, volume, date, 0, updatedAt, role]
     );
 
-    apiClient.addHarvest(product, volume).then(() => {
+    apiClient.addHarvest(product, volume, price).then(() => {
       db.runSync('UPDATE harvests SET synced = 1 WHERE id = ?', [id]);
       this.syncRemoteData().catch(() => {});
     }).catch(() => {

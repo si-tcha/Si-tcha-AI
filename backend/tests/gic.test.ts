@@ -9,7 +9,7 @@ vi.mock('../src/lib/prisma', () => {
     default: {
       gIC: { findUnique: vi.fn(), update: vi.fn() },
       recolteOffre: { findMany: vi.fn(), count: vi.fn(), create: vi.fn() },
-      produitAgricole: { findFirst: vi.fn(), create: vi.fn() },
+      produitAgricole: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
       chargeFinanciere: { findMany: vi.fn(), count: vi.fn(), create: vi.fn() },
     }
   };
@@ -69,10 +69,10 @@ describe('GIC Controller Unit Tests', () => {
     it('should create harvest and return 201', async () => {
       req = {
         user: { id: '1', role: 'seller', phone: '123', gicId: '1', gicRole: 'leader', status: 'active', name: 'Seller' },
-        body: { product: 'Tomate', volume: 100 }
+        body: { product: 'Tomate', volume: 100, price: 500 }
       };
 
-      vi.mocked(prisma.produitAgricole.findFirst).mockResolvedValue({ id: BigInt(1), nom: 'Tomate' } as any);
+      vi.mocked(prisma.produitAgricole.findFirst).mockResolvedValue({ id: BigInt(1), nom: 'Tomate', prix: 500 } as any);
       vi.mocked(prisma.recolteOffre.create).mockResolvedValue({
         id: BigInt(1),
         quantiteDisponible: 100,
@@ -84,6 +84,9 @@ describe('GIC Controller Unit Tests', () => {
       await createGicHarvest(req as AuthRequest, res as Response);
 
       expect(statusMock).toHaveBeenCalledWith(201);
+      expect(prisma.recolteOffre.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ quantiteDisponible: 100 })
+      }));
       expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({
         harvest: expect.objectContaining({ product: 'Tomate', volume: 100 })
       }));
