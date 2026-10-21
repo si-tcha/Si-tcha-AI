@@ -11,25 +11,14 @@ on:
         description: URL HTTPS publique à embarquer dans l'APK autonome (chemin /api obligatoire)
         required: true
         type: string
-      build_type:
-        description: Type d'APK à construire
-        required: true
-        default: debug
-        type: choice
-        options:
-          - debug
-          - release
 
 jobs:
   build:
-    name: Build Android Standalone APK
+    name: Build Android Standalone Release APK
     if: ${{ github.event_name == 'workflow_dispatch' || vars.EXPO_PUBLIC_API_URL != '' }}
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || vars.EXPO_PUBLIC_API_URL }}
-      # Les pushes conservent le comportement historique (release). Les essais
-      # lancés manuellement peuvent demander une APK debug autonome.
-      BUILD_VARIANT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type || 'release' }}
 
     steps:
       - name: Checkout repository
@@ -75,23 +64,22 @@ jobs:
         run: |
           chmod +x frontend/android/gradlew
 
-      - name: Build Android Standalone APK
+      - name: Build Android Standalone Release APK
         run: |
           cd frontend/android
-          ./gradlew "assemble${BUILD_VARIANT^}" --no-daemon
+          ./gradlew assembleRelease --no-daemon
         env:
           NODE_ENV: production
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -XX:+HeapDumpOnOutOfMemoryError"
 
-      - name: Verify Standalone APK
+      - name: Verify Standalone Release APK
         run: |
-          APK_PATH="frontend/android/app/build/outputs/apk/${BUILD_VARIANT}/app-${BUILD_VARIANT}.apk"
-          test -s "$APK_PATH"
-          unzip -l "$APK_PATH" | grep -q 'assets/index.android.bundle'
+          test -s frontend/android/app/build/outputs/apk/release/app-release.apk
+          unzip -l frontend/android/app/build/outputs/apk/release/app-release.apk | grep -q 'assets/index.android.bundle'
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SI-TCHA-AI-Standalone-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type || 'Release' }}-APK
-          path: frontend/android/app/build/outputs/apk/${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type || 'release' }}/app-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type || 'release' }}.apk
+          name: SI-TCHA-AI-Standalone-Release-APK
+          path: frontend/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
