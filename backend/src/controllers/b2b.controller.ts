@@ -33,21 +33,32 @@ export async function createB2BOffer(req: AuthRequest, res: Response) {
     return res.status(403).json({ message: 'Accès GIC requis.' });
   }
 
-  const { title, type, category, priceOrExchange, gicName, location, contact } = req.body as {
+  const { title, type, category, priceOrExchange } = req.body as {
     title?: string;
     type?: string;
     category?: string;
     priceOrExchange?: string;
-    gicName?: string;
-    location?: string;
-    contact?: string;
   };
 
   if (!title?.trim() || !type?.trim() || !priceOrExchange?.trim()) {
     return res.status(400).json({ message: 'Titre, type et tarif/échange sont requis.' });
   }
 
+  const sellerPhone = req.user.phone;
+  if (!sellerPhone) {
+    return res.status(403).json({ message: 'Téléphone de contact indisponible pour la session active.' });
+  }
+
   try {
+    const gic = await prisma.gIC.findUnique({
+      where: { id: BigInt(req.user.gicId) },
+      include: { bassinProduction: true },
+    });
+
+    if (!gic) {
+      return res.status(404).json({ message: 'GIC introuvable pour la session active.' });
+    }
+
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const offer = await prisma.b2BOfferEntry.create({
       data: {
@@ -56,9 +67,11 @@ export async function createB2BOffer(req: AuthRequest, res: Response) {
         type: type.trim(),
         category: category?.trim() ?? '',
         priceOrExchange: priceOrExchange.trim(),
-        gicName: gicName?.trim() ?? '',
-        location: location?.trim() ?? '',
-        contact: contact?.trim() ?? '',
+        // L'identité affichée est toujours celle du GIC et du vendeur
+        // authentifiés, jamais une valeur déclarée par le client.
+        gicName: gic.nom,
+        location: gic.bassinProduction?.nom ?? '',
+        contact: sellerPhone,
         gicId: BigInt(req.user.gicId),
       },
     });

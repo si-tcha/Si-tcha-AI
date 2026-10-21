@@ -14,6 +14,7 @@ export const createHarvestSchema = z.object({
   body: z.object({
     product: z.string().min(1, 'Le nom du produit est requis'),
     volume: z.number({ message: 'Le volume est requis' }).positive('Le volume doit être positif'),
+    price: z.number({ message: 'Le prix est requis' }).positive('Le prix doit être positif'),
   }),
 });
 

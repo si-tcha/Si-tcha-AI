@@ -1,4 +1,4 @@
-import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView } from 'react-native';
+import { Dimensions, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { dbService, ExpenseRecord, HarvestRecord, GicProfile } from '@/services/database';
 import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useToast } from '@/components/ui/toast';
+import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
 import { apiClient } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 
@@ -34,6 +35,7 @@ export default function SellerHomeScreen() {
   // Formulaires récolte
   const [formProduct, setFormProduct] = useState('');
   const [formVolume, setFormVolume] = useState('');
+  const [formPrice, setFormPrice] = useState('');
 
   // Formulaires dépense
   const [formExpenseLabel, setFormExpenseLabel] = useState('');
@@ -97,22 +99,24 @@ export default function SellerHomeScreen() {
     expenses.filter(e => e.category === cat).reduce((sum, e) => sum + e.amount, 0);
 
   const handleAddHarvest = async () => {
-    if (!formProduct.trim() || !formVolume.trim()) {
+    if (!formProduct.trim() || !formVolume.trim() || !formPrice.trim()) {
       showToast({ message: 'Veuillez remplir tous les champs.', type: 'warning' });
       return;
     }
     try {
       const vol = parseFloat(formVolume);
-      if (isNaN(vol) || vol <= 0) {
-        showToast({ message: 'Veuillez saisir un volume valide.', type: 'warning' });
+      const price = parseFloat(formPrice);
+      if (isNaN(vol) || vol <= 0 || isNaN(price) || price <= 0) {
+        showToast({ message: 'Veuillez saisir un volume et un prix valides.', type: 'warning' });
         return;
       }
-      const newHarvest = await dbService.addHarvest(formProduct.trim(), vol);
+      const newHarvest = await dbService.addHarvest(formProduct.trim(), vol, price);
       setHarvests(prev => [newHarvest, ...prev]);
       setFormProduct('');
       setFormVolume('');
+      setFormPrice('');
       setHarvestModalVisible(false);
-      showToast({ message: `Récolte de ${vol} kg enregistrée en local !`, type: 'success' });
+      showToast({ message: `Récolte de ${vol} kg à ${price} FCFA/kg enregistrée.`, type: 'success' });
     } catch (err) {
       console.warn('Erreur sauvegarde récolte:', err);
       showToast({ message: "Impossible d'enregistrer la récolte.", type: 'error' });
@@ -362,7 +366,7 @@ export default function SellerHomeScreen() {
 
         {/* MODALE SAISIE RECOLTE */}
         <Modal visible={harvestModalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ModalKeyboardContainer>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -396,18 +400,30 @@ export default function SellerHomeScreen() {
                   />
                 </View>
 
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.label}>Prix de vente (FCFA / kg)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Ex: 500"
+                    placeholderTextColor="#9ca49a"
+                    keyboardType="numeric"
+                    value={formPrice}
+                    onChangeText={setFormPrice}
+                  />
+                </View>
+
                 <TouchableOpacity onPress={handleAddHarvest} style={styles.modalSubmitBtn} activeOpacity={0.85}>
                   <Text style={styles.modalSubmitText}>Enregistrer la récolte</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         {/* MODALE SAISIE DEPENSE */}
         <Modal visible={expenseModalVisible} animationType="slide" transparent>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ModalKeyboardContainer>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -465,7 +481,7 @@ export default function SellerHomeScreen() {
               </View>
             </View>
           </View>
-          </KeyboardAvoidingView>
+          </ModalKeyboardContainer>
         </Modal>
 
         {/* Bottom Navigation Bar */}
