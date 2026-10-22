@@ -14,6 +14,7 @@ import {
   buildRequestHeaders,
   resolveConfiguredApiUrl,
   _resetMemorySessionForTesting,
+  API_REQUEST_TIMEOUT_MS,
   UserProfile,
 } from '../src/services/api';
 
@@ -668,6 +669,30 @@ describe('Production API Client, Networking & Configuration Tests', () => {
       expect(caughtError).toBeInstanceOf(ApiError);
       expect(caughtError.status).toBe(0);
       expect(isNetworkError(caughtError)).toBe(true);
+    });
+
+    it('should stop a stalled request after the configured timeout instead of leaving the UI loading forever', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) =>
+          new Promise((_resolve, reject) => {
+            (init?.signal as AbortSignal | undefined)?.addEventListener('abort', () => {
+              reject(new DOMException('Aborted', 'AbortError'));
+            });
+          }) as Promise<Response>
+        );
+
+        const pending = apiClient.getMe();
+        const timeoutAssertion = expect(pending).rejects.toMatchObject({
+          status: 0,
+          message: expect.stringMatching(/trop de temps/i),
+        });
+        await vi.advanceTimersByTimeAsync(API_REQUEST_TIMEOUT_MS);
+
+        await timeoutAssertion;
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

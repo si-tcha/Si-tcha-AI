@@ -24,6 +24,11 @@ try {
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+// Une requête bloquée ne doit jamais laisser un écran en chargement infini.
+// Le délai laisse une marge pour les sorties de veille Render, puis permet à
+// l'interface de basculer proprement sur son cache local.
+export const API_REQUEST_TIMEOUT_MS = 15_000;
+
 export type CanonicalRole = 'seller' | 'buyer' | 'admin';
 export type CanonicalStatus = 'active' | 'pending' | 'rejected';
 
@@ -816,15 +821,34 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
   const token = session?.token ?? null;
   const baseUrl = getApiBaseUrl();
   let response: Response;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new ApiError(
+        "Le serveur met trop de temps à répondre. Vérifiez votre connexion et réessayez.",
+        0,
+      ));
+      controller?.abort();
+    }, API_REQUEST_TIMEOUT_MS);
+  });
 
   try {
-    response = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers: buildRequestHeaders(baseUrl, token),
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch {
+    response = await Promise.race([
+      fetch(`${baseUrl}${path}`, {
+        method,
+        headers: buildRequestHeaders(baseUrl, token),
+        body: body ? JSON.stringify(body) : undefined,
+        ...(controller ? { signal: controller.signal } : {}),
+      }),
+      timeout,
+    ]);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError('Pas de connexion réseau. Vérifiez votre connexion Internet et réessayez.', 0);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
   }
 
   const payload = await response.json().catch(() => ({}));
