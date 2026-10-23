@@ -88,17 +88,8 @@ export async function registerBuyer(req: Request, res: Response) {
     });
   }
 
-  // 1. Interdiction stricte de l'enrôlement croisé (vérifier si le contact existe chez les producteurs)
-  const existingAgri = await prisma.agriculteur.findUnique({
-    where: { contact: normalizedPhone },
-  });
-  if (existingAgri) {
-    return res.status(409).json({
-      message: 'Ce numéro de téléphone est déjà associé à un compte producteur.',
-    });
-  }
-
-  // 2. Vérifier si le numéro est déjà pris et vérifié comme acheteur
+  // Un même numéro peut porter un compte acheteur et un compte producteur.
+  // L'unicité reste toutefois stricte à l'intérieur de chaque rôle.
   const existing = await prisma.acheteur.findUnique({
     where: { contact: normalizedPhone },
   });
@@ -140,9 +131,9 @@ export async function registerBuyer(req: Request, res: Response) {
   // Génération OTP cryptographiquement sécurisée
   const otpCode = generateSecureOtp(6);
   await prisma.otpCode.upsert({
-    where: { phone: normalizedPhone },
+    where: { phone_role: { phone: normalizedPhone, role: 'buyer' } },
     update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
-    create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+    create: { phone: normalizedPhone, role: 'buyer', code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
   });
 
   const smsResult = await defaultOtpProvider.sendSms(
@@ -201,17 +192,8 @@ export async function registerSeller(req: Request, res: Response) {
     });
   }
 
-  // 1. Interdiction stricte de l'enrôlement croisé (vérifier si le contact existe chez les acheteurs)
-  const existingBuyer = await prisma.acheteur.findUnique({
-    where: { contact: normalizedPhone },
-  });
-  if (existingBuyer) {
-    return res.status(409).json({
-      message: 'Ce numéro de téléphone est déjà associé à un compte acheteur.',
-    });
-  }
-
-  // 2. Vérifier si le numéro est déjà pris et vérifié comme producteur
+  // Un même numéro peut porter un compte acheteur et un compte producteur.
+  // L'unicité reste toutefois stricte à l'intérieur de chaque rôle.
   const existingAgri = await prisma.agriculteur.findUnique({
     where: { contact: normalizedPhone },
   });
@@ -270,9 +252,9 @@ export async function registerSeller(req: Request, res: Response) {
   // Génération OTP cryptographiquement sécurisée
   const otpCode = generateSecureOtp(6);
   await prisma.otpCode.upsert({
-    where: { phone: normalizedPhone },
+    where: { phone_role: { phone: normalizedPhone, role: 'seller' } },
     update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
-    create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+    create: { phone: normalizedPhone, role: 'seller', code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
   });
 
   const smsResult = await defaultOtpProvider.sendSms(
@@ -352,9 +334,10 @@ export async function resendOtp(req: Request, res: Response) {
 
   // 4. PERSISTER l'OTP en base AVANT d'appeler le provider SMS
   await prisma.otpCode.upsert({
-    where: { phone: canonicalPhone },
+    where: { phone_role: { phone: canonicalPhone, role } },
     create: {
       phone: canonicalPhone,
+      role,
       code,
       expiresAt,
     },
@@ -400,18 +383,12 @@ export async function verifyOtp(req: Request, res: Response) {
     return res.status(400).json({ message: 'Numéro invalide.' });
   }
 
-  // 1. Vérification d'ambiguïté des comptes avant validation du code et avant toute mise à jour
+  // Le numéro peut appartenir aux deux rôles. Le rôle déclaré choisit
+  // explicitement le compte et son OTP, sans aucune ambiguïté.
   const [existingBuyer, existingSeller] = await Promise.all([
     prisma.acheteur.findUnique({ where: { contact: normalizedPhone } }),
     prisma.agriculteur.findUnique({ where: { contact: normalizedPhone } }),
   ]);
-
-  // Si les deux comptes existent sous ce numéro, refuser pour collision d'identité (409 Conflict)
-  if (existingBuyer && existingSeller) {
-    return res.status(409).json({
-      message: "Conflit d'identité: ce numéro est associé à la fois à un compte acheteur et producteur. Action bloquée.",
-    });
-  }
 
   // Si le rôle demandé ne correspond à aucun compte existant pour ce numéro, refuser avec 404
   if (role === 'buyer' && !existingBuyer) {
@@ -424,7 +401,7 @@ export async function verifyOtp(req: Request, res: Response) {
 
   // 2. Vérification du code OTP
   const otpRecord = await prisma.otpCode.findUnique({
-    where: { phone: normalizedPhone },
+    where: { phone_role: { phone: normalizedPhone, role } },
   });
 
   if (!otpRecord) {
@@ -481,7 +458,7 @@ export async function verifyOtp(req: Request, res: Response) {
   }
 
   // 4. Supprimer l'OTP
-  await prisma.otpCode.delete({ where: { phone: normalizedPhone } });
+  await prisma.otpCode.delete({ where: { phone_role: { phone: normalizedPhone, role } } });
 
   // Une demande est visible au leader uniquement après la vérification du
   // téléphone. L'échec de cette notification ne doit jamais annuler une
@@ -500,15 +477,16 @@ export async function verifyOtp(req: Request, res: Response) {
 }
 
 // ─── Login ──────────────────────────────────────────────────────────────────
-// Auto-détecte le rôle : cherche d'abord dans Acheteur, puis Agriculteur.
-// Plus besoin de passer "role" depuis le frontend.
+// Le rôle transmis par le frontend sélectionne explicitement le compte.
+// L'auto-détection reste tolérée uniquement lorsque le numéro n'existe que
+// dans une seule table, pour préserver la compatibilité des anciens clients.
 
 /**
  * @swagger
  * /api/auth/login:
  *   post:
  *     summary: Connecte un utilisateur
- *     description: Authentifie un utilisateur avec son numéro de téléphone et son code PIN. Le rôle est détecté automatiquement.
+ *     description: Authentifie un utilisateur avec son numéro, son code PIN et le rôle choisi. Un même numéro peut avoir les deux rôles.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -526,6 +504,10 @@ export async function verifyOtp(req: Request, res: Response) {
  *               pin:
  *                 type: string
  *                 example: "1234"
+ *               role:
+ *                 type: string
+ *                 enum: [buyer, seller]
+ *                 example: buyer
  *     responses:
  *       200:
  *         description: Connexion réussie
@@ -582,9 +564,9 @@ export async function login(req: Request, res: Response) {
 
       const otpCode = generateSecureOtp(6);
       await prisma.otpCode.upsert({
-        where: { phone: normalizedPhone },
+        where: { phone_role: { phone: normalizedPhone, role: 'buyer' } },
         update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
-        create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+        create: { phone: normalizedPhone, role: 'buyer', code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
       });
 
       const smsResult = await defaultOtpProvider.sendSms(
@@ -633,9 +615,9 @@ export async function login(req: Request, res: Response) {
 
       const otpCode = generateSecureOtp(6);
       await prisma.otpCode.upsert({
-        where: { phone: normalizedPhone },
+        where: { phone_role: { phone: normalizedPhone, role: 'seller' } },
         update: { code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
-        create: { phone: normalizedPhone, code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+        create: { phone: normalizedPhone, role: 'seller', code: otpCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
       });
 
       const smsResult = await defaultOtpProvider.sendSms(

@@ -305,8 +305,8 @@ describe('OTP Provider and SMS Resilience Tests', () => {
     });
   });
 
-  describe('Cross-Role Registration Rejection (409)', () => {
-    it('should reject buyer registration if phone is already registered as seller', async () => {
+  describe('Cross-Role Registration', () => {
+    it('should allow buyer registration if the phone is already registered as seller', async () => {
       req = {
         body: { companyName: 'Entreprise X', phone: '699112233', pin: '1234' },
       };
@@ -316,36 +316,78 @@ describe('OTP Provider and SMS Resilience Tests', () => {
         contact: '+237699112233',
       } as any);
 
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.acheteur.create).mockResolvedValue({ id: BigInt(6) } as any);
+      vi.mocked(prisma.otpCode.upsert).mockResolvedValue({} as any);
+
       await registerBuyer(req as Request, res as Response);
 
-      expect(statusMock).toHaveBeenCalledWith(409);
-      expect(jsonMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringMatching(/déjà associé à un compte producteur/i),
-        })
-      );
-      expect(prisma.acheteur.create).not.toHaveBeenCalled();
+      expect(statusMock).toHaveBeenCalledWith(201);
+      expect(prisma.acheteur.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ contact: '+237699112233' }),
+      }));
+      expect(prisma.otpCode.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        where: { phone_role: { phone: '+237699112233', role: 'buyer' } },
+      }));
     });
 
-    it('should reject seller registration if phone is already registered as buyer', async () => {
+    it('should allow seller registration if the phone is already registered as buyer', async () => {
       req = {
-        body: { fullName: 'Fermier Y', phone: '677223344', pin: '1234', gicId: '10' },
+        body: { fullName: 'Producteur X', phone: '677223344', pin: '5678', gicId: '10' },
       };
 
       vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
-        id: BigInt(8),
-        contact: '+237677223344',
+        id: BigInt(7), contact: '+237677223344', phoneVerified: true,
       } as any);
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.gIC.findFirst).mockResolvedValue({ id: BigInt(10), nom: 'GIC Test' } as any);
+      vi.mocked(prisma.agriculteur.create).mockResolvedValue({ id: BigInt(8) } as any);
+      vi.mocked(prisma.otpCode.upsert).mockResolvedValue({} as any);
 
       await registerSeller(req as Request, res as Response);
 
-      expect(statusMock).toHaveBeenCalledWith(409);
-      expect(jsonMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringMatching(/déjà associé à un compte acheteur/i),
-        })
-      );
-      expect(prisma.agriculteur.create).not.toHaveBeenCalled();
+      expect(statusMock).toHaveBeenCalledWith(201);
+      expect(prisma.agriculteur.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ contact: '+237677223344', gicId: BigInt(10) }),
+      }));
+      expect(prisma.otpCode.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        where: { phone_role: { phone: '+237677223344', role: 'seller' } },
+      }));
+    });
+
+    it('should validate either role independently when both accounts share one phone', async () => {
+      req = {
+        body: { phone: '699112233', code: '123456', role: 'buyer' },
+      };
+
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: BigInt(8), contact: '+237699112233', nomEntreprise: 'Entreprise duale',
+        phoneVerified: false, isVerified: false,
+      } as any);
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: BigInt(9), contact: '+237699112233', nom: 'Producteur dual',
+        gicId: BigInt(1), estLeader: false, statut: 'EN_ATTENTE',
+        phoneVerified: false, isVerified: false,
+      } as any);
+      vi.mocked(prisma.otpCode.findUnique).mockResolvedValue({
+        phone: '+237699112233', role: 'buyer', code: '123456', expiresAt: new Date(Date.now() + 60_000),
+      } as any);
+      vi.mocked(prisma.acheteur.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.otpCode.delete).mockResolvedValue({} as any);
+
+      await verifyOtp(req as Request, res as Response);
+
+      expect(prisma.acheteur.update).toHaveBeenCalled();
+      expect(prisma.agriculteur.update).not.toHaveBeenCalled();
+      expect(prisma.otpCode.findUnique).toHaveBeenCalledWith({
+        where: { phone_role: { phone: '+237699112233', role: 'buyer' } },
+      });
+      expect(prisma.otpCode.delete).toHaveBeenCalledWith({
+        where: { phone_role: { phone: '+237699112233', role: 'buyer' } },
+      });
+      expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({
+        user: expect.objectContaining({ role: 'buyer', status: 'active' }),
+      }));
     });
   });
 
@@ -491,8 +533,8 @@ describe('OTP Provider and SMS Resilience Tests', () => {
     });
   });
 
-  describe('Ambiguous Accounts and Role Mismatch in verifyOtp', () => {
-    it('should return 409 when a phone number is ambiguous (exists in both Buyer and Seller tables)', async () => {
+  describe('Role Mismatch in verifyOtp', () => {
+    it('should verify the requested role when the phone exists in both Buyer and Seller tables', async () => {
       req = {
         body: { phone: '699112233', code: '123456', role: 'buyer' },
       };
@@ -517,18 +559,15 @@ describe('OTP Provider and SMS Resilience Tests', () => {
         expiresAt: new Date(Date.now() + 60000),
       } as any);
 
+      vi.mocked(prisma.acheteur.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.otpCode.delete).mockResolvedValue({} as any);
+
       await verifyOtp(req as Request, res as Response);
 
-      expect(statusMock).toHaveBeenCalledWith(409);
-      expect(jsonMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringMatching(/Conflit d'identité/i),
-        })
-      );
-      expect(prisma.acheteur.update).not.toHaveBeenCalled();
+      expect(prisma.acheteur.update).toHaveBeenCalled();
       expect(prisma.agriculteur.update).not.toHaveBeenCalled();
-      expect(prisma.otpCode.delete).not.toHaveBeenCalled();
-      expect(jsonMock).not.toHaveBeenCalledWith(expect.objectContaining({ token: expect.anything() }));
+      expect(prisma.otpCode.delete).toHaveBeenCalled();
+      expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({ token: expect.any(String) }));
     });
 
     it('should return 404 when requested role is buyer but only seller account exists', async () => {
