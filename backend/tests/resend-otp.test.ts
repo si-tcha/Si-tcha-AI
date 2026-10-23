@@ -196,7 +196,7 @@ describe('POST /api/auth/resend-otp Hardened Security Tests', () => {
     expect(res.body.token).toBeUndefined();
     expect(prisma.otpCode.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { phone: '+237677889900' },
+        where: { phone_role: { phone: '+237677889900', role: 'seller' } },
         update: expect.objectContaining({
           code: expect.stringMatching(/^\d{6}$/),
         }),

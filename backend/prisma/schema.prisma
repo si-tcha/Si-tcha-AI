@@ -301,9 +301,12 @@ model Agriculteur {
 
 model OtpCode {
   id        BigInt   @id @default(autoincrement())
-  phone     String   @unique @db.VarChar(50)
+  phone     String   @db.VarChar(50)
+  role      String   @db.VarChar(10)
   code      String   @db.VarChar(10)
   expiresAt DateTime
+
+  @@unique([phone, role], name: "phone_role")
 }
 
 /// @deprecated Remplacé par la table OtpCode
