@@ -28,6 +28,21 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 // Le délai laisse une marge pour les sorties de veille Render, puis permet à
 // l'interface de basculer proprement sur son cache local.
 export const API_REQUEST_TIMEOUT_MS = 15_000;
+let rateLimitedUntil = 0;
+
+export function getApiRateLimitRemainingMs(now = Date.now()): number {
+  return Math.max(0, rateLimitedUntil - now);
+}
+
+function rememberRetryAfter(response: Response, now = Date.now()): void {
+  const raw = response.headers?.get?.('retry-after');
+  if (!raw) return;
+  const seconds = Number(raw);
+  const retryAt = Number.isFinite(seconds)
+    ? now + Math.max(0, seconds) * 1000
+    : Date.parse(raw);
+  if (Number.isFinite(retryAt)) rateLimitedUntil = Math.max(rateLimitedUntil, retryAt);
+}
 
 export type CanonicalRole = 'seller' | 'buyer' | 'admin';
 export type CanonicalStatus = 'active' | 'pending' | 'rejected';
@@ -813,6 +828,14 @@ export function buildRequestHeaders(baseUrl: string, token: string | null): Reco
 }
 
 export async function request<T>(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<T> {
+  const retryInMs = getApiRateLimitRemainingMs();
+  if (retryInMs > 0) {
+    throw new ApiError(
+      `Trop de requêtes. Réessayez dans ${Math.ceil(retryInMs / 1000)} seconde(s).`,
+      429,
+      { retryAfterMs: retryInMs },
+    );
+  }
   // Capturer la génération AVANT toute lecture asynchrone du stockage. Une mutation
   // de session qui démarre pendant readStoredSession() ne doit jamais attribuer son
   // ticket plus récent au token plus ancien que cette lecture vient de retourner.
@@ -854,6 +877,7 @@ export async function request<T>(path: string, method: HttpMethod = 'GET', body?
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (response.status === 429) rememberRetryAfter(response);
     const message =
       payload?.message ||
       payload?.error ||
