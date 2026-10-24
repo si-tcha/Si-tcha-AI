@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { apiClient, isNetworkError } from './api';
+import { apiClient, getApiRateLimitRemainingMs, isNetworkError } from './api';
 import { isValidAgronomistCacheKey, isValidParcelCacheKey } from '../utils/cacheKey';
 import {
   AgriProgramRecord,
@@ -126,6 +126,17 @@ export function setSyncErrorHandler(handler: (message?: string) => void) {
 class DatabaseService {
   private activeBuyerId: string | null = null;
   private contextGeneration = 0;
+  private initializationPromise: Promise<void> | null = null;
+  private publicSyncPromise: Promise<boolean> | null = null;
+  private lastPublicSyncAttemptAt = 0;
+
+  private static readonly PUBLIC_SYNC_COOLDOWN_MS = 60_000;
+
+  _resetSyncStateForTesting(): void {
+    this.initializationPromise = null;
+    this.publicSyncPromise = null;
+    this.lastPublicSyncAttemptAt = 0;
+  }
 
   setActiveBuyerId(buyerId: string | null): void {
     if (buyerId === null || buyerId === undefined || buyerId === '') {
@@ -226,7 +237,26 @@ class DatabaseService {
     return allOrders;
   }
 
-  async syncPublicData(): Promise<boolean> {
+  async syncPublicData(options: { force?: boolean } = {}): Promise<boolean> {
+    if (this.publicSyncPromise) return this.publicSyncPromise;
+    if (getApiRateLimitRemainingMs() > 0) return false;
+
+    const now = Date.now();
+    if (!options.force && now - this.lastPublicSyncAttemptAt < DatabaseService.PUBLIC_SYNC_COOLDOWN_MS) {
+      return false;
+    }
+    this.lastPublicSyncAttemptAt = now;
+
+    const task = this.performPublicDataSync();
+    this.publicSyncPromise = task;
+    try {
+      return await task;
+    } finally {
+      if (this.publicSyncPromise === task) this.publicSyncPromise = null;
+    }
+  }
+
+  private async performPublicDataSync(): Promise<boolean> {
     try {
       const [products, gicsRes, terrainRes] = await Promise.all([
         this.fetchAllPublicProducts().catch(() => null),
@@ -302,6 +332,16 @@ class DatabaseService {
   }
 
   async initDatabase(): Promise<void> {
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.initializeDatabaseOnce().catch((error) => {
+        this.initializationPromise = null;
+        throw error;
+      });
+    }
+    return this.initializationPromise;
+  }
+
+  private async initializeDatabaseOnce(): Promise<void> {
     if (typeof localStorage === 'undefined') return;
 
     // Purge des anciennes clés globales et anonymes

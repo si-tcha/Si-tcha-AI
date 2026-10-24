@@ -357,10 +357,14 @@ export const httpLogger = (pinoHttp as any)({
       requestId: req.id || req.raw?.id,
       method: req.method,
       url: req.url || req.raw?.originalUrl,
-      ip: req.remoteAddress || req.raw?.ip,
+      // req.ip/req.ips respectent la configuration Express trust proxy.
+      // remoteAddress reste utile pour diagnostiquer le dernier proxy (Render).
+      ip: req.ip || req.raw?.ip,
+      ips: req.ips || req.raw?.ips,
+      remoteAddress: req.socket?.remoteAddress || req.raw?.socket?.remoteAddress,
     }),
     res: (res: any) => ({
-      statusCode: res.statusCode,
+      statusCode: res.statusCode ?? res.raw?.statusCode,
     }),
   },
   customLogLevel: (req: any, res: any, err?: Error) => {

@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import { Alert } from 'react-native';
-import { apiClient, isNetworkError } from './api';
+import { apiClient, getApiRateLimitRemainingMs, isNetworkError, readStoredSession } from './api';
 import { isValidAgronomistCacheKey, isValidParcelCacheKey } from '../utils/cacheKey';
 import {
   AgriProgramRecord,
@@ -147,6 +147,17 @@ class DatabaseService {
   private dbInstance: SQLite.SQLiteDatabase | null = null;
   private activeBuyerId: string | null = null;
   private contextGeneration = 0;
+  private initializationPromise: Promise<void> | null = null;
+  private publicSyncPromise: Promise<boolean> | null = null;
+  private lastPublicSyncAttemptAt = 0;
+
+  private static readonly PUBLIC_SYNC_COOLDOWN_MS = 60_000;
+
+  _resetSyncStateForTesting(): void {
+    this.initializationPromise = null;
+    this.publicSyncPromise = null;
+    this.lastPublicSyncAttemptAt = 0;
+  }
 
   setActiveBuyerId(buyerId: string | null): void {
     if (buyerId === null || buyerId === undefined || buyerId === '') {
@@ -282,18 +293,45 @@ class DatabaseService {
     return allOrders;
   }
 
-  async syncPublicData(): Promise<boolean> {
+  async syncPublicData(options: { force?: boolean } = {}): Promise<boolean> {
+    if (this.publicSyncPromise) return this.publicSyncPromise;
+    if (getApiRateLimitRemainingMs() > 0) return false;
+
+    const now = Date.now();
+    if (!options.force && now - this.lastPublicSyncAttemptAt < DatabaseService.PUBLIC_SYNC_COOLDOWN_MS) {
+      return false;
+    }
+    this.lastPublicSyncAttemptAt = now;
+
+    const task = this.performPublicDataSync();
+    this.publicSyncPromise = task;
     try {
+      return await task;
+    } finally {
+      if (this.publicSyncPromise === task) this.publicSyncPromise = null;
+    }
+  }
+
+  private async performPublicDataSync(): Promise<boolean> {
+    try {
+      const session = await readStoredSession().catch(() => null);
+      const isSeller = session?.user.role === 'seller';
+      const sellerRequests = isSeller
+        ? [
+            apiClient.getHarvests().catch(() => null),
+            apiClient.getExpenses().catch(() => null),
+            apiClient.getGicProfile().catch(() => null),
+            apiClient.getB2BOffers().catch(() => null),
+            apiClient.getPrefinancingDeals().catch(() => null),
+            apiClient.getTrustRatings().catch(() => null),
+          ]
+        : Array(6).fill(Promise.resolve(null));
+
       const [productsRes, gicsRes, terrainRes, harvestsRes, expensesRes, profileRes, b2bRes, prefinRes, trustRes] = await Promise.all([
         this.fetchAllPublicProducts().catch(() => null),
         apiClient.getPublicGics().catch(() => null),
         apiClient.getTerrain().catch(() => null),
-        apiClient.getHarvests().catch(() => null),
-        apiClient.getExpenses().catch(() => null),
-        apiClient.getGicProfile().catch(() => null),
-        apiClient.getB2BOffers().catch(() => null),
-        apiClient.getPrefinancingDeals().catch(() => null),
-        apiClient.getTrustRatings().catch(() => null),
+        ...sellerRequests,
       ]);
 
       let updated = false;
@@ -439,6 +477,16 @@ class DatabaseService {
   }
 
   async initDatabase(): Promise<void> {
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.initializeDatabaseOnce().catch((error) => {
+        this.initializationPromise = null;
+        throw error;
+      });
+    }
+    return this.initializationPromise;
+  }
+
+  private async initializeDatabaseOnce(): Promise<void> {
     try {
       const db = this.getDb();
       migrateLegacyBuyerTables(db);
@@ -540,7 +588,8 @@ class DatabaseService {
         db.runSync("ALTER TABLE parcels ADD COLUMN actualHarvestDate TEXT;");
       } catch (e) { /* ignore if already exists */ }
 
-      // Seules les données publiques sont synchronisées à l'initialisation
+      // Une seule synchronisation réseau est amorcée par cycle de vie de l'app.
+      // Les appels répétés à initDatabase() réutilisent initializationPromise.
       this.syncPublicData().catch(() => {});
     } catch (err) {
       console.warn('Erreur initDatabase:', err);
