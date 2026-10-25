@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { protect, requireActive, requireRole } from '../middlewares/auth.middleware.js';
-import { createGic, getAdminBootstrap, listGicsWithStats } from '../controllers/admin.controller.js';
+import { createGic, getAdminBootstrap, listGicsWithStats, updatePendingMemberStatus } from '../controllers/admin.controller.js';
 import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
 import { validate } from '../../middlewares/validate.js';
 import { createGicSchema } from '../../schemas/admin.schema.js';
@@ -141,6 +141,9 @@ router.get('/bootstrap', asyncHandler(getAdminBootstrap));
  *         description: Accès refusé (l'utilisateur n'est pas un admin).
  */
 router.get('/gics', asyncHandler(listGicsWithStats));
+
+// L'agent entreprise est l'autorité de validation des nouveaux comptes GIC.
+router.patch('/members/:memberId/status', asyncHandler(updatePendingMemberStatus));
 
 // Route d'administration pour la saisie manuelle
 // @route   POST /api/admin/donnees-marche

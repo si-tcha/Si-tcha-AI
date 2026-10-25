@@ -25,15 +25,19 @@ export default function AdminDashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [memberActionId, setMemberActionId] = useState<string | null>(null);
   const [showPin, setShowPin] = useState(false);
   const [form, setForm] = useState<AdminGicForm>(EMPTY_FORM);
   const requestId = useRef(0);
+  const loadRunning = useRef(false);
 
-  const load = useCallback(async (refresh = false) => {
+  const load = useCallback(async (refresh = false, silent = false) => {
+    if (loadRunning.current) return;
+    loadRunning.current = true;
     const id = ++requestId.current;
-    if (refresh) {
+    if (refresh && !silent) {
       setRefreshing(true);
-    } else {
+    } else if (!silent) {
       setLoading(true);
     }
     try {
@@ -49,13 +53,31 @@ export default function AdminDashboardScreen() {
         setLoading(false);
         setRefreshing(false);
       }
+      loadRunning.current = false;
     }
   }, [showToast]);
 
   useEffect(() => {
-    if (authenticated && user?.role === 'admin') void load();
-    return () => { requestId.current += 1; };
+    if (authenticated && user?.role === 'admin') {
+      void load();
+      const interval = setInterval(() => void load(true, true), 60_000);
+      return () => { clearInterval(interval); requestId.current += 1; loadRunning.current = false; };
+    }
+    return () => { requestId.current += 1; loadRunning.current = false; };
   }, [authenticated, load, user?.role]);
+
+  const totals = gics.reduce((acc, gic) => ({
+    gics: acc.gics + 1,
+    pending: acc.pending + gic.members.pending.length,
+    approved: acc.approved + gic.members.approved.length,
+  }), { gics: 0, pending: 0, approved: 0 });
+  const pendingMembers = gics.flatMap((gic) => gic.members.pending.map((member) => ({ member, gic })));
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.title = totals.pending > 0 ? `(${totals.pending}) Comptes à approuver · SI-TCHA AI` : 'Administration · SI-TCHA AI';
+    return () => { document.title = 'SI-TCHA AI'; };
+  }, [totals.pending]);
 
   if (!authenticated || !user) return <Redirect href="/admin/login" />;
   if (user.role !== 'admin') return <AccessDenied onSignOut={() => void signOut()} />;
@@ -97,11 +119,34 @@ export default function AdminDashboardScreen() {
     }
   };
 
-  const totals = gics.reduce((acc, gic) => ({
-    gics: acc.gics + 1,
-    pending: acc.pending + gic.members.pending.length,
-    approved: acc.approved + gic.members.approved.length,
-  }), { gics: 0, pending: 0, approved: 0 });
+  const decideMember = async (memberId: string, status: 'APPROUVE' | 'REJETE') => {
+    if (memberActionId) return;
+    setMemberActionId(memberId);
+    try {
+      const result = await apiClient.updateAdminMemberStatus(memberId, status);
+      setGics((current) => current.map((gic) => {
+        const member = gic.members.pending.find((item) => item.id === memberId);
+        if (!member) return gic;
+        const updatedMember = { ...member, statut: status, timestampMaj: new Date().toISOString() };
+        return {
+          ...gic,
+          members: {
+            ...gic.members,
+            pending: gic.members.pending.filter((item) => item.id !== memberId),
+            approved: status === 'APPROUVE' ? [...gic.members.approved, updatedMember] : gic.members.approved,
+            rejected: status === 'REJETE' ? [...gic.members.rejected, updatedMember] : gic.members.rejected,
+          },
+        };
+      }));
+      showToast({ message: result.message, type: 'success' });
+      void load(true, true);
+    } catch (error: any) {
+      showToast({ message: error?.message || 'Impossible de traiter ce compte.', type: 'error' });
+      await load(true, true);
+    } finally {
+      setMemberActionId(null);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.page}>
@@ -119,11 +164,19 @@ export default function AdminDashboardScreen() {
           <Stat icon="users" label="Membres approuvés" value={totals.approved} tone="blue" />
         </View>
 
+        {pendingMembers.length > 0 ? <View style={styles.pendingPanel}>
+          <View style={styles.pendingHeader}><View style={styles.pendingTitleRow}><View style={styles.pendingBell}><Feather name="bell" size={20} color="#fff8e8" /></View><View><Text style={styles.pendingTitle}>{pendingMembers.length} compte{pendingMembers.length > 1 ? 's' : ''} à approuver</Text><Text style={styles.pendingSubtitle}>Nouvelles inscriptions GIC nécessitant la décision de l’agent entreprise.</Text></View></View><Text style={styles.autoRefresh}>Actualisation automatique · 60 s</Text></View>
+          <View style={styles.pendingList}>{pendingMembers.map(({ member, gic }) => <View key={member.id} style={styles.pendingMember}>
+            <View style={styles.pendingIdentity}><Text style={styles.pendingMemberName}>{member.nom}</Text><Text style={styles.pendingMeta}>{member.contact} · {gic.nom}</Text></View>
+            <View style={styles.pendingActions}><Pressable disabled={Boolean(memberActionId)} style={[styles.rejectButton, memberActionId && styles.actionDisabled]} onPress={() => void decideMember(member.id, 'REJETE')}><Text style={styles.rejectText}>Refuser</Text></Pressable><Pressable disabled={Boolean(memberActionId)} style={[styles.approveButton, memberActionId && styles.actionDisabled]} onPress={() => void decideMember(member.id, 'APPROUVE')}>{memberActionId === member.id ? <ActivityIndicator color="#fff8e8" /> : <><Feather name="check" size={16} color="#fff8e8" /><Text style={styles.approveText}>Approuver</Text></>}</Pressable></View>
+          </View>)}</View>
+        </View> : !loading ? <View style={styles.noPending}><Feather name="check-circle" size={19} color="#28733e" /><Text style={styles.noPendingText}>Aucun nouveau compte en attente d’approbation.</Text></View> : null}
+
         <View style={styles.warning}><Feather name="alert-circle" color="#a45011" size={20} /><Text style={styles.warningText}>Avant de créer un leader : vérifiez son identité, son numéro et son accord. Le PIN choisi ne sera jamais affiché à nouveau par le tableau de bord.</Text></View>
 
         <View style={styles.grid}>
           <View style={styles.formCard}>
-            <Text style={styles.sectionEyebrow}>NOUVEAU GROUPEMENT</Text><Text style={styles.sectionTitle}>Créer un GIC et son premier leader</Text><Text style={styles.sectionText}>Le leader créé est immédiatement approuvé. Les futurs membres devront valider leur OTP puis attendre sa décision.</Text>
+            <Text style={styles.sectionEyebrow}>NOUVEAU GROUPEMENT</Text><Text style={styles.sectionTitle}>Créer un GIC et son premier leader</Text><Text style={styles.sectionText}>Le leader créé est immédiatement approuvé. Les futurs membres devront valider leur OTP puis attendre la décision de l’agent entreprise.</Text>
             <Field label="Nom du GIC" value={form.gicName} onChangeText={(value) => update('gicName', value)} placeholder="Ex. GIC Agro-Vallée Bafoussam" />
             <Field label="Référence GIC" value={form.reference} onChangeText={(value) => update('reference', value)} placeholder="Ex. GIC-OUEST-2026-001" autoCapitalize="characters" />
             <Text style={styles.fieldLabel}>Bassin de production</Text>
@@ -167,7 +220,7 @@ function Field(props: { label: string; value: string; onChangeText: (value: stri
 function GicCard({ gic, bassins }: { gic: AdminGicSummary; bassins: AdminBasin[] }) {
   const bassin = bassins.find((item) => item.id === String(gic.bassinProductionId));
   const pendingNames = gic.members.pending.slice(0, 3).map((member) => member.nom).join(', ');
-  return <View style={styles.gicCard}><View style={styles.gicTop}><View style={styles.gicIcon}><Feather name="home" color="#2e713f" size={18} /></View><View style={styles.gicIdentity}><Text style={styles.gicName}>{gic.nom}</Text><Text style={styles.gicRef}>{gic.identifiantREF}</Text></View></View><Text style={styles.gicInfo}>{bassin ? `${bassin.nom} · ${bassin.region}` : `Bassin #${gic.bassinProductionId}`}</Text><View style={styles.memberRow}><View style={styles.memberMetric}><CountBadge tone="pending" value={gic.members.pending.length} /><Text style={styles.memberLabel}>En attente</Text></View><View style={styles.memberMetric}><CountBadge tone="approved" value={gic.members.approved.length} /><Text style={styles.memberLabel}>Approuvés</Text></View><View style={styles.memberMetric}><CountBadge tone="rejected" value={gic.members.rejected.length} /><Text style={styles.memberLabel}>Refusés</Text></View></View>{pendingNames ? <Text style={styles.pendingNames}>À traiter par le leader : {pendingNames}{gic.members.pending.length > 3 ? '…' : ''}</Text> : null}</View>;
+  return <View style={styles.gicCard}><View style={styles.gicTop}><View style={styles.gicIcon}><Feather name="home" color="#2e713f" size={18} /></View><View style={styles.gicIdentity}><Text style={styles.gicName}>{gic.nom}</Text><Text style={styles.gicRef}>{gic.identifiantREF}</Text></View></View><Text style={styles.gicInfo}>{bassin ? `${bassin.nom} · ${bassin.region}` : `Bassin #${gic.bassinProductionId}`}</Text><View style={styles.memberRow}><View style={styles.memberMetric}><CountBadge tone="pending" value={gic.members.pending.length} /><Text style={styles.memberLabel}>En attente</Text></View><View style={styles.memberMetric}><CountBadge tone="approved" value={gic.members.approved.length} /><Text style={styles.memberLabel}>Approuvés</Text></View><View style={styles.memberMetric}><CountBadge tone="rejected" value={gic.members.rejected.length} /><Text style={styles.memberLabel}>Refusés</Text></View></View>{pendingNames ? <Text style={styles.pendingNames}>À traiter par l’agent : {pendingNames}{gic.members.pending.length > 3 ? '…' : ''}</Text> : null}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -177,6 +230,7 @@ const styles = StyleSheet.create({
   agentRow: { flexDirection: 'row', alignItems: 'center', gap: 14 }, agentLabel: { color: '#9db09b', fontSize: 10, fontWeight: '800', letterSpacing: 0.8, textAlign: 'right' }, agentName: { color: '#fff8e8', fontSize: 14, fontWeight: '800', textAlign: 'right', marginTop: 2 }, logout: { backgroundColor: '#30482f', borderRadius: 9, paddingHorizontal: 12, minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, logoutText: { color: '#fff8e8', fontWeight: '800', fontSize: 13 },
   heading: { maxWidth: 1220, width: '100%', alignSelf: 'center', paddingHorizontal: 32, paddingTop: 38, paddingBottom: 22, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20 }, title: { fontSize: 32, fontWeight: '900', color: '#152814' }, subtitle: { marginTop: 7, maxWidth: 650, fontSize: 15, lineHeight: 22, color: '#667363' }, refresh: { backgroundColor: '#dce6d5', borderRadius: 10, paddingHorizontal: 13, minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8 }, refreshText: { color: '#173017', fontSize: 13, fontWeight: '800' }, refreshDisabled: { opacity: 0.65 },
   statRow: { maxWidth: 1220, width: '100%', alignSelf: 'center', paddingHorizontal: 32, flexDirection: 'row', gap: 14 }, stat: { flex: 1, minWidth: 150, backgroundColor: '#fffaf0', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e3dbc9' }, statIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }, statIcon_green: { backgroundColor: '#dcefdc' }, statIcon_orange: { backgroundColor: '#f9e2ca' }, statIcon_blue: { backgroundColor: '#d9edf7' }, statValue: { color: '#183118', fontSize: 24, fontWeight: '900' }, statLabel: { color: '#667363', fontSize: 12, marginTop: 3, fontWeight: '700' },
+  pendingPanel: { maxWidth: 1156, width: '100%', alignSelf: 'center', marginTop: 18, backgroundColor: '#fff7e8', borderWidth: 2, borderColor: '#dc7627', borderRadius: 14, padding: 16 }, pendingHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 14 }, pendingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 11, flex: 1 }, pendingBell: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#dc7627', alignItems: 'center', justifyContent: 'center' }, pendingTitle: { color: '#713b0e', fontSize: 18, fontWeight: '900' }, pendingSubtitle: { color: '#7a5b3a', fontSize: 12, marginTop: 2 }, autoRefresh: { color: '#8b633b', fontSize: 11, fontWeight: '700' }, pendingList: { marginTop: 14, gap: 9 }, pendingMember: { backgroundColor: '#fffef9', borderRadius: 10, borderWidth: 1, borderColor: '#ead6bd', padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }, pendingIdentity: { flex: 1 }, pendingMemberName: { color: '#173017', fontWeight: '900', fontSize: 14 }, pendingMeta: { color: '#6f796a', fontSize: 12, marginTop: 3 }, pendingActions: { flexDirection: 'row', gap: 8 }, rejectButton: { minHeight: 38, paddingHorizontal: 13, borderRadius: 8, borderWidth: 1, borderColor: '#b64d46', alignItems: 'center', justifyContent: 'center' }, rejectText: { color: '#9d3934', fontWeight: '800', fontSize: 12 }, approveButton: { minHeight: 38, minWidth: 105, paddingHorizontal: 13, borderRadius: 8, backgroundColor: '#28733e', flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center' }, approveText: { color: '#fff8e8', fontWeight: '900', fontSize: 12 }, actionDisabled: { opacity: 0.55 }, noPending: { maxWidth: 1156, width: '100%', alignSelf: 'center', marginTop: 18, backgroundColor: '#e5f2e3', borderRadius: 10, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 9 }, noPendingText: { color: '#275c32', fontSize: 13, fontWeight: '800' },
   warning: { maxWidth: 1156, alignSelf: 'center', marginHorizontal: 32, marginTop: 18, backgroundColor: '#fff0d7', borderLeftWidth: 4, borderLeftColor: '#dc7627', borderRadius: 8, padding: 13, flexDirection: 'row', gap: 10, alignItems: 'flex-start' }, warningText: { flex: 1, color: '#704115', fontSize: 13, lineHeight: 19, fontWeight: '600' },
   grid: { maxWidth: 1220, width: '100%', alignSelf: 'center', paddingHorizontal: 32, paddingTop: 24, flexDirection: 'row', alignItems: 'flex-start', gap: 20 }, formCard: { flex: 1.15, minWidth: 0, backgroundColor: '#fffaf0', borderRadius: 18, padding: 24, borderWidth: 1, borderColor: '#e3dbc9' }, listCard: { flex: 0.85, minWidth: 0, backgroundColor: '#fffaf0', borderRadius: 18, padding: 24, borderWidth: 1, borderColor: '#e3dbc9' }, sectionEyebrow: { color: '#dc7627', fontSize: 11, letterSpacing: 1, fontWeight: '900' }, sectionTitle: { color: '#173017', fontWeight: '900', fontSize: 21, marginTop: 5 }, sectionText: { color: '#687564', fontSize: 13, lineHeight: 19, marginTop: 7, marginBottom: 16 },
   field: { marginTop: 13 }, fieldLabel: { color: '#30442f', fontSize: 12, fontWeight: '800', marginBottom: 6 }, input: { minHeight: 44, borderRadius: 9, borderWidth: 1, borderColor: '#d9dfd1', backgroundColor: '#fffef9', paddingHorizontal: 12, fontSize: 14, color: '#173017' }, textarea: { minHeight: 76, paddingVertical: 10, textAlignVertical: 'top' }, bassinList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, bassinChoice: { borderWidth: 1, borderColor: '#d9dfd1', backgroundColor: '#fffef9', borderRadius: 9, paddingVertical: 9, paddingHorizontal: 11, minWidth: 108 }, bassinChoiceActive: { borderColor: '#2e713f', backgroundColor: '#e0f0df' }, bassinName: { color: '#30442f', fontSize: 13, fontWeight: '800' }, bassinNameActive: { color: '#1e602e' }, bassinRegion: { color: '#798376', fontSize: 11, marginTop: 2 }, bassinRegionActive: { color: '#3b7547' }, separator: { height: 1, backgroundColor: '#e3dbc9', marginVertical: 22 }, subsection: { color: '#173017', fontWeight: '900', fontSize: 16, marginBottom: 1 }, pinRow: { minHeight: 44, borderRadius: 9, borderWidth: 1, borderColor: '#d9dfd1', backgroundColor: '#fffef9', flexDirection: 'row', alignItems: 'center' }, pinInput: { flex: 1, height: 44, paddingHorizontal: 12, color: '#173017', fontSize: 14 }, eye: { padding: 12 }, createButton: { minHeight: 50, marginTop: 22, backgroundColor: '#dc7627', borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 }, createDisabled: { opacity: 0.65 }, createText: { color: '#fff8e8', fontWeight: '900', fontSize: 14 },

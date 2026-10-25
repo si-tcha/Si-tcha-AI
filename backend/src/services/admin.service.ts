@@ -73,8 +73,11 @@ export const getAllGicsWithMemberStats = async () => {
                 select: {
                     id: true,
                     nom: true,
+                    contact: true,
                     statut: true,
+                    timestampMaj: true,
                 },
+                orderBy: { timestampMaj: 'asc' },
             },
         },
     });
@@ -82,9 +85,9 @@ export const getAllGicsWithMemberStats = async () => {
     // Restructure the data for a cleaner API response
     return gics.map((gic) => {
         const members = {
-            pending: gic.agriculteurs.filter((a) => a.statut === 'EN_ATTENTE'),
-            approved: gic.agriculteurs.filter((a) => a.statut === 'APPROUVE'),
-            rejected: gic.agriculteurs.filter((a) => a.statut === 'REJETE'),
+            pending: gic.agriculteurs.filter((a) => a.statut === 'EN_ATTENTE').map(serializeMember),
+            approved: gic.agriculteurs.filter((a) => a.statut === 'APPROUVE').map(serializeMember),
+            rejected: gic.agriculteurs.filter((a) => a.statut === 'REJETE').map(serializeMember),
         };
 
         const { agriculteurs, ...gicInfo } = gic;
@@ -94,4 +97,38 @@ export const getAllGicsWithMemberStats = async () => {
             members,
         };
     });
+};
+
+const serializeMember = (member: { id: bigint; nom: string; contact: string; statut: string; timestampMaj: Date }) => ({
+    ...member,
+    id: member.id.toString(),
+});
+
+export const updatePendingMemberStatusByAdmin = async (memberId: string, newStatus: 'APPROUVE' | 'REJETE') => {
+    let id: bigint;
+    try {
+        id = BigInt(memberId);
+    } catch {
+        throw Object.assign(new Error('Identifiant de compte invalide.'), { statusCode: 404 });
+    }
+    if (id <= 0n) {
+        throw Object.assign(new Error('Identifiant de compte invalide.'), { statusCode: 404 });
+    }
+
+    const result = await prisma.agriculteur.updateMany({
+        where: { id, statut: 'EN_ATTENTE' },
+        data: { statut: newStatus, timestampMaj: new Date() },
+    });
+    if (result.count !== 1) {
+        throw Object.assign(new Error("Ce compte n'est plus en attente ou n'existe pas."), { statusCode: 409 });
+    }
+
+    const member = await prisma.agriculteur.findUnique({
+        where: { id },
+        select: { id: true, nom: true, contact: true, statut: true, gicId: true, timestampMaj: true },
+    });
+    if (!member) {
+        throw Object.assign(new Error('Compte introuvable après la mise à jour.'), { statusCode: 404 });
+    }
+    return { ...member, id: member.id.toString(), gicId: member.gicId.toString() };
 };
