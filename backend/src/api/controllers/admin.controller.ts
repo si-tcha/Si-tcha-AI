@@ -35,3 +35,15 @@ export const getAdminBootstrap = async (req: Request, res: Response) => {
     const bootstrap = await adminService.getAdminBootstrap();
     res.status(200).json(bootstrap);
 };
+
+export const updatePendingMemberStatus = async (req: Request, res: Response) => {
+    const status = req.body?.status;
+    if (status !== 'APPROUVE' && status !== 'REJETE') {
+        return res.status(400).json({ message: 'Le statut doit être APPROUVE ou REJETE.' });
+    }
+    const member = await adminService.updatePendingMemberStatusByAdmin(req.params.memberId, status);
+    res.status(200).json({
+        message: status === 'APPROUVE' ? 'Compte approuvé.' : 'Compte refusé.',
+        member,
+    });
+};

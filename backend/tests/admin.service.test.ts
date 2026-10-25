@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import prisma from '../src/lib/prisma.js';
-import { createGicAndLeader, getAdminBootstrap } from '../src/services/admin.service.js';
+import { createGicAndLeader, getAdminBootstrap, updatePendingMemberStatusByAdmin } from '../src/services/admin.service.js';
 
 vi.mock('../src/lib/prisma', () => ({
   default: {
     $transaction: vi.fn(),
     bassinProduction: { findMany: vi.fn() },
+    agriculteur: { updateMany: vi.fn(), findUnique: vi.fn() },
   },
 }));
 
@@ -51,5 +52,27 @@ describe('admin service safety', () => {
       select: { id: true, nom: true, region: true },
       orderBy: { nom: 'asc' },
     });
+  });
+
+  it('lets an admin atomically approve only a pending account', async () => {
+    vi.mocked(prisma.agriculteur.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+      id: 41n, nom: 'Nouveau membre', contact: '+237670000041', statut: 'APPROUVE',
+      gicId: 3n, timestampMaj: new Date('2026-10-25T10:00:00Z'),
+    } as any);
+
+    await expect(updatePendingMemberStatusByAdmin('41', 'APPROUVE')).resolves.toEqual(expect.objectContaining({
+      id: '41', gicId: '3', statut: 'APPROUVE',
+    }));
+    expect(prisma.agriculteur.updateMany).toHaveBeenCalledWith({
+      where: { id: 41n, statut: 'EN_ATTENTE' },
+      data: { statut: 'APPROUVE', timestampMaj: expect.any(Date) },
+    });
+  });
+
+  it('refuses a stale approval when the account is no longer pending', async () => {
+    vi.mocked(prisma.agriculteur.updateMany).mockResolvedValue({ count: 0 });
+    await expect(updatePendingMemberStatusByAdmin('41', 'REJETE')).rejects.toMatchObject({ statusCode: 409 });
+    expect(prisma.agriculteur.findUnique).not.toHaveBeenCalled();
   });
 });

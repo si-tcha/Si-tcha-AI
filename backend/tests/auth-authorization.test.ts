@@ -17,6 +17,7 @@ vi.mock('../src/lib/prisma', () => {
         findUnique: vi.fn(),
         findMany: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
         count: vi.fn(),
       },
       admin: {
@@ -597,6 +598,38 @@ describe('Authorization and RBAC Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
+    });
+
+    it('should let a valid admin approve a pending GIC account', async () => {
+      vi.mocked(prisma.admin.findUnique).mockResolvedValue({
+        id: 'admin-1', nom: 'SuperAdmin', contact: '+237699000000',
+      } as any);
+      vi.mocked(prisma.agriculteur.updateMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.agriculteur.findUnique).mockResolvedValue({
+        id: 401n, nom: 'Candidat 1', contact: '+237670000001', statut: 'APPROUVE',
+        gicId: 1n, timestampMaj: new Date(),
+      } as any);
+
+      const res = await request(app)
+        .patch('/api/admin/members/401/status')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'APPROUVE' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.member).toMatchObject({ id: '401', gicId: '1', statut: 'APPROUVE' });
+    });
+
+    it('should forbid a buyer from approving a GIC account', async () => {
+      vi.mocked(prisma.acheteur.findUnique).mockResolvedValue({
+        id: 100n, nomEntreprise: 'Entreprise Achat', contact: '+237699111111',
+        phoneVerified: true, isVerified: true,
+      } as any);
+      const res = await request(app)
+        .patch('/api/admin/members/401/status')
+        .set('Authorization', `Bearer ${buyerToken}`)
+        .send({ status: 'APPROUVE' });
+      expect(res.status).toBe(403);
+      expect(prisma.agriculteur.updateMany).not.toHaveBeenCalled();
     });
   });
 

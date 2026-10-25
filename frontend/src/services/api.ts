@@ -86,7 +86,9 @@ export interface AdminBasin {
 export interface AdminGicMember {
   id: string;
   nom: string;
+  contact: string;
   statut: 'EN_ATTENTE' | 'APPROUVE' | 'REJETE';
+  timestampMaj: string;
 }
 
 export interface AdminGicSummary {
@@ -977,6 +979,8 @@ export const apiClient = {
       'POST',
       input
     ),
+  updateAdminMemberStatus: (memberId: string, status: 'APPROUVE' | 'REJETE') =>
+    request<{ message: string; member: AdminGicMember }>(`/admin/members/${memberId}/status`, 'PATCH', { status }),
 
   async getMe(): Promise<{ user: UserProfile }> {
     return request<{ user: UserProfile }>('/auth/me', 'GET');
