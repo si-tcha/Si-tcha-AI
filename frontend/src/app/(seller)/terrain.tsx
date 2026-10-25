@@ -123,6 +123,9 @@ export default function SellerTerrainScreen() {
       try {
         const dashboard = await apiClient.getWeatherDashboard();
         if (requestGuard.isCurrent(weatherTicket)) {
+          if (Array.isArray(dashboard.data.previsionsLisibles) && dashboard.data.previsionsLisibles.length > 0) {
+            setWeather(dashboard.data.previsionsLisibles);
+          }
           setRecommendationState({
             contextKey: weatherTicket.contextKey,
             value: dashboard.data.recommandations ?? [],
@@ -372,7 +375,11 @@ export default function SellerTerrainScreen() {
                     <View style={{ flex: 1, gap: 3 }}>
                       <Text style={styles.recommendationTitle}>{recommendation.title}</Text>
                       <Text style={styles.recommendationMessage}>{recommendation.message}</Text>
-                      {recommendation.actions[0] ? <Text style={styles.recommendationAction}>À faire : {recommendation.actions[0]}</Text> : null}
+                      {recommendation.actions.map((action, index) => (
+                        <Text key={`${recommendation.code}-action-${index}`} style={styles.recommendationAction}>
+                          {index === 0 ? 'À faire : ' : '• '}{action}
+                        </Text>
+                      ))}
                     </View>
                   </View>
                 );

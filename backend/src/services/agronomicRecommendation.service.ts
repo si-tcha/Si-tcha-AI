@@ -33,6 +33,13 @@ interface ForecastSignal {
   description?: string | null;
 }
 
+interface DailyForecastSignal {
+  date: Date | string;
+  rainMm?: number | null;
+  rainProbability?: number | null;
+  temperatureMaxC?: number | null;
+}
+
 interface SatelliteSignal {
   date: Date | string;
   ndviMean?: number | null;
@@ -45,6 +52,7 @@ export interface RecommendationInput {
   weather?: WeatherSignal | null;
   soil?: SoilSignal | null;
   forecasts?: ForecastSignal[];
+  dailyForecasts?: DailyForecastSignal[];
   observations?: SatelliteSignal[];
   crop?: string | null;
   cropPhase?: string | null;
@@ -58,6 +66,29 @@ const DRY_SOIL_FRACTION = 0.12;
 const NDVI_MIN_CLOUD_COVERAGE = 30;
 const NDVI_MIN_ABSOLUTE_DROP = 0.08;
 const NDVI_MIN_RELATIVE_DROP = 0.25;
+
+function addRainyPeriodRecommendation(input: RecommendationInput, now: Date, recommendations: Recommendation[]): void {
+  const wetDays = (input.dailyForecasts ?? []).filter((item) => {
+    const date = validDate(item.date);
+    if (!date) return false;
+    const hours = hoursUntil(date, now);
+    return hours >= -24 && hours <= 7 * 24
+      && ((finiteNumber(item.rainMm) ?? 0) >= 5 || (finiteNumber(item.rainProbability) ?? 0) >= 0.7);
+  });
+  if (wetDays.length < 3) return;
+
+  recommendations.push({
+    code: 'RAINY_PERIOD', level: 'ATTENTION', title: 'Plusieurs jours pluvieux probables',
+    message: `De la pluie est probable pendant ${wetDays.length} jours sur les 7 prochains jours autour de ${input.parcelName}.`,
+    reason: 'Plusieurs journées dépassent le seuil de pluie utilisé pour la vigilance.',
+    actions: [
+      'Reporte les traitements et l’épandage d’engrais si une pluie est proche.',
+      'Avant de semer, vérifie que la terre n’est pas détrempée et que l’eau peut s’écouler.',
+      'Contrôle les drains et observe les zones où l’eau stagne.',
+    ],
+    observedAt: now.toISOString(), requiresAgronomist: false,
+  });
+}
 
 function messageFor(
   language: 'FR' | 'EN',
@@ -288,6 +319,7 @@ export function buildAgronomicRecommendations(input: RecommendationInput): Recom
 
   addStormRecommendation(input, now, recommendations);
   addHeavyRainRecommendation(input, now, recommendations);
+  addRainyPeriodRecommendation(input, now, recommendations);
   addDrySoilRecommendation(input, recommendations);
   addVegetationChangeRecommendation(input, now, recommendations);
   addCropStageGuidance(input, recommendations);
@@ -297,7 +329,17 @@ export function buildAgronomicRecommendations(input: RecommendationInput): Recom
     return priority[left.level] - priority[right.level];
   });
 
-  if (recommendations.length === 0) {
+  const hasUsableData = Boolean(input.weather || input.soil || input.forecasts?.length
+    || input.dailyForecasts?.length || input.observations?.length || input.cropPhase);
+  if (recommendations.length === 0 && !hasUsableData) {
+    recommendations.push({
+      code: 'WEATHER_DATA_UNAVAILABLE', level: 'INFO', title: 'Conseil météo indisponible',
+      message: 'Aucune prévision récente n’est disponible pour votre zone. Ne prends pas une décision agricole sur une météo supposée.',
+      reason: 'Le fournisseur météo n’a transmis aucune donnée exploitable.',
+      actions: ['Réessaie plus tard et observe directement le ciel, le sol et l’état des plants.'],
+      observedAt: null, requiresAgronomist: false,
+    });
+  } else if (recommendations.length === 0) {
     recommendations.push({
       code: 'NO_MAJOR_SIGNAL',
       level: 'INFO',
