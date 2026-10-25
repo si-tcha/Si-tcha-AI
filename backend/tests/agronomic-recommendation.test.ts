@@ -78,10 +78,25 @@ describe('agronomic recommendations', () => {
     expect(soil?.actions.some((action) => action.includes('racines'))).toBe(true);
   });
 
-  it('returns a plain-language reassurance when no threshold is crossed', () => {
+  it('never invents reassurance when no weather data is available', () => {
     const recommendations = buildAgronomicRecommendations({ parcelName, language: 'FR', now });
 
     expect(recommendations).toHaveLength(1);
-    expect(recommendations[0]).toMatchObject({ code: 'NO_MAJOR_SIGNAL', level: 'INFO' });
+    expect(recommendations[0]).toMatchObject({ code: 'WEATHER_DATA_UNAVAILABLE', level: 'INFO' });
+  });
+
+  it('turns a rainy week into clear operational advice', () => {
+    const recommendations = buildAgronomicRecommendations({
+      parcelName, language: 'FR', now,
+      dailyForecasts: [
+        { date: '2026-10-06', rainMm: 8, rainProbability: 0.8, temperatureMaxC: 26 },
+        { date: '2026-10-07', rainMm: 6, rainProbability: 0.75, temperatureMaxC: 25 },
+        { date: '2026-10-08', rainMm: 9, rainProbability: 0.9, temperatureMaxC: 24 },
+      ],
+    });
+
+    const rainy = recommendations.find((item) => item.code === 'RAINY_PERIOD');
+    expect(rainy?.title).toContain('pluvieux');
+    expect(rainy?.actions.join(' ')).toContain('semer');
   });
 });

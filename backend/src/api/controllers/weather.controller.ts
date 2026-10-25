@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../lib/prisma.js';
 import { buildAgronomicRecommendations } from '../../services/agronomicRecommendation.service.js';
+import { getWeatherForecast } from '../../services/weatherForecast.service.js';
 
 // Dictionnaire de traduction pour les descriptions météo d'AgroMonitoring
 const translateWeatherDescription = (desc: string): string => {
@@ -112,8 +113,30 @@ export const getWeatherDashboard = async (req: Request, res: Response) => {
         // 4. Récupérer les prévisions 8 jours stockées sur le GIC
         const gicData = await prisma.gIC.findUnique({
             where: { id: gicId },
-            select: { nom: true, previsionsMeteo: true }
+            select: {
+                nom: true,
+                previsionsMeteo: true,
+                bassinProduction: { select: { nom: true, latitude: true, longitude: true } },
+            }
         });
+
+        // La météo ne dépend pas d'un polygonId AgroMonitoring : chaque GIC possède
+        // déjà les coordonnées de son bassin. Un échec fournisseur ne doit jamais
+        // devenir une fausse prévision ni faire échouer tout le tableau de bord.
+        let liveForecast = null;
+        const latitude = finiteNumber(gicData?.bassinProduction?.latitude);
+        const longitude = finiteNumber(gicData?.bassinProduction?.longitude);
+        if (latitude !== null && longitude !== null) {
+            try {
+                liveForecast = await getWeatherForecast(
+                    latitude,
+                    longitude,
+                    gicData?.bassinProduction.nom ?? gicData?.nom ?? 'Zone de production',
+                );
+            } catch (error) {
+                req.log?.warn({ errorName: error instanceof Error ? error.name : 'UnknownError' }, 'Prévisions météo en direct indisponibles');
+            }
+        }
 
         // --- TRAITEMENT & TRADUCTION ---
         const meteoActuelle = latestWeather ? {
@@ -152,7 +175,8 @@ export const getWeatherDashboard = async (req: Request, res: Response) => {
                 moisture: finiteNumber(latestSoil.humidite),
                 measuredAt: latestSoil.timestampMesure,
             } : null,
-            forecasts: normaliseForecasts(gicData?.previsionsMeteo),
+            forecasts: liveForecast?.forecasts ?? normaliseForecasts(gicData?.previsionsMeteo),
+            dailyForecasts: liveForecast?.daily ?? [],
         });
 
         res.status(200).json({
@@ -162,7 +186,10 @@ export const getWeatherDashboard = async (req: Request, res: Response) => {
                 sol: latestSoil,
                 alertes: recentAlerts,
                 previsions: previsions8Jours,
+                previsionsLisibles: liveForecast?.cards ?? [],
                 recommandations: recommendations,
+                fournisseur: liveForecast?.source ?? null,
+                actualiseA: liveForecast?.fetchedAt ?? latestWeather?.timestampMesure ?? null,
             }
         });
 
