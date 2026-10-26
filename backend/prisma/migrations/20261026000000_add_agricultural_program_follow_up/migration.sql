@@ -7,6 +7,11 @@ ALTER TABLE "ProgrammeAgricole"
   ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
+-- `@updatedAt` is maintained by Prisma and intentionally has no database
+-- default. The temporary default above only backfills existing rows safely.
+ALTER TABLE "ProgrammeAgricole"
+  ALTER COLUMN "updatedAt" DROP DEFAULT;
+
 CREATE TABLE IF NOT EXISTS "CandidatureProgramme" (
   "id" BIGSERIAL NOT NULL,
   "statut" VARCHAR(30) NOT NULL DEFAULT 'ASSISTANCE_DEMANDEE',
@@ -16,7 +21,7 @@ CREATE TABLE IF NOT EXISTS "CandidatureProgramme" (
   "assistanceRequestedAt" TIMESTAMPTZ,
   "lastReminderAt" TIMESTAMPTZ,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMPTZ NOT NULL,
   "programmeAgricoleId" BIGINT NOT NULL,
   "agriculteurId" BIGINT NOT NULL,
   CONSTRAINT "CandidatureProgramme_pkey" PRIMARY KEY ("id"),
