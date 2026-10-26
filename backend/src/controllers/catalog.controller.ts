@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma.js';
 import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 import { getEmojiForCategory, getImageUrlForProduct } from '../utils/productUtils.js';
+import { listPublishedPrograms } from '../services/program.service.js';
 
 export async function getProducts(req: Request, res: Response, next: NextFunction) {
   try {
@@ -102,11 +103,11 @@ export async function getGicsPublic(req: Request, res: Response, next: NextFunct
 
 export async function getTerrain(req: Request, res: Response) {
   try {
-    const [meteoDb, marcheDb, phytoDb, progDb] = await Promise.all([
+    const [meteoDb, marcheDb, phytoDb, programs] = await Promise.all([
       prisma.donneesMeteo.findMany({ include: { bassinProduction: true } }),
       prisma.donneeMarche.findMany({ include: { bassinProduction: true, produitAgricole: true } }),
       prisma.alertePhyto.findMany({ include: { bassinProduction: true } }),
-      prisma.programmeAgricole.findMany(),
+      listPublishedPrograms(),
     ]);
 
     // OpenWeatherMap Integration (P2.14)
@@ -174,14 +175,6 @@ export async function getTerrain(req: Request, res: Response) {
       ravageurMaladie: p.ravageurMaladie,
       protocoleUrgence: p.protocoleUrgence,
       dateEmission: p.dateEmission.toISOString().slice(0, 10),
-    }));
-
-    const programs = progDb.map((pr) => ({
-      id: pr.id.toString(),
-      nom: pr.nom,
-      description: pr.description,
-      criteresEligibilite: pr.criteresEligibilite,
-      dateLimite: pr.dateLimite.toISOString().slice(0, 10),
     }));
 
     res.json({ weather, market, phytoAlerts, programs });

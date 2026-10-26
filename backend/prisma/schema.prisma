@@ -124,12 +124,17 @@ model AgronomeInterne {
 }
 
 model ProgrammeAgricole {
-  id                  BigInt   @id @default(autoincrement())
-  nom                 String   @db.VarChar(100)
-  description         String   @db.Text
-  criteresEligibilite String   @db.Text
-  dateLimite          DateTime @db.Date
+  id                  BigInt                @id @default(autoincrement())
+  nom                 String                @db.VarChar(100)
+  description         String                @db.Text
+  criteresEligibilite String                @db.Text
+  dateLimite          DateTime              @db.Date
   urlLien             String
+  statut              String                @default("PUBLIE") @db.VarChar(20)
+  estDemo             Boolean               @default(false)
+  createdAt           DateTime              @default(now()) @db.Timestamptz
+  updatedAt           DateTime              @updatedAt @db.Timestamptz
+  candidatures        CandidatureProgramme[]
 }
 
 model HistoriqueProduction {
@@ -297,6 +302,27 @@ model Agriculteur {
   timestampMaj  DateTime          @db.Date
   gicId         BigInt
   gic           GIC               @relation(fields: [gicId], references: [id])
+  candidaturesProgrammes CandidatureProgramme[]
+}
+
+model CandidatureProgramme {
+  id                    BigInt             @id @default(autoincrement())
+  statut                String             @default("ASSISTANCE_DEMANDEE") @db.VarChar(30)
+  demandeAssistance     String?            @db.Text
+  noteAgent             String?            @db.Text
+  submittedAt           DateTime?          @db.Timestamptz
+  assistanceRequestedAt DateTime?          @db.Timestamptz
+  lastReminderAt        DateTime?          @db.Timestamptz
+  createdAt             DateTime           @default(now()) @db.Timestamptz
+  updatedAt             DateTime           @updatedAt @db.Timestamptz
+  programmeAgricoleId   BigInt
+  agriculteurId         BigInt
+  programmeAgricole     ProgrammeAgricole  @relation(fields: [programmeAgricoleId], references: [id], onDelete: Cascade)
+  agriculteur           Agriculteur        @relation(fields: [agriculteurId], references: [id], onDelete: Cascade)
+
+  @@unique([programmeAgricoleId, agriculteurId])
+  @@index([agriculteurId, statut])
+  @@index([programmeAgricoleId, statut])
 }
 
 model OtpCode {

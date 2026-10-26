@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { protect, requireActive, requireRole } from '../middlewares/auth.middleware.js';
 import { createGic, getAdminBootstrap, listGicsWithStats, updatePendingMemberStatus } from '../controllers/admin.controller.js';
+import { createAdminProgram, listAdminApplications, listAdminPrograms, setAdminProgramStatus, updateAdminApplication } from '../../controllers/program.controller.js';
 import { createDonneeMarcheManuelle } from '../controllers/donneeMarche.controller.js';
 import { validate } from '../../middlewares/validate.js';
 import { createGicSchema } from '../../schemas/admin.schema.js';
@@ -144,6 +145,12 @@ router.get('/gics', asyncHandler(listGicsWithStats));
 
 // L'agent entreprise est l'autorité de validation des nouveaux comptes GIC.
 router.patch('/members/:memberId/status', asyncHandler(updatePendingMemberStatus));
+
+router.get('/programs', asyncHandler(listAdminPrograms));
+router.post('/programs', asyncHandler(createAdminProgram));
+router.patch('/programs/:programId/status', asyncHandler(setAdminProgramStatus));
+router.get('/program-applications', asyncHandler(listAdminApplications));
+router.patch('/program-applications/:applicationId', asyncHandler(updateAdminApplication));
 
 // Route d'administration pour la saisie manuelle
 // @route   POST /api/admin/donnees-marche

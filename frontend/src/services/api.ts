@@ -121,6 +121,29 @@ export interface CreateAdminGicInput {
   };
 }
 
+export interface AgriculturalProgram {
+  id: string;
+  nom: string;
+  description: string;
+  criteresEligibilite: string;
+  dateLimite: string;
+  urlLien: string;
+  statut: 'BROUILLON' | 'PUBLIE' | 'CLOTURE';
+  estDemo: boolean;
+}
+
+export interface ProgramApplication {
+  id: string;
+  statut: 'ASSISTANCE_DEMANDEE' | 'DOSSIER_EN_COURS' | 'DOSSIER_DEPOSE' | 'ACCEPTE' | 'REFUSE';
+  demandeAssistance: string | null;
+  noteAgent: string | null;
+  submittedAt: string | null;
+  assistanceRequestedAt: string | null;
+  updatedAt: string;
+  programme: AgriculturalProgram;
+  agriculteur?: { id: string; nom: string; contact: string; gicNom: string };
+}
+
 export interface AgronomicRecommendation {
   code: string;
   level: 'INFO' | 'ATTENTION' | 'URGENT';
@@ -981,6 +1004,18 @@ export const apiClient = {
     ),
   updateAdminMemberStatus: (memberId: string, status: 'APPROUVE' | 'REJETE') =>
     request<{ message: string; member: AdminGicMember }>(`/admin/members/${memberId}/status`, 'PATCH', { status }),
+  getPrograms: () => request<AgriculturalProgram[]>('/programs'),
+  getMyProgramApplications: () => request<ProgramApplication[]>('/seller/program-applications'),
+  requestProgramAssistance: (programId: string, message: string) =>
+    request<{ message: string; application: ProgramApplication }>(`/seller/programs/${programId}/assistance`, 'POST', { message }),
+  getAdminPrograms: () => request<Array<AgriculturalProgram & { candidatureCount: number }>>('/admin/programs'),
+  createAdminProgram: (input: Pick<AgriculturalProgram, 'nom' | 'description' | 'criteresEligibilite' | 'dateLimite' | 'urlLien'> & { statut?: 'BROUILLON' | 'PUBLIE' }) =>
+    request<{ message: string; program: AgriculturalProgram }>('/admin/programs', 'POST', input),
+  updateAdminProgramStatus: (programId: string, statut: AgriculturalProgram['statut']) =>
+    request<{ message: string; program: AgriculturalProgram }>(`/admin/programs/${programId}/status`, 'PATCH', { statut }),
+  getAdminProgramApplications: () => request<ProgramApplication[]>('/admin/program-applications'),
+  updateAdminProgramApplication: (applicationId: string, statut: ProgramApplication['statut'], noteAgent?: string) =>
+    request<{ message: string; application: ProgramApplication }>(`/admin/program-applications/${applicationId}`, 'PATCH', { statut, ...(noteAgent !== undefined ? { noteAgent } : {}) }),
 
   async getMe(): Promise<{ user: UserProfile }> {
     return request<{ user: UserProfile }>('/auth/me', 'GET');

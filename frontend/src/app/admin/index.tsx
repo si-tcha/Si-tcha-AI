@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/toast';
 import { AdminBasin, AdminGicSummary, apiClient } from '@/services/api';
 import { AdminGicForm, normalizeAdminPhone, validateAdminGicForm } from '@/admin/validation';
+import { ProgramManagement } from '@/admin/ProgramManagement';
 
 const EMPTY_FORM: AdminGicForm = {
   gicName: '', reference: '', bassinProductionId: '', activities: '', legalStatus: '', logoUrl: '', leaderName: '', leaderPhone: '', leaderPin: '', confirmPin: '',
@@ -173,6 +174,8 @@ export default function AdminDashboardScreen() {
         </View> : !loading ? <View style={styles.noPending}><Feather name="check-circle" size={19} color="#28733e" /><Text style={styles.noPendingText}>Aucun nouveau compte en attente d’approbation.</Text></View> : null}
 
         <View style={styles.warning}><Feather name="alert-circle" color="#a45011" size={20} /><Text style={styles.warningText}>Avant de créer un leader : vérifiez son identité, son numéro et son accord. Le PIN choisi ne sera jamais affiché à nouveau par le tableau de bord.</Text></View>
+
+        <ProgramManagement />
 
         <View style={styles.grid}>
           <View style={styles.formCard}>

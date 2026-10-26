@@ -1,4 +1,4 @@
-import { Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ import { BottomNavBar } from '@/components/ui/bottom-nav-bar';
 import { useAuth } from '@/context/AuthContext';
 import { growthService } from '@/services/growthService';
 import { apiClient } from '@/services/api';
-import type { AgronomicRecommendation } from '@/services/api';
+import type { AgronomicRecommendation, ProgramApplication } from '@/services/api';
 import { isValidSellerContext, ValidSellerContext } from '@/utils/cacheKey';
 import {
   ContextBoundValue,
@@ -72,6 +72,9 @@ export default function SellerTerrainScreen() {
   const [market, setMarket] = useState<MarketPriceRecord[]>([]);
   const [programs, setPrograms] = useState<AgriProgramRecord[]>([]);
   const [phyto, setPhyto] = useState<PhytoAlertRecord[]>([]);
+  const [programApplications, setProgramApplications] = useState<ProgramApplication[]>([]);
+  const [programMessages, setProgramMessages] = useState<Record<string, string>>({});
+  const [programSubmittingId, setProgramSubmittingId] = useState<string | null>(null);
   const contextKey = authLoading ? null : sellerContextKey(sellerCtx);
   const requestGuard = useRef(new ContextRequestGuard()).current;
   requestGuard.setContext(contextKey);
@@ -110,8 +113,15 @@ export default function SellerTerrainScreen() {
       if (!sellerCtx) {
         setParcelState({ contextKey: null, value: [] });
         setRecommendationState({ contextKey: null, value: [] });
+        setProgramApplications([]);
         return;
       }
+      const programTicket = requestGuard.begin(contextKey!, 'program-applications');
+      apiClient.getMyProgramApplications().then((applications) => {
+        if (requestGuard.isCurrent(programTicket)) setProgramApplications(applications);
+      }).catch(() => {
+        if (requestGuard.isCurrent(programTicket)) setProgramApplications([]);
+      });
       const ticket = requestGuard.begin(contextKey!, 'parcels-load');
       if (!requestGuard.isCurrent(ticket)) return;
       const growthRes = await growthService.loadParcels(sellerCtx);
@@ -161,6 +171,21 @@ export default function SellerTerrainScreen() {
   /* ─── SIG stats computed ─── */
   const totalEstimatedKg = parcels.reduce((s, p) => s + (p.estimatedVolumeKg || 0), 0);
   const activeStages = new Set(parcels.map(p => p.stage)).size;
+
+  const requestProgramHelp = async (programId: string) => {
+    if (!contextKey || programSubmittingId) return;
+    const ticket = requestGuard.begin(contextKey, `program-assistance:${programId}`);
+    setProgramSubmittingId(programId);
+    try {
+      const result = await apiClient.requestProgramAssistance(programId, programMessages[programId] || 'Je souhaite être accompagné pour ce programme.');
+      if (requestGuard.isCurrent(ticket)) {
+        setProgramApplications((current) => [...current, result.application]);
+        setProgramMessages((current) => ({ ...current, [programId]: '' }));
+      }
+    } catch (error: any) {
+      if (requestGuard.isCurrent(ticket)) console.warn('Demande assistance programme indisponible:', error?.message || error);
+    } finally { setProgramSubmittingId(null); }
+  };
 
   return (
     <SafeAreaView style={styles.outer}>
@@ -554,6 +579,8 @@ export default function SellerTerrainScreen() {
 
                     <Text style={styles.programDesc}>{p.description}</Text>
 
+                    {p.estDemo ? <View style={styles.demoProgramBadge}><Text style={styles.demoProgramText}>PROGRAMME DE DÉMONSTRATION</Text></View> : null}
+
                     <View style={styles.eligibilityBox}>
                       <View style={styles.eligibilityHeader}>
                         <Feather name="check-square" size={12} color="#101e0f" />
@@ -572,6 +599,11 @@ export default function SellerTerrainScreen() {
                         <Feather name="arrow-right" size={12} color="#15803d" />
                       </View>
                     </View>
+                    {(() => {
+                      const application = programApplications.find((item) => item.programme.id === p.id);
+                      if (application) return <View style={styles.programFollowUp}><Text style={styles.programFollowUpTitle}>Suivi du dossier</Text><Text style={styles.programFollowUpStatus}>{application.statut.replaceAll('_', ' ')}</Text>{application.noteAgent ? <Text style={styles.programFollowUpNote}>{application.noteAgent}</Text> : <Text style={styles.programFollowUpNote}>Un agent vous contactera. Vous recevrez aussi des rappels avant la date limite.</Text>}</View>;
+                      return <View style={styles.programAssist}><Text style={styles.programAssistTitle}>Besoin d’aide pour vous inscrire ?</Text><TextInput value={programMessages[p.id] || ''} onChangeText={(value) => setProgramMessages((current) => ({ ...current, [p.id]: value }))} placeholder="Expliquez votre besoin (facultatif)" placeholderTextColor="#81907d" multiline maxLength={1000} style={styles.programAssistInput} /><TouchableOpacity disabled={programSubmittingId !== null} style={[styles.programAssistButton, programSubmittingId && styles.programAssistDisabled]} onPress={() => void requestProgramHelp(p.id)}>{programSubmittingId === p.id ? <ActivityIndicator color="#fff" /> : <><Feather name="send" size={13} color="#fff" /><Text style={styles.programAssistButtonText}>Demander une assistance</Text></>}</TouchableOpacity></View>;
+                    })()}
                   </View>
                 ))
               )}
@@ -1029,6 +1061,18 @@ const styles = StyleSheet.create({
   deadlineText: { fontSize: 11, fontWeight: '700', color: '#d97834' },
   applyHint: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   applyHintText: { fontSize: 11, fontWeight: '700', color: '#15803d' },
+  demoProgramBadge: { alignSelf: 'flex-start', backgroundColor: '#fff0d7', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 4 },
+  demoProgramText: { color: '#965014', fontSize: 9, fontWeight: '900', letterSpacing: 0.4 },
+  programAssist: { marginTop: 2, backgroundColor: '#f3ecd8', borderRadius: 12, padding: 10, gap: 8 },
+  programAssistTitle: { color: '#173017', fontWeight: '800', fontSize: 12 },
+  programAssistInput: { minHeight: 54, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#ded6c1', paddingHorizontal: 9, paddingVertical: 7, textAlignVertical: 'top', color: '#173017', fontSize: 12 },
+  programAssistButton: { minHeight: 37, alignSelf: 'flex-start', borderRadius: 8, backgroundColor: '#28733e', paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' },
+  programAssistDisabled: { opacity: 0.6 },
+  programAssistButtonText: { color: '#fff', fontWeight: '900', fontSize: 11 },
+  programFollowUp: { marginTop: 2, borderRadius: 10, backgroundColor: '#e4f2e2', padding: 10, gap: 3 },
+  programFollowUpTitle: { color: '#205e32', fontWeight: '900', fontSize: 12 },
+  programFollowUpStatus: { color: '#28733e', fontWeight: '900', fontSize: 11 },
+  programFollowUpNote: { color: '#466448', fontSize: 11, lineHeight: 16 },
 
   /* ── Phyto Alerts ── */
   alertCard: {
