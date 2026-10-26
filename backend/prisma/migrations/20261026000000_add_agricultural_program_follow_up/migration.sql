@@ -42,8 +42,8 @@ CREATE INDEX IF NOT EXISTS "CandidatureProgramme_programmeAgricoleId_statut_idx"
 
 -- Programmes de démonstration : clairement étiquetés et sans prétention
 -- d'être des aides officielles. Les agents peuvent les remplacer ou les clôturer.
-INSERT INTO "ProgrammeAgricole" ("nom", "description", "criteresEligibilite", "dateLimite", "urlLien", "statut", "estDemo")
-SELECT v."nom", v."description", v."criteresEligibilite", v."dateLimite", v."urlLien", 'PUBLIE', true
+INSERT INTO "ProgrammeAgricole" ("nom", "description", "criteresEligibilite", "dateLimite", "urlLien", "statut", "estDemo", "updatedAt")
+SELECT v."nom", v."description", v."criteresEligibilite", v."dateLimite", v."urlLien", 'PUBLIE', true, CURRENT_TIMESTAMP
 FROM (VALUES
   ('Programme démo — Appui intrants', 'Exemple de programme à remplacer par une opportunité validée par SI-TCHA.', 'Compte agriculteur approuvé et dossier à compléter avec l’agent.', DATE '2026-12-15', ''),
   ('Programme démo — Accompagnement maraîchage', 'Exemple de suivi technique et administratif pour les producteurs.', 'Être membre actif d’un GIC et demander une assistance.', DATE '2027-01-15', ''),
