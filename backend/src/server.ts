@@ -7,6 +7,7 @@ import { registerProcessLifecycle } from './lifecycle.js';
 import { startAgroCronJobs } from './jobs/agroMonitoring.cron.js';
 import { initMarketDataCron } from './jobs/marketData.cron.js';
 import { startMarketSmsCronJob } from './jobs/marketSms.cron.js';
+import { startProgramReminderCronJob } from './jobs/programReminder.cron.js';
 
 // Validation stricte des variables d'environnement au démarrage
 const config = getConfig();
@@ -31,6 +32,7 @@ server.listen(config.PORT, () => {
     startAgroCronJobs();
     initMarketDataCron();
     startMarketSmsCronJob();
+    startProgramReminderCronJob();
   }
 });
 

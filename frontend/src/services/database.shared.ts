@@ -95,6 +95,9 @@ export interface AgriProgramRecord {
   description: string;
   criteresEligibilite: string;
   dateLimite: string;
+  urlLien?: string;
+  statut?: string;
+  estDemo?: boolean;
 }
 
 export interface ProductOffer {

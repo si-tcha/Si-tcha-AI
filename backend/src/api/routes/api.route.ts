@@ -9,6 +9,7 @@ import { getB2BOffers, createB2BOffer } from '../../controllers/b2b.controller.j
 import { getParcels, createParcel, updateParcel } from '../../controllers/growth.controller.js';
 import { getPrefinancingDeals, createPrefinancingDeal } from '../../controllers/prefinancing.controller.js';
 import { getTrustRatings, createTrustRating } from '../../controllers/trust.controller.js';
+import { listMyProgramApplications, listPublicPrograms, requestAssistance } from '../../controllers/program.controller.js';
 import { validate } from '../../middlewares/validate.js';
 import { authLimiter, otpLimiter, agronomistLimiter } from '../../middlewares/rateLimiter.js';
 import { loginSchema, registerBuyerSchema, registerSellerSchema, verifyOtpSchema, resendOtpSchema } from '../../schemas/auth.schema.js';
@@ -47,6 +48,7 @@ router.get('/auth/me', requireAuth, me);
 router.get('/catalog/products', requireAuth, requireActive, requireRole('buyer'), getProducts);
 router.get('/gics/public', requireAuth, requireActive, requireRole('buyer'), getGicsPublic);
 router.get('/terrain', getTerrain);
+router.get('/programs', listPublicPrograms);
 
 // ==========================================
 // VENDEURS (GIC)
@@ -60,6 +62,8 @@ router.post('/gic/expenses', requireAuth, requireActive, requireRole('seller'), 
 router.post('/gic/needs', requireAuth, requireActive, requireRole('seller'), validate(createGicNeedSchema), createGicNeed);
 router.get('/gic/orders', requireAuth, requireActive, requireRole('seller'), getGicOrders);
 router.post('/gic/agronomist', requireAuth, requireActive, requireRole('seller'), agronomistLimiter, validate(askAgronomistSchema), askAgronomist);
+router.get('/seller/program-applications', requireAuth, requireActive, requireRole('seller'), listMyProgramApplications);
+router.post('/seller/programs/:programId/assistance', requireAuth, requireActive, requireRole('seller'), requestAssistance);
 
 // ==========================================
 // ACHETEURS
