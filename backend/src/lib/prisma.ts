@@ -15,6 +15,12 @@ if (parsedDatabaseUrl.hostname.endsWith(".render.com")
 
 const connectionString = parsedDatabaseUrl.toString();
 const adapter = new PrismaPg({ connectionString });
-const prisma = new PrismaClient({ adapter });
+const prisma = new PrismaClient({
+  adapter,
+  transactionOptions: {
+    maxWait: 10_000,
+    timeout: 15_000,
+  },
+});
 
 export default prisma;

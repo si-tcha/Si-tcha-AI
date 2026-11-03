@@ -8,6 +8,8 @@ import adminRouter from './api/routes/admin.route.js'; // Ajout de la route admi
 import weatherRoutes from './api/routes/weather.route.js';
 import marketRouter from './api/routes/market.route.js'; // Ajout de la route marché
 import parcelRouter from './api/routes/parcel.route.js';
+import paymentRouter from './api/routes/payment.route.js';
+import orderRouter from './api/routes/order.route.js';
 import swaggerUi from 'swagger-ui-express';
 import swaggerSpec from './config/swagger.js';
 import { errorHandler } from './api/middlewares/errorHandler.middleware.js';
@@ -33,6 +35,8 @@ app.use('/api/weather', weatherRoutes);
 app.use('/api/market', marketRouter); // Enregistrement de la route marché
 // API détaillée de parcelles; les images NDVI sont servies par le backend afin de garder la clé privée.
 app.use('/api/parcels', parcelRouter);
+app.use('/api/orders', orderRouter);
+app.use('/api/payments', paymentRouter);
 
 app.get('/', (req: Request, res: Response) => {
   res.status(200).send('Hello sur le backend de SI-TCHA AI !');

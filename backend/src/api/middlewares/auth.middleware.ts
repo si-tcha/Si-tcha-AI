@@ -68,3 +68,11 @@ export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
         res.status(403).json({ message: "Accès refusé. Cette action nécessite les droits d'administrateur." });
     }
 };
+
+export const isBuyer = (req: Request, res: Response, next: NextFunction) => {
+    if (req.user && req.user.role === 'ACHETEUR') {
+        next();
+    } else {
+        res.status(403).json({ message: "Accès refusé. Un compte acheteur est requis." });
+    }
+};

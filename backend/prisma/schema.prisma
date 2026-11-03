@@ -58,6 +58,13 @@ enum StatutParcelle {
   ARCHIVEE
 }
 
+enum StatutPaiementAfribaPay {
+  AWAITING_OTP
+  PENDING
+  SUCCESS
+  FAILED
+}
+
 model Acheteur {
   id                   String                 @id @default(uuid())
   nom                  String    
@@ -71,6 +78,7 @@ model Acheteur {
   preferences          Json?          
   transactions         TransactionAcheteur[]
   prefinancements      Prefinancement[]
+  paiementsAfribaPay   PaiementAfribaPay[]
 }
 
 model BassinProduction {
@@ -262,11 +270,16 @@ model TransactionAcheteur {
   quantite       Decimal        @db.Decimal(15, 2)
   prixConvenu    Decimal        @db.Decimal(15, 2)
   statut         String         
+  idempotencyKey String?
+  requestFingerprint String?
   recolteOffreId String
   acheteurId     String
   recolteOffre   RecolteOffre   @relation(fields: [recolteOffreId], references: [id])
   acheteur       Acheteur       @relation(fields: [acheteurId], references: [id])
   evaluations    Evaluation[]
+  paiementsAfribaPay PaiementAfribaPay[]
+
+  @@unique([acheteurId, idempotencyKey])
 }
 
 model BesoinGIC {
@@ -330,6 +343,41 @@ model Prefinancement {
   acheteurId   String
   gic          GIC      @relation(fields: [gicId], references: [id])
   acheteur     Acheteur @relation(fields: [acheteurId], references: [id])
+  paiementsAfribaPay PaiementAfribaPay[]
+}
+
+model PaiementAfribaPay {
+  id                     String                  @id @default(uuid())
+  acheteurId             String
+  transactionAcheteurId  String?
+  prefinancementId       String?
+  idempotencyKey         String?
+  requestFingerprint     String?
+  orderId                String                  @unique
+  providerTransactionId  String?                 @unique
+  providerLink           String?
+  type                   String
+  montant                Decimal                 @db.Decimal(15, 0)
+  tauxMargeBrute         Decimal                 @default(10.00) @db.Decimal(5, 2)
+  fraisAfribaPay         Decimal?                @db.Decimal(15, 2)
+  montantMargeBrute      Decimal?                @db.Decimal(15, 2)
+  margeReelleSitcha      Decimal?                @db.Decimal(15, 2)
+  montantBaseRedistribution Decimal?             @db.Decimal(15, 2)
+  devise                 String                  @default("XAF")
+  pays                   String
+  operateur              String
+  telephoneSuffixe       String
+  statut                 StatutPaiementAfribaPay @default(PENDING)
+  dateCreation           DateTime                @default(now()) @db.Timestamptz
+  dateMaj                DateTime                @updatedAt @db.Timestamptz
+  acheteur               Acheteur                @relation(fields: [acheteurId], references: [id], onDelete: Restrict)
+  transactionAcheteur    TransactionAcheteur?    @relation(fields: [transactionAcheteurId], references: [id], onDelete: Restrict)
+  prefinancement         Prefinancement?         @relation(fields: [prefinancementId], references: [id], onDelete: Restrict)
+
+  @@unique([acheteurId, idempotencyKey])
+  @@index([acheteurId, dateCreation])
+  @@index([transactionAcheteurId, statut])
+  @@index([prefinancementId, statut])
 }
 
 model Evaluation {
