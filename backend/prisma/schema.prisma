@@ -28,6 +28,7 @@ model Acheteur {
   preferences        Json?
   transactions       TransactionAcheteur[]
   prefinancements    Prefinancement[]
+  paiementsAfribaPay PaiementAfribaPay[]
 }
 
 model BassinProduction {
@@ -207,8 +208,9 @@ model TransactionAcheteur {
   clientRequestId String?      @db.VarChar(100)
   createdAt       DateTime     @default(now()) @db.Timestamptz
   recolteOffre    RecolteOffre @relation(fields: [recolteOffreId], references: [id])
-  acheteur        Acheteur     @relation(fields: [acheteurId], references: [id])
+  acheteur        Acheteur              @relation(fields: [acheteurId], references: [id])
   evaluations     Evaluation[]
+  paiementsAfribaPay PaiementAfribaPay[]
 
   @@unique([acheteurId, clientRequestId, recolteOffreId])
   @@index([acheteurId, clientRequestId])
@@ -273,8 +275,9 @@ model Prefinancement {
   conditions    String   @db.Text
   gicId         BigInt
   acheteurId    BigInt
-  gic           GIC      @relation(fields: [gicId], references: [id])
-  acheteur      Acheteur @relation(fields: [acheteurId], references: [id])
+  gic           GIC                 @relation(fields: [gicId], references: [id])
+  acheteur      Acheteur            @relation(fields: [acheteurId], references: [id])
+  paiementsAfribaPay PaiementAfribaPay[]
 }
 
 model Evaluation {
@@ -411,4 +414,45 @@ model GicNeedEntry {
   authorRole  String   @default("member") @db.VarChar(50)
   gicId       BigInt
   gic         GIC      @relation("gicNeeds", fields: [gicId], references: [id])
+}
+
+enum StatutPaiementAfribaPay {
+  AWAITING_OTP
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model PaiementAfribaPay {
+  id                        BigInt                  @id @default(autoincrement())
+  acheteurId                BigInt
+  transactionAcheteurId     BigInt?
+  prefinancementId          BigInt?
+  idempotencyKey            String?
+  requestFingerprint        String?
+  orderId                   String                  @unique
+  providerTransactionId     String?                 @unique
+  providerLink              String?
+  type                      String
+  montant                   Decimal                 @db.Decimal(15, 0)
+  tauxMargeBrute            Decimal                 @default(10.00) @db.Decimal(5, 2)
+  fraisAfribaPay            Decimal?                @db.Decimal(15, 2)
+  montantMargeBrute         Decimal?                @db.Decimal(15, 2)
+  margeReelleSitcha         Decimal?                @db.Decimal(15, 2)
+  montantBaseRedistribution Decimal?                @db.Decimal(15, 2)
+  devise                    String                  @default("XAF")
+  pays                      String
+  operateur                 String
+  telephoneSuffixe          String
+  statut                    StatutPaiementAfribaPay @default(PENDING)
+  dateCreation              DateTime                @default(now()) @db.Timestamptz
+  dateMaj                   DateTime                @updatedAt @db.Timestamptz
+  acheteur                  Acheteur                @relation(fields: [acheteurId], references: [id], onDelete: Restrict)
+  transactionAcheteur       TransactionAcheteur?    @relation(fields: [transactionAcheteurId], references: [id], onDelete: Restrict)
+  prefinancement            Prefinancement?         @relation(fields: [prefinancementId], references: [id], onDelete: Restrict)
+
+  @@unique([acheteurId, idempotencyKey])
+  @@index([acheteurId, dateCreation])
+  @@index([transactionAcheteurId, statut])
+  @@index([prefinancementId, statut])
 }
