@@ -22,6 +22,7 @@ export interface PaymentMethodSelectorProps {
   onChangePhoneNumber: (phone: string) => void;
   loadingMethods?: boolean;
   disabled?: boolean;
+  mobileMoneyAvailable?: boolean;
 }
 
 export function PaymentMethodSelector({
@@ -34,6 +35,7 @@ export function PaymentMethodSelector({
   onChangePhoneNumber,
   loadingMethods = false,
   disabled = false,
+  mobileMoneyAvailable = true,
 }: PaymentMethodSelectorProps) {
   const currentOperator = operators.find((op) => op.code.toLowerCase() === selectedOperator.toLowerCase());
 
@@ -76,10 +78,10 @@ export function PaymentMethodSelector({
             selectedMode === 'mobile_money' && styles.modeTabActiveMoMo,
           ]}
           onPress={() => onSelectMode('mobile_money')}
-          disabled={disabled}
+          disabled={disabled || !mobileMoneyAvailable}
           activeOpacity={0.8}
           accessibilityRole="radio"
-          accessibilityState={{ selected: selectedMode === 'mobile_money' }}
+          accessibilityState={{ selected: selectedMode === 'mobile_money', disabled: disabled || !mobileMoneyAvailable }}
           accessibilityLabel="Paiement Mobile Money AfribaPay"
         >
           <Feather
@@ -97,6 +99,15 @@ export function PaymentMethodSelector({
           </Text>
         </TouchableOpacity>
       </View>
+
+      {!mobileMoneyAvailable && (
+        <View style={styles.multiOrderNotice}>
+          <Feather name="info" size={14} color="#9a6700" />
+          <Text style={styles.multiOrderNoticeText}>
+            Mobile Money est disponible pour un seul produit à la fois. Pour ce panier, choisissez les espèces ou passez les produits séparément.
+          </Text>
+        </View>
+      )}
 
       {/* Contenu spécifique : Espèces */}
       {selectedMode === 'cash' && (
@@ -119,7 +130,7 @@ export function PaymentMethodSelector({
       )}
 
       {/* Contenu spécifique : Mobile Money */}
-      {selectedMode === 'mobile_money' && (
+      {selectedMode === 'mobile_money' && mobileMoneyAvailable && (
         <View style={styles.momoCard}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.iconCircleOrange}>
@@ -261,6 +272,23 @@ const styles = StyleSheet.create({
   },
   modeTabTextActive: {
     color: '#ffffff',
+  },
+  multiOrderNotice: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fff7e6',
+    borderWidth: 1,
+    borderColor: '#f2cf8f',
+  },
+  multiOrderNoticeText: {
+    flex: 1,
+    color: '#7c4a03',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
   },
   cardHeaderRow: {
     flexDirection: 'row',

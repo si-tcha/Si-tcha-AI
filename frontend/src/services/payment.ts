@@ -4,6 +4,11 @@ export type PaymentResourceType = 'ORDER' | 'PREFINANCEMENT';
 
 export type PaymentStatus = 'AWAITING_OTP' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'UNKNOWN';
 
+/** AfribaPay settles one order at a time; a cart can create several orders. */
+export function isMobileMoneyAvailableForCart(itemCount: number): boolean {
+  return Number.isInteger(itemCount) && itemCount === 1;
+}
+
 export interface PaymentOperator {
   code: string;
   name: string;

@@ -5,6 +5,7 @@ import {
   findPaymentForResource,
   getPaymentMethods,
   getPaymentStatus,
+  isMobileMoneyAvailableForCart,
   initiatePayment,
   PaymentCountryMethods,
   PaymentRecordDto,
@@ -22,6 +23,12 @@ describe('Parcours Mobile Paiement AfribaPay (Frontend)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('autorise Mobile Money uniquement pour un panier produisant une seule commande', () => {
+    expect(isMobileMoneyAvailableForCart(1)).toBe(true);
+    expect(isMobileMoneyAvailableForCart(0)).toBe(false);
+    expect(isMobileMoneyAvailableForCart(2)).toBe(false);
   });
 
   describe('Client API AfribaPay (services/payment.ts)', () => {

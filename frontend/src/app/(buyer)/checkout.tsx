@@ -34,6 +34,7 @@ import {
   PaymentOperator,
   PaymentRecordDto,
   PaymentStatus,
+  isMobileMoneyAvailableForCart,
   pollPaymentStatusUntilFinal,
   requestPaymentOtp,
 } from '@/services/payment';
@@ -124,6 +125,14 @@ export default function BuyerCheckoutScreen() {
     sessionSeq
   );
 
+  // A cart can create several orders; the current provider flow settles one
+  // order only. Return safely to cash if a second product is added.
+  useEffect(() => {
+    if (!isMobileMoneyAvailableForCart(effectiveCart.length) && paymentMode === 'mobile_money') {
+      setPaymentMode('cash');
+    }
+  }, [effectiveCart.length, paymentMode]);
+
   useFocusEffect(
     useCallback(() => {
       refreshCart();
@@ -183,6 +192,14 @@ export default function BuyerCheckoutScreen() {
     // Si Mobile Money sélectionné, valider le numéro de téléphone au préalable
     const cleanPhone = cleanPhoneInput(phoneNumber);
     if (paymentMode === 'mobile_money') {
+      if (!isMobileMoneyAvailableForCart(effectiveCart.length)) {
+        showToast({
+          message: 'Mobile Money est disponible pour un seul produit à la fois. Choisissez les espèces ou passez les produits séparément.',
+          type: 'warning',
+          duration: 7000,
+        });
+        return;
+      }
       if (!cleanPhone || cleanPhone.length < 9) {
         showToast({
           message: 'Veuillez renseigner un numéro de téléphone Mobile Money valide (9 chiffres).',
@@ -488,6 +505,7 @@ export default function BuyerCheckoutScreen() {
                 onChangePhoneNumber={setPhoneNumber}
                 loadingMethods={loadingMethods}
                 disabled={busy}
+                mobileMoneyAvailable={isMobileMoneyAvailableForCart(effectiveCart.length)}
               />
 
               {/* Bouton de confirmation */}
