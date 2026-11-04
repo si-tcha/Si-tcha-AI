@@ -23,6 +23,21 @@ import { useAuth } from '@/context/AuthContext';
 import { useBuyerOrdersCoordinator } from '@/hooks/useBuyerCoordinators';
 import { OrderQrCode } from '@/components/ui/order-qr-code';
 import { ModalKeyboardContainer } from '@/components/ui/modal-keyboard-container';
+import {
+  confirmPaymentWithOtp,
+  findPaymentForResource,
+  getPaymentMethods,
+  getPaymentStatus,
+  initiatePayment,
+  PaymentOperator,
+  PaymentRecordDto,
+  PaymentStatus,
+  pollPaymentStatusUntilFinal,
+  requestPaymentOtp,
+} from '@/services/payment';
+import { OrderPaymentModal } from '@/components/payment/OrderPaymentModal';
+import { PaymentOtpModal } from '@/components/payment/PaymentOtpModal';
+import { PaymentStatusModal } from '@/components/payment/PaymentStatusModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -43,21 +58,35 @@ const STATUS_CONFIG: Record<
     badgeBg: '#fff7ed',
     badgeBorder: '#fed7aa',
     badgeColor: '#c2410c',
-    note: 'En attente de préparation par le GIC · Espèces à la remise',
+    note: 'En attente de préparation par le GIC · Espèces ou Mobile Money',
   },
   confirmee: {
     label: 'CONFIRMÉE',
     badgeBg: '#f0fdf4',
     badgeBorder: '#bbf7d0',
     badgeColor: '#15803d',
-    note: 'Préparation en cours · Règlement en espèces à la livraison',
+    note: 'Préparation en cours · Règlement selon modalité convenue',
+  },
+  payee: {
+    label: 'PAYÉE (MOBILE MONEY)',
+    badgeBg: '#dcfce7',
+    badgeBorder: '#86efac',
+    badgeColor: '#15803d',
+    note: 'Paiement Mobile Money validé · Commande confirmée',
+  },
+  paiement_echoue: {
+    label: 'ÉCHEC PAIEMENT',
+    badgeBg: '#fef2f2',
+    badgeBorder: '#fecaca',
+    badgeColor: '#b91c1c',
+    note: 'Paiement Mobile Money échoué · Réessayez ou réglez en espèces',
   },
   livree: {
     label: 'LIVRÉE',
     badgeBg: '#eff6ff',
     badgeBorder: '#bfdbfe',
     badgeColor: '#1d4ed8',
-    note: 'Produits réceptionnés · Modalités en espèces selon entente physique',
+    note: 'Produits réceptionnés · Modalités selon entente',
   },
   annulee: {
     label: 'ANNULÉE',
@@ -88,7 +117,7 @@ function formatOrderDate(dateStr?: string): string {
 export default function BuyerOrdersScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { buyerId: currentBuyerId, loading: authLoading, authenticated, sessionSeq } = useAuth();
+  const { buyerId: currentBuyerId, loading: authLoading, authenticated, sessionSeq, user } = useAuth();
 
   const {
     orders,
@@ -107,6 +136,211 @@ export default function BuyerOrdersScreen() {
   const [ratingStars, setRatingStars] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
   const [ratedOrders, setRatedOrders] = useState<Set<string>>(new Set());
+
+  // État du parcours de reprise de paiement Mobile Money
+  const [orderForPayment, setOrderForPayment] = useState<OrderRecord | null>(null);
+  const [orderPaymentModalVisible, setOrderPaymentModalVisible] = useState<boolean>(false);
+  const [operators, setOperators] = useState<PaymentOperator[]>([]);
+  const [selectedOperator, setSelectedOperator] = useState<string>('mtn');
+  const [phoneNumber, setPhoneNumber] = useState<string>('');
+  const [paymentActionBusy, setPaymentActionBusy] = useState<boolean>(false);
+
+  // État des modales OTP et Statut
+  const [otpModalVisible, setOtpModalVisible] = useState<boolean>(false);
+  const [otpCode, setOtpCode] = useState<string>('');
+  const [otpBusy, setOtpBusy] = useState<boolean>(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+
+  const [statusModalVisible, setStatusModalVisible] = useState<boolean>(false);
+  const [currentPayment, setCurrentPayment] = useState<PaymentRecordDto | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('PENDING');
+  const [statusRefreshing, setStatusRefreshing] = useState<boolean>(false);
+
+  // Pré-remplissage du numéro
+  useEffect(() => {
+    if (user?.phone && !phoneNumber) {
+      const clean = user.phone.replace(/^(\+237|237)/, '').trim();
+      if (clean) setPhoneNumber(clean);
+    }
+  }, [user?.phone, phoneNumber]);
+
+  // Chargement des opérateurs au besoin
+  const ensureOperatorsLoaded = useCallback(async () => {
+    if (operators.length > 0) return operators;
+    try {
+      const res = await getPaymentMethods('CM');
+      const cameroon = res.countries.find((c) => c.countryCode === 'CM');
+      if (cameroon && cameroon.operators.length > 0) {
+        setOperators(cameroon.operators);
+        setSelectedOperator(cameroon.operators[0].code);
+        return cameroon.operators;
+      }
+    } catch (err) {
+      console.warn('Erreur chargement opérateurs:', err);
+    }
+    return [];
+  }, [operators]);
+
+  // Reprise sécurisée de paiement
+  const handleResumePayment = async (order: OrderRecord) => {
+    try {
+      setPaymentActionBusy(true);
+      await ensureOperatorsLoaded();
+
+      const res = await findPaymentForResource('ORDER', order.id);
+      if (res.payment) {
+        setCurrentPayment(res.payment);
+        setOrderForPayment(order);
+
+        if (res.payment.status === 'AWAITING_OTP') {
+          setOtpCode('');
+          setOtpError(null);
+          setOtpModalVisible(true);
+          return;
+        }
+
+        if (res.payment.status === 'PENDING' || res.payment.status === 'UNKNOWN') {
+          setPaymentStatus(res.payment.status);
+          setStatusModalVisible(true);
+          pollPaymentStatusUntilFinal(res.payment.id, {
+            onUpdate: (st, pay) => {
+              setPaymentStatus(st);
+              setCurrentPayment(pay);
+            },
+          });
+          return;
+        }
+
+        if (res.payment.status === 'SUCCESS') {
+          showToast({ message: 'Cette commande a déjà été réglée avec succès !', type: 'success' });
+          handleRefresh();
+          return;
+        }
+      }
+
+      // Aucun paiement actif : ouvrir la modale d'initiation de paiement
+      setOrderForPayment(order);
+      setOrderPaymentModalVisible(true);
+    } catch (err: any) {
+      showToast({ message: err?.message || 'Erreur lors de la récupération du paiement.', type: 'error' });
+    } finally {
+      setPaymentActionBusy(false);
+    }
+  };
+
+  const cleanPhoneInput = (raw: string): string => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.startsWith('237') && digits.length >= 12) {
+      return digits.substring(3);
+    }
+    return digits;
+  };
+
+  // Initiation du paiement depuis la modale
+  const handleConfirmOrderPayment = async () => {
+    if (!orderForPayment) return;
+    const cleanPhone = cleanPhoneInput(phoneNumber);
+    if (!cleanPhone || cleanPhone.length < 9) {
+      showToast({ message: 'Veuillez renseigner un numéro de téléphone valide (9 chiffres).', type: 'warning' });
+      return;
+    }
+
+    const selectedOpObj = operators.find((o) => o.code.toLowerCase() === selectedOperator.toLowerCase());
+    const requiresOtp = selectedOpObj?.requiresOtp ?? false;
+
+    try {
+      setPaymentActionBusy(true);
+      if (requiresOtp) {
+        const res = await requestPaymentOtp({
+          resourceType: 'ORDER',
+          resourceId: orderForPayment.id,
+          countryCode: 'CM',
+          operator: selectedOpObj?.code || selectedOperator,
+          phoneNumber: cleanPhone,
+        });
+        setCurrentPayment(res.payment);
+        setOrderPaymentModalVisible(false);
+        setOtpCode('');
+        setOtpError(null);
+        setOtpModalVisible(true);
+      } else {
+        const res = await initiatePayment({
+          resourceType: 'ORDER',
+          resourceId: orderForPayment.id,
+          countryCode: 'CM',
+          operator: selectedOpObj?.code || selectedOperator,
+          phoneNumber: cleanPhone,
+        });
+        setCurrentPayment(res.payment);
+        setOrderPaymentModalVisible(false);
+        setPaymentStatus(res.payment.status);
+        setStatusModalVisible(true);
+
+        pollPaymentStatusUntilFinal(res.payment.id, {
+          onUpdate: (st, pay) => {
+            setPaymentStatus(st);
+            setCurrentPayment(pay);
+          },
+        });
+      }
+    } catch (err: any) {
+      showToast({ message: err?.message || "Erreur lors de l'initiation du paiement.", type: 'error' });
+    } finally {
+      setPaymentActionBusy(false);
+    }
+  };
+
+  // Validation du code OTP
+  const handleConfirmOtp = async () => {
+    if (!currentPayment || !otpCode.trim()) return;
+    const cleanPhone = cleanPhoneInput(phoneNumber);
+    try {
+      setOtpBusy(true);
+      setOtpError(null);
+      const res = await confirmPaymentWithOtp(currentPayment.id, {
+        phoneNumber: cleanPhone,
+        otpCode: otpCode.trim(),
+      });
+      setCurrentPayment(res.payment);
+      setOtpModalVisible(false);
+      setPaymentStatus(res.payment.status);
+      setStatusModalVisible(true);
+
+      pollPaymentStatusUntilFinal(res.payment.id, {
+        onUpdate: (st, pay) => {
+          setPaymentStatus(st);
+          setCurrentPayment(pay);
+        },
+      });
+    } catch (err: any) {
+      setOtpError(err?.message || 'Code OTP invalide ou expiré.');
+    } finally {
+      setOtpBusy(false);
+    }
+  };
+
+  // Rafraîchissement du statut
+  const handleRefreshStatus = async () => {
+    if (!currentPayment) return;
+    try {
+      setStatusRefreshing(true);
+      const res = await getPaymentStatus(currentPayment.id);
+      setCurrentPayment(res.payment);
+      setPaymentStatus(res.status);
+      if (res.status === 'SUCCESS') {
+        handleRefresh();
+      }
+    } catch (err) {
+      console.warn('Erreur rafraîchissement statut:', err);
+    } finally {
+      setStatusRefreshing(false);
+    }
+  };
+
+  const handleCloseStatusModal = () => {
+    setStatusModalVisible(false);
+    handleRefresh();
+  };
 
   // Réinitialisation des formulaires et actions de notation lors d'un switch utilisateur
   const prevBuyerIdRef = useRef(currentBuyerId);
@@ -263,13 +497,29 @@ export default function BuyerOrdersScreen() {
                     </Text>
                   </View>
 
-                  {/* Mention explicite de paiement en espèces */}
-                  <View style={styles.cashNoticeRow}>
-                    <Feather name="dollar-sign" size={13} color="#15803d" />
-                    <Text style={styles.cashNoticeText}>
-                      Règlement en espèces à la remise/livraison
-                    </Text>
-                  </View>
+                  {/* Mention explicite du statut de règlement */}
+                  {o.status === 'payee' ? (
+                    <View style={[styles.cashNoticeRow, styles.paidNoticeRow]}>
+                      <Feather name="check-circle" size={13} color="#15803d" />
+                      <Text style={[styles.cashNoticeText, { color: '#15803d' }]}>
+                        Commande réglée par Mobile Money (AfribaPay)
+                      </Text>
+                    </View>
+                  ) : o.status === 'paiement_echoue' ? (
+                    <View style={[styles.cashNoticeRow, styles.failedNoticeRow]}>
+                      <Feather name="alert-triangle" size={13} color="#b91c1c" />
+                      <Text style={[styles.cashNoticeText, { color: '#b91c1c' }]}>
+                        Échec paiement Mobile Money · Réessayez ou réglez en espèces
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.cashNoticeRow}>
+                      <Feather name="dollar-sign" size={13} color="#15803d" />
+                      <Text style={styles.cashNoticeText}>
+                        Règlement en espèces à la remise/livraison
+                      </Text>
+                    </View>
+                  )}
 
                   {/* Timeline Progress */}
                   <View style={styles.timelineRow}>
@@ -298,6 +548,17 @@ export default function BuyerOrdersScreen() {
                   <View style={styles.footerRow}>
                     <Text style={styles.dateMeta}>{formatOrderDate(o.createdAt)}</Text>
                     <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {(o.status === 'en_attente' || o.status === 'paiement_echoue') && (
+                        <TouchableOpacity
+                          style={styles.payMobileBtn}
+                          onPress={() => handleResumePayment(o)}
+                          disabled={paymentActionBusy}
+                          accessibilityLabel="Payer ou reprendre le paiement Mobile Money"
+                        >
+                          <Feather name="smartphone" size={12} color="#ffffff" />
+                          <Text style={styles.payMobileBtnText}>Payer en ligne</Text>
+                        </TouchableOpacity>
+                      )}
                       {o.status === 'confirmee' && !ratedOrders.has(o.id) && (
                         <TouchableOpacity
                           style={styles.rateBtn}
@@ -432,6 +693,49 @@ export default function BuyerOrdersScreen() {
           </View>
           </ModalKeyboardContainer>
         </Modal>
+
+        {/* Modal d'initiation / reprise de paiement */}
+        <OrderPaymentModal
+          visible={orderPaymentModalVisible}
+          order={orderForPayment}
+          operators={operators}
+          selectedOperator={selectedOperator}
+          onSelectOperator={setSelectedOperator}
+          phoneNumber={phoneNumber}
+          onChangePhoneNumber={setPhoneNumber}
+          onConfirm={handleConfirmOrderPayment}
+          onClose={() => setOrderPaymentModalVisible(false)}
+          busy={paymentActionBusy}
+        />
+
+        {/* Modal OTP */}
+        <PaymentOtpModal
+          visible={otpModalVisible}
+          operatorName={
+            operators.find((op) => op.code.toLowerCase() === selectedOperator.toLowerCase())?.name ||
+            selectedOperator.toUpperCase()
+          }
+          phoneNumberMasked={currentPayment?.phoneNumberMasked || phoneNumber}
+          instructions={
+            operators.find((op) => op.code.toLowerCase() === selectedOperator.toLowerCase())?.instructions
+          }
+          otpCode={otpCode}
+          onChangeOtp={setOtpCode}
+          onSubmit={handleConfirmOtp}
+          onCancel={() => setOtpModalVisible(false)}
+          busy={otpBusy}
+          errorMessage={otpError}
+        />
+
+        {/* Modal Statut */}
+        <PaymentStatusModal
+          visible={statusModalVisible}
+          status={paymentStatus}
+          payment={currentPayment}
+          onRefresh={handleRefreshStatus}
+          onClose={handleCloseStatusModal}
+          refreshing={statusRefreshing}
+        />
 
         <BottomNavBar role="buyer" />
       </View>
@@ -578,4 +882,26 @@ const styles = StyleSheet.create({
   receiptQty: { fontSize: 13, fontWeight: '700', color: '#101e0f' },
   receiptTotal: { fontSize: 16, fontWeight: '900', color: '#d97834', marginTop: 4, textAlign: 'center' },
   receiptHint: { fontSize: 11, color: '#5a6258', textAlign: 'center', lineHeight: 16, marginTop: 6 },
+  paidNoticeRow: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  failedNoticeRow: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  payMobileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#d97834',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  payMobileBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
 });

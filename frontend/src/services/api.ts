@@ -1116,4 +1116,18 @@ export const apiClient = {
   getTrustRatings: () => request<{ ratings: unknown[] }>('/trust/ratings'),
   createTrustRating: (data: { targetId: string; targetType: string; rating: number; comment: string; authorName: string }) =>
     request<{ rating: unknown }>('/trust/ratings', 'POST', data),
+
+  // AfribaPay Payments
+  getPaymentMethods: (countryCode = 'CM') =>
+    request<{ countries: any[] }>(`/payments/methods?countryCode=${encodeURIComponent(countryCode)}`),
+  findPaymentForResource: (resourceType: 'ORDER' | 'PREFINANCEMENT', resourceId: string) =>
+    request<{ payment: any | null }>(`/payments?resourceType=${encodeURIComponent(resourceType)}&resourceId=${encodeURIComponent(resourceId)}`),
+  initiatePayment: (data: { resourceType: 'ORDER' | 'PREFINANCEMENT'; resourceId: string; countryCode: string; operator: string; phoneNumber: string }) =>
+    request<{ payment: any }>('/payments', 'POST', data),
+  requestPaymentOtp: (data: { resourceType: 'ORDER' | 'PREFINANCEMENT'; resourceId: string; countryCode: string; operator: string; phoneNumber: string }) =>
+    request<{ payment: any }>('/payments/otp', 'POST', data),
+  confirmPaymentWithOtp: (paymentId: string, data: { phoneNumber: string; otpCode: string }) =>
+    request<{ payment: any }>(`/payments/${encodeURIComponent(paymentId)}/confirm`, 'POST', data),
+  getPaymentStatus: (paymentId: string) =>
+    request<{ payment: any; status: string }>(`/payments/${encodeURIComponent(paymentId)}/status`),
 };

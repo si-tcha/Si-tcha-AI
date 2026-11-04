@@ -839,7 +839,7 @@ export class BuyerCheckoutCoordinator {
   public confirmOrder = async (
     orderType: any,
     refreshCart: () => Promise<void>,
-    callbacks: { onSuccess: () => void; onError: (err: any) => void },
+    callbacks: { onSuccess: (createdOrders?: OrderRecord[]) => void; onError: (err: any) => void },
     cart: CartItemRecord[] = []
   ): Promise<boolean> => {
     const isAligned = Boolean(
@@ -871,13 +871,13 @@ export class BuyerCheckoutCoordinator {
       dbService.getContextGeneration() !== capturedDbGen;
 
     try {
-      await dbService.createOrderFromCart(orderType);
+      const createdOrders = await dbService.createOrderFromCart(orderType);
       if (isStale()) return false;
 
       await refreshCart();
       if (isStale()) return false;
 
-      callbacks.onSuccess();
+      callbacks.onSuccess(createdOrders);
       return true;
     } catch (err: any) {
       if (isStale()) return false;
@@ -936,7 +936,7 @@ export function useBuyerCheckoutCoordinator(
   const confirmOrder = useCallback(
     (
       orderType: any,
-      callbacks: { onSuccess: () => void; onError: (err: any) => void }
+      callbacks: { onSuccess: (createdOrders?: OrderRecord[]) => void; onError: (err: any) => void }
     ) => coordinator.confirmOrder(orderType, refreshCart, callbacks, isCartAligned ? cart : []),
     [coordinator, refreshCart, isCartAligned, cart]
   );

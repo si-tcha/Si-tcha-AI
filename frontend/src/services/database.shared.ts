@@ -128,7 +128,7 @@ export interface ConfidentialGic {
 }
 
 export type OrderType = 'commande_ferme' | 'achat_direct' | 'reservation';
-export type OrderStatus = 'en_attente' | 'confirmee' | 'livree' | 'annulee';
+export type OrderStatus = 'en_attente' | 'confirmee' | 'livree' | 'annulee' | 'payee' | 'paiement_echoue';
 
 export interface OrderRecord {
   id: string;

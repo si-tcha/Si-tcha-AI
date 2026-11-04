@@ -130,7 +130,31 @@ Interroge l'état du paiement et met à jour le statut en base si nécessaire en
 
 ### 7. `POST /payments/webhook`
 Endpoint de callback serveur à serveur (`notify_url`).
-- Reçoit les notifications d'AfribaPay au format JSON direct ou via payload encodé `afp_data` (base64).
-- Si configuré, vérifie l'en-tête `X-Afribapay-Signature` ou `X-Webhook-Secret`.
-- **Règle d'or** : Le backend vérifie systématiquement auprès de l'API AfribaPay (`/v1/status`) avant de valider la transaction en `SUCCESS`.
-- Traitement entièrement idempotent : confirmation immédiate `200 OK` si la transaction est déjà dans son état final.
+- **Format du callback AfribaPay** : AfribaPay transmet ses notifications HTTP POST à l'URL `notify_url` soit sous forme de corps JSON direct (`{ "order_id": "...", "status": "..." }`), soit sous forme de chaîne JSON encodée en base64 dans le champ `afp_data` (`{ "afp_data": "ey..." }`). Le backend prend en charge nativement ces deux formats.
+- **Audit de la signature** : La spécification officielle AfribaPay ne définit pas d'en-tête de signature HMAC universellement imposé à tous les marchands (contrairement à Stripe ou PayPal). Si la variable d'environnement `AFRIBAPAY_WEBHOOK_SECRET` est renseignée, le backend valide la correspondance en temps constant (`timingSafeEqual`) de l'en-tête `X-Afribapay-Signature`, `X-Webhook-Secret` ou du paramètre d'URL `?secret=`.
+- **Règle d'or de sécurité (Défense en profondeur)** : Quel que soit le payload ou les en-têtes reçus, le backend **ne fait jamais confiance aveuglément au statut transmis dans le webhook**. Dès réception d'un événement, le backend effectue un appel autoritaire direct auprès de l'API AfribaPay (`GET /v1/status`) avec l'`orderId` et le `providerTransactionId` enregistrés pour valider le statut réel de la transaction.
+- **Idempotence stricte** : Si le paiement est déjà dans son état final (`SUCCESS` ou `FAILED`), le webhook retourne immédiatement `200 OK` avec `{ received: true, alreadyProcessed: true }` sans effet de bord ni double écriture.
+
+---
+
+## Parcours Mobile Frontend (Acheteur)
+
+L'application mobile Si-Tcha AI intègre deux modalités de règlement distinctes :
+
+1. **Règlement en espèces à la livraison (Parcours historique 100% préservé)** :
+   - Aucun appel à la passerelle AfribaPay.
+   - Commande enregistrée en base locale et backend avec le statut `en_attente`.
+   - Affichage du bordereau QR logistique permettant la vérification physique lors de la livraison.
+
+2. **Règlement en ligne Mobile Money (AfribaPay Sandbox)** :
+   - Choix de l'opérateur (Orange Money, MTN MoMo) via `GET /api/payments/methods?countryCode=CM`.
+   - Si l'opérateur requiert un code OTP préalable (ex : Orange Money Cameroun) :
+     - Appel à `POST /api/payments/otp` créant la transaction au statut `AWAITING_OTP`.
+     - Ouverture de la modale de saisie du code OTP temporaire.
+     - Confirmation du débit via `POST /api/payments/:paymentId/confirm`.
+   - Si l'opérateur ne requiert pas d'OTP (ex : MTN MoMo) :
+     - Appel direct à `POST /api/payments` créant la transaction au statut `PENDING`.
+     - L'acheteur valide le push USSD / SMS sur son téléphone.
+   - **Suivi et Résilience** :
+     - Modale d'état en direct (`PENDING`, `SUCCESS`, `FAILED`, `UNKNOWN`) avec sondage automatique et bouton d'actualisation manuelle (`GET /api/payments/:paymentId/status`).
+     - **Reprise de paiement garantie** : Depuis l'écran des commandes (`orders.tsx`), toute commande non réglée propose le bouton « Payer en ligne / Suivre ». L'appel à `GET /api/payments?resourceType=ORDER&resourceId=...` permet de reprendre instantanément un paiement interrompu (en attente d'OTP ou en cours de validation) sans double facturation ni perte d'état.
