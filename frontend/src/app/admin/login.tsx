@@ -14,7 +14,7 @@ export default function AdminLoginScreen() {
   const [visible, setVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  if (authenticated && user?.role === 'admin') return <Redirect href="/admin" />;
+  if (authenticated && user?.role === 'admin') return <Redirect href={"/admin" as any} />;
 
   if (Platform.OS !== 'web') {
     return (
@@ -39,7 +39,7 @@ export default function AdminLoginScreen() {
     try {
       const session = await signInAdmin(account.trim(), password);
       if (session.obsolete) return;
-      router.replace('/admin');
+      router.replace('/admin' as any);
     } catch (error: any) {
       setPassword('');
       showToast({ message: error?.message || 'Connexion administrateur impossible.', type: 'error' });

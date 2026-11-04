@@ -6,7 +6,8 @@ import { sendSms } from '../services/notification.service.js';
 const BASE_URL = 'http://api.agromonitoring.com/agro/1.0';
 
 /** A missing provider key must disable the job, never produce unauthenticated calls. */
-export function getAgroMonitoringApiKey(rawKey = process.env.AGROMONITORING_API_KEY): string | null {
+export function getAgroMonitoringApiKey(...args: [string?]): string | null {
+  const rawKey = args.length > 0 ? args[0] : process.env.AGROMONITORING_API_KEY;
   const key = rawKey?.trim();
   return key ? key : null;
 }

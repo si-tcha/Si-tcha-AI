@@ -206,6 +206,26 @@ export function validateConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConf
     LETEXTO_API_KEY: z.string().optional(),
     LETEXTO_SENDER_ID: z.string().optional(),
     LETEXTO_API_URL: z.string().url().optional(),
+    AFRIBAPAY_ENABLED: z.string().optional().default('false'),
+    AFRIBAPAY_PUBLIC_API_USER: z.string().optional(),
+    AFRIBAPAY_API_SECRET_KEY: z.string().optional(),
+    AFRIBAPAY_MERCHANT_KEY: z.string().optional(),
+    AFRIBAPAY_AGENT_ID: z.string().optional(),
+    AFRIBAPAY_PAYIN_URL: z
+      .string()
+      .url()
+      .optional()
+      .default('https://api-sandbox.afribapay.com/v1/pay/payin'),
+    AFRIBAPAY_PAYOUT_URL: z
+      .string()
+      .url()
+      .optional()
+      .default('https://api-payout-sandbox.afribapay.com/v1/pay/payout'),
+    AFRIBAPAY_RETURN_URL: z.string().optional(),
+    AFRIBAPAY_CANCEL_URL: z.string().optional(),
+    AFRIBAPAY_NOTIFY_URL: z.string().optional(),
+    AFRIBAPAY_WEBHOOK_SECRET: z.string().optional(),
+    PAYMENT_OTP_FINGERPRINT_SECRET: z.string().optional(),
   });
 
   const parsed = schema.safeParse(effectiveEnv);
