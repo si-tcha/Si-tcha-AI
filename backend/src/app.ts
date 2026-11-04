@@ -6,6 +6,7 @@ import adminRouter from './api/routes/admin.route.js';
 import gicRouter from './api/routes/gic.route.js';
 import weatherRoutes from './api/routes/weather.route.js';
 import marketRouter from './api/routes/market.route.js';
+import paymentRouter from './api/routes/payment.route.js';
 import { setupSwagger } from './swagger.js';
 import { httpLogger } from './middlewares/logger.js';
 import { createApiLimiter } from './middlewares/rateLimiter.js';
@@ -57,6 +58,7 @@ export function createApp(config: AppConfig = getConfig()): Express {
   app.use('/api/gics', gicRouter);
   app.use('/api/weather', weatherRoutes);
   app.use('/api/market', marketRouter);
+  app.use('/api/payments', paymentRouter);
   app.use('/api', apiRouter);
 
   app.get('/', (req: Request, res: Response) => {

@@ -13,7 +13,7 @@ export default function RootIndex() {
   const isAdminDashboard = process.env.EXPO_PUBLIC_APP_SURFACE?.trim().toLowerCase() === 'admin';
 
   if (isAdminDashboard) {
-    return <Redirect href="/admin/login" />;
+    return <Redirect href={"/admin/login" as any} />;
   }
 
   if (loading) {

@@ -80,9 +80,9 @@ export default function AdminDashboardScreen() {
     return () => { document.title = 'SI-TCHA AI'; };
   }, [totals.pending]);
 
-  if (!authenticated || !user) return <Redirect href="/admin/login" />;
+  if (!authenticated || !user) return <Redirect href={"/admin/login" as any} />;
   if (user.role !== 'admin') return <AccessDenied onSignOut={() => void signOut()} />;
-  if (Platform.OS !== 'web') return <Redirect href="/admin/login" />;
+  if (Platform.OS !== 'web') return <Redirect href={"/admin/login" as any} />;
 
   const update = (key: keyof AdminGicForm, value: string) => setForm((previous) => ({ ...previous, [key]: value }));
   const createGic = async () => {
